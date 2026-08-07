@@ -481,9 +481,9 @@ function PublicPolicyLinks({ links }: { links: PublicPolicyLink[] }) {
 
 function PublicDashboardPreview() {
   const rows = [
-    { name: "Marcus Vance", issue: "Main-line backup", value: "$1,850", tone: "Emergency", score: "94%" },
-    { name: "Elena Rostova", issue: "No AC / elderly parent home", value: "$350", tone: "Urgent", score: "90%" },
-    { name: "Dave Miller", issue: "Commercial panel estimate", value: "$4,500", tone: "Quote", score: "88%" },
+    { name: "Jordan Test", issue: "No heat · Reno · call back now", tone: "Urgent", status: "Open" },
+    { name: "Morgan Demo", issue: "Water heater leak · Sparks · 30 min", tone: "Priority", status: "Assigned" },
+    { name: "Taylor Sample", issue: "Panel estimate · next weekday", tone: "Quote", status: "Queued" },
   ];
 
   return (
@@ -491,7 +491,7 @@ function PublicDashboardPreview() {
       <div className="mb-4 flex items-center justify-between gap-3 border-b border-[#173321] pb-3">
         <div>
           <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-[#00e479]">Basic dash</div>
-          <div className="mt-1 text-sm font-semibold text-white">Missed calls that need action</div>
+          <div className="mt-1 text-sm font-semibold text-white">Calls that need a callback</div>
         </div>
         <div className="border border-[#31533e] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-gray-300">Illustrative example</div>
       </div>
@@ -506,8 +506,8 @@ function PublicDashboardPreview() {
               <div className="mt-1 truncate text-xs text-gray-400">{row.issue}</div>
             </div>
             <div className="text-right">
-              <div className="font-mono text-sm font-black text-[#00ff88]">{row.score}</div>
-              <div className="mt-1 text-[10px] text-gray-500">{row.value}</div>
+              <div className="font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#00ff88]">{row.status}</div>
+              <div className="mt-1 text-[10px] text-gray-500">Callback task</div>
             </div>
           </div>
         ))}
@@ -517,7 +517,7 @@ function PublicDashboardPreview() {
           <div key={item} className="border border-[#173321] bg-[#0d160f] px-3 py-2 text-xs font-semibold text-gray-200">{item}</div>
         ))}
       </div>
-      <p className="mt-3 text-[10px] leading-4 text-gray-500">Fictional example data. Names, confidence percentages, and dollar amounts are illustrative—not customer results or a live feed.</p>
+      <p className="mt-3 text-[10px] leading-4 text-gray-500">Fictional example data. This is a product-flow illustration, not a customer result or live feed.</p>
     </div>
   );
 }
@@ -757,68 +757,170 @@ function PublicLandingPage() {
 
   return (
     <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <header className="border-b border-[#173321] px-5 py-4">
+      <header className="sticky top-0 z-50 border-b border-[#24362a] bg-[#0a0a0a]/95 px-5 py-4 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
-            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Proof</a>
-            <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
-            <a href="/pricing" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
-            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
+            <a href="#how-it-works" className="hidden px-3 py-2 text-sm font-semibold text-gray-300 hover:text-white lg:inline-flex">How it works</a>
+            <a href="#modes" className="hidden px-3 py-2 text-sm font-semibold text-gray-300 hover:text-white lg:inline-flex">Two modes</a>
+            <a href="#faq" className="hidden px-3 py-2 text-sm font-semibold text-gray-300 hover:text-white lg:inline-flex">FAQ</a>
+            <a href="/pricing" className="hidden border border-[#3b4b3d] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
+            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Sign in</a>
           </div>
         </div>
       </header>
 
-      <main className="relative overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: 'linear-gradient(#00e479 1px, transparent 1px), linear-gradient(90deg, #00e479 1px, transparent 1px)', backgroundSize: '34px 34px' }} />
-        <div className="relative mx-auto grid max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[1.02fr_0.98fr] lg:py-16">
-        <section className="flex flex-col justify-center">
-          <div className="mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
-            <PhoneMissed size={14} /> Missed-call recovery for local service businesses
-          </div>
-          <h1 className="max-w-3xl text-5xl font-black leading-[0.94] tracking-tight sm:text-6xl lg:text-7xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-            Catch the job calls you miss while you are already working.
-          </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-gray-300">
-            SMIRK answers missed calls, captures the problem and urgency, then leaves your team with the only things that matter: who called, what they need, how urgent it is, who calls back, and whether it got handled.
-          </p>
-          <div className="mt-7 flex flex-wrap gap-3">
-            <a href="#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
-              <PhoneForwarded size={16} /> Protect missed calls
-            </a>
-            <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
-              See $197 plans
-            </a>
-          </div>
-          <div className="mt-9 grid gap-3 sm:grid-cols-3">
-            {[
-              ['Live', 'answers the call'],
-              ['5', 'questions owners need'],
-              ['Task', 'callback work queued'],
-            ].map(([value, label]) => (
-              <div key={label} className="border border-[#173321] bg-black/40 p-4">
-                <div className="font-mono text-2xl font-bold text-white">{value}</div>
-                <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.12em] text-gray-400">{label}</div>
+      <main>
+        <section
+          className="relative min-h-[calc(100svh-118px)] overflow-hidden border-b border-[#24362a] bg-cover bg-[center_right]"
+          style={{ backgroundImage: "url('/assets/smirk-missed-call-hero.jpg')" }}
+        >
+          <div className="absolute inset-0 bg-black/65" aria-hidden="true" />
+          <div className="absolute inset-y-0 left-0 w-full bg-[#080a08]/55 lg:w-[62%]" aria-hidden="true" />
+          <div className="relative mx-auto flex min-h-[calc(100svh-118px)] max-w-7xl items-center px-5 py-12">
+            <div className="max-w-3xl">
+              <div className="mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/50 bg-black/65 px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
+                <PhoneMissed size={14} /> Missed-call recovery for home-service teams
               </div>
-            ))}
-          </div>
-          <div className="mt-8 border-l-2 border-[#00e479] pl-4 text-sm leading-6 text-gray-400">
-            Built for {INDUSTRY_SLUGS.map((slug, idx) => (
-              <React.Fragment key={slug}>
-                {idx > 0 ? ", " : ""}
-                <a href={`/industries/${slug}`} className="font-semibold text-gray-200 underline decoration-[#00e479]/50 underline-offset-4 hover:text-[#00e479]">
-                  {INDUSTRY_PAGES[slug].name}
+              <h1 className="max-w-3xl text-[44px] font-black leading-[0.94] text-white" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>
+                Catch the calls your crew cannot answer.
+              </h1>
+              <p className="mt-6 max-w-2xl text-lg leading-8 text-gray-200">
+                SMIRK answers missed and overflow calls, uses your approved business knowledge, captures the caller's issue and urgency, then creates a callback-ready owner summary and task.
+              </p>
+              <div className="mt-7 flex flex-wrap gap-3">
+                <a href="#how-it-works" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                  <PhoneForwarded size={16} /> See the recovery flow
                 </a>
-              </React.Fragment>
-            ))}, cleaners, contractors, and mobile service businesses that lose jobs while working.
+                <a href="#request-activation" className="inline-flex items-center justify-center gap-2 border border-white/35 bg-black/55 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                  Start with Starter <ArrowUpRight size={15} />
+                </a>
+              </div>
+              <div className="mt-9 hidden max-w-2xl grid-cols-4 border-y border-white/20 sm:grid">
+                {[
+                  ["01", "Call answered"],
+                  ["02", "Need captured"],
+                  ["03", "Owner alerted"],
+                  ["04", "Callback tracked"],
+                ].map(([value, label]) => (
+                  <div key={label} className="min-h-[82px] border-white/20 px-3 py-3 sm:border-r sm:last:border-r-0">
+                    <div className="font-mono text-xs font-black text-[#00ff88]">{value}</div>
+                    <div className="mt-2 text-xs font-semibold text-gray-100">{label}</div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-6 hidden max-w-2xl text-sm leading-6 text-gray-300 sm:block">
+                Works as a backup to your existing line or as the first answer for a dedicated SMIRK number. It supports your staff; it does not pretend to replace them.
+              </p>
+            </div>
           </div>
         </section>
 
-        <section id="request-activation" className="border border-[#2f4637] bg-[#101510]/95 p-5 shadow-2xl shadow-black/30">
-          <PublicDashboardPreview />
+        <section id="how-it-works" className="border-b border-[#24362a] bg-[#0c100d] px-5 pb-14">
+          <div className="-mx-5 border-b border-[#24362a] bg-[#101510] px-5 py-3">
+            <div className="mx-auto max-w-7xl font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[#00e479]">Next: follow one missed call from answer to callback</div>
+          </div>
+          <div className="mx-auto max-w-7xl pt-14">
+            <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-end">
+              <div>
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">One call, one observable trail</div>
+                <h2 className="mt-3 text-3xl font-black uppercase leading-tight" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>What happens on the next missed call</h2>
+              </div>
+              <p className="max-w-3xl text-base leading-7 text-gray-300">The caller gets an immediate answer. The owner gets structured facts, the conversation record, and a clear next action. Unsupported questions get an honest fallback instead of an invented answer.</p>
+            </div>
+
+            <div className="mt-8 grid border border-[#2f4637] bg-[#2f4637] sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                { icon: <PhoneIncoming size={18} />, title: "Answer", body: "Your existing line forwards after no answer, or SMIRK answers a dedicated line first." },
+                { icon: <Database size={18} />, title: "Ground", body: "The agent uses approved services, hours, areas, FAQs, and escalation rules from the workspace." },
+                { icon: <MessageSquare size={18} />, title: "Capture", body: "Name, contact details, issue, urgency, service area, and preferred callback window are recorded." },
+                { icon: <ListTodo size={18} />, title: "Recover", body: "SMIRK persists the transcript, owner summary, lead, callback task, status, and audit trail." },
+              ].map((step, index) => (
+                <div key={step.title} className="min-h-[190px] bg-[#101510] p-5">
+                  <div className="flex items-center justify-between text-[#00e479]">
+                    {step.icon}
+                    <span className="font-mono text-[10px] font-bold">0{index + 1}</span>
+                  </div>
+                  <h3 className="mt-5 text-base font-bold text-white">{step.title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-gray-400">{step.body}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-10 grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+              <PublicDashboardPreview />
+              <div className="border-y border-[#2f4637] py-2">
+                {[
+                  ["Workspace-grounded answers", "Supported questions are answered from the approved business profile and saved workspace knowledge instead of a generic sales script."],
+                  ["Honest fallback", "When the workspace does not support an answer, SMIRK says so and captures the question for a human callback."],
+                  ["Owner-ready handoff", "Urgency, service area, caller details, callback timing, summary, and disposition remain connected to the same call."],
+                  ["Hard-refresh proof", "Records live in the workspace database so calls and tasks do not disappear when the dashboard reloads."],
+                ].map(([title, body]) => (
+                  <div key={title} className="grid gap-2 border-b border-[#2f4637] py-4 last:border-b-0 sm:grid-cols-[180px_1fr]">
+                    <div className="text-sm font-bold text-white">{title}</div>
+                    <p className="text-sm leading-6 text-gray-400">{body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="modes" className="border-b border-[#24362a] bg-[#111111] px-5 py-14">
+          <div className="mx-auto max-w-7xl">
+            <div className="max-w-3xl">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#ffba20]">Choose the amount of coverage</div>
+              <h2 className="mt-3 text-3xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>Two modes. The same proof trail.</h2>
+              <p className="mt-4 text-base leading-7 text-gray-400">Start with the smallest call path your team needs. Both modes produce the same owner summary, callback task, transcript, and dashboard record.</p>
+            </div>
+            <div className="mt-8 grid border-y border-[#3b4b3d] lg:grid-cols-2 lg:divide-x lg:divide-[#3b4b3d]">
+              <div className="px-0 py-7 lg:pr-8">
+                <div className="flex items-center gap-3 text-[#00e479]"><PhoneMissed size={20} /><span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em]">Mode A</span></div>
+                <h3 className="mt-4 text-xl font-bold text-white">Missed-call backup</h3>
+                <p className="mt-3 text-sm leading-6 text-gray-300">Your team answers normally. If nobody picks up within the forwarding window, SMIRK takes over, captures the details, and queues the callback.</p>
+                <div className="mt-5 grid gap-2 text-sm text-gray-400 sm:grid-cols-2">
+                  <span className="border-l-2 border-[#00e479] pl-3">Keeps your current workflow</span>
+                  <span className="border-l-2 border-[#00e479] pl-3">Best low-risk starting point</span>
+                </div>
+              </div>
+              <div className="border-t border-[#3b4b3d] px-0 py-7 lg:border-t-0 lg:pl-8">
+                <div className="flex items-center gap-3 text-[#ffba20]"><PhoneIncoming size={20} /><span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em]">Mode B</span></div>
+                <h3 className="mt-4 text-xl font-bold text-white">Frontline receptionist</h3>
+                <p className="mt-3 text-sm leading-6 text-gray-300">SMIRK answers first, handles supported questions, collects job details, and follows your configured rules for callback work or a verified live handoff.</p>
+                <div className="mt-5 grid gap-2 text-sm text-gray-400 sm:grid-cols-2">
+                  <span className="border-l-2 border-[#ffba20] pl-3">Consistent first response</span>
+                  <span className="border-l-2 border-[#ffba20] pl-3">Operator-controlled transfer rules</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="request-activation" className="border-b border-[#24362a] bg-[#0a0a0a] px-5 py-14">
+          <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.75fr_1.25fr] lg:items-start">
+            <div className="lg:sticky lg:top-28">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start with one line</div>
+              <h2 className="mt-3 text-3xl font-black uppercase leading-tight" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>Set up missed-call recovery</h2>
+              <p className="mt-4 text-base leading-7 text-gray-300">Choose a plan, identify the business line and owner email, then complete checkout or use the explicit setup-help fallback.</p>
+              <div className="mt-7 border-y border-[#2f4637]">
+                {[
+                  ["1", "Workspace", "Business profile, knowledge, hours, service area, and escalation rules."],
+                  ["2", "Phone path", "Dedicated number or forwarding from the existing business line."],
+                  ["3", "Proof call", "Verify transcript, summary, alert, task, lead, and owner access before relying on it."],
+                ].map(([number, title, body]) => (
+                  <div key={number} className="grid grid-cols-[30px_1fr] gap-3 border-b border-[#2f4637] py-4 last:border-b-0">
+                    <span className="font-mono text-sm font-black text-[#00e479]">{number}</span>
+                    <div><div className="text-sm font-bold text-white">{title}</div><p className="mt-1 text-sm leading-6 text-gray-400">{body}</p></div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-5 text-xs leading-5 text-gray-500">No cold SMS, no automated prospect dialing, and no claim that a configured provider proves customer delivery or revenue.</p>
+            </div>
+
+            <div className="border border-[#2f4637] bg-[#101510] p-5 shadow-2xl shadow-black/30">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
-              <div className="mt-5 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start recovery setup</div>
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Activation details</div>
               <div className="mt-1 text-sm text-gray-300">Pick a plan, tell us where missed-call alerts go, and get routed into the correct setup step.</div>
             </div>
             {selected ? <div className="bg-[#00ff88] px-3 py-2 font-mono text-xs font-black text-black">${selected.price}/{selected.interval}</div> : null}
@@ -935,16 +1037,17 @@ function PublicLandingPage() {
               </div>
             )}
           </div>
+            </div>
+          </div>
         </section>
-        </div>
 
-        <section className="relative border-t border-[#173321] bg-[#0d100d] px-5 py-10">
+        <section className="border-b border-[#24362a] bg-[#0d100d] px-5 py-14">
           <div className="mx-auto max-w-7xl">
             <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
               <div>
-                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Why it competes</div>
-                <h2 className="mt-2 text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-                  Built for owners who miss jobs while working.
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Why SMIRK starts narrower</div>
+                <h2 className="mt-2 text-3xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>
+                  Built for calls that arrive while the work is happening.
                 </h2>
               </div>
               <a href="/compare" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
@@ -960,9 +1063,9 @@ function PublicLandingPage() {
             </div>
             <div className="grid gap-3 md:grid-cols-3">
               {[
-                ['Focused recovery', 'General AI receptionists try to replace the whole front office. SMIRK starts with the job that pays first: answer missed calls and make callback work obvious.'],
-                ['Flat buyer path', 'Voice-agent platforms can become provider-cost math. SMIRK sells simple monthly plans with the call record, summary, task, and dashboard already wired.'],
-                ['Proof over promise', 'Every proof call should leave a call record, summary, owner alert, callback task, and dashboard evidence the owner can inspect.'],
+                ['Focused recovery', 'SMIRK starts with one operational problem: answer missed or overflow calls and make the required callback obvious.'],
+                ['Human support', 'The agent handles capture and routine, source-backed questions so owners and staff can focus on judgment, scheduling, and customer care.'],
+                ['Proof over promise', 'Every proof call should leave a call record, transcript, summary, owner alert, callback task, and dashboard evidence the owner can inspect.'],
               ].map(([title, body]) => (
                 <div key={title} className="border border-[#173321] bg-black/35 p-4">
                   <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">{title}</div>
@@ -972,7 +1075,47 @@ function PublicLandingPage() {
             </div>
           </div>
         </section>
+
+        <section id="faq" className="bg-[#0a0a0a] px-5 py-14">
+          <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.7fr_1.3fr]">
+            <div>
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#ffba20]">Before you connect a line</div>
+              <h2 className="mt-3 text-3xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>Common questions</h2>
+              <p className="mt-4 text-sm leading-6 text-gray-400">The exact forwarding, transfer, and recording setup depends on your carrier, state, and chosen mode. SMIRK keeps those choices visible during setup.</p>
+            </div>
+            <div className="border-t border-[#2f4637]">
+              {[
+                ["Does SMIRK replace my receptionist?", "No. SMIRK is a call-capture and recovery layer. It handles approved routine information and prepares the handoff; your people keep control of judgment, dispatch, and customer relationships."],
+                ["Can I keep my existing business number?", "Usually. Missed-call backup commonly uses carrier forwarding after no answer. A dedicated SMIRK number is also available. The proof call confirms the exact route before setup is marked complete."],
+                ["What does the owner receive after a call?", "A persisted call record, transcript, captured fields, urgency and disposition, owner summary, lead, callback task, and status history in the correct workspace."],
+                ["What if the caller asks something SMIRK does not know?", "The agent should say that it does not have a supported answer, capture the question, and create a human follow-up instead of inventing a policy or price."],
+                ["Can it transfer urgent callers?", "Yes, when a full operator configures and verifies the transfer target and rules. Live handoff is not assumed merely because a phone number is present."],
+                ["Does setup enable cold SMS or automated sales calls?", "No. Cold SMS and automated prospect dialing remain prohibited. Any future customer messaging must use separate consent, allowlists, caps, spend limits, and explicit activation."],
+              ].map(([question, answer]) => (
+                <details key={question} className="group border-b border-[#2f4637] py-1">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-4 text-sm font-bold text-white">
+                    <span>{question}</span><ChevronDown size={16} className="shrink-0 text-[#00e479] transition-transform group-open:rotate-180" />
+                  </summary>
+                  <p className="max-w-3xl pb-5 pr-8 text-sm leading-6 text-gray-400">{answer}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
+
+      <footer className="border-t border-[#24362a] bg-[#080808] px-5 py-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div><PublicLogo /><p className="mt-3 text-xs text-gray-500">Smart missed-call recovery and reception for home-service teams.</p></div>
+          <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-gray-400">
+            <a href="/launch" className="hover:text-white">Proof</a>
+            <a href="/compare" className="hover:text-white">Compare</a>
+            <a href="/pricing" className="hover:text-white">Pricing</a>
+            <a href="/book" className="hover:text-white">Setup help</a>
+            <a href="/dashboard" className="hover:text-white">Sign in</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -7582,6 +7725,15 @@ function BusinessDataPage() {
   );
 }
 
+type SettingsSectionTab = "core" | "voice" | "behavior" | "advanced";
+
+const settingsTabForConnection = (groupId: string | null): SettingsSectionTab => {
+  if (["google_tts", "cartesia", "openai_tts", "elevenlabs", "deepgram"].includes(String(groupId || ""))) return "voice";
+  if (["openclaw", "google_calendar", "google_places", "lead_providers", "crm"].includes(String(groupId || ""))) return "advanced";
+  if (["behavior", "agent_behavior", "prompts"].includes(String(groupId || ""))) return "behavior";
+  return "core";
+};
+
 function SettingsPage({
   workspaceSession,
   savedProfiles,
@@ -7598,6 +7750,9 @@ function SettingsPage({
   onOpenSetup: () => void;
 }) {
   const operatorOnlyView = !!workspaceSession;
+  const requestedSettingsGroup = typeof window === "undefined"
+    ? null
+    : new URLSearchParams(window.location.search).get("connection");
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
   // Per-workspace business profile (DB-backed, multi-tenant)
   const [wsProfile, setWsProfile] = useState<WorkspaceProfileData | null>(null);
@@ -7624,7 +7779,7 @@ function SettingsPage({
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [savedGroup, setSavedGroup] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"core" | "voice" | "behavior" | "advanced">("core");
+  const [activeTab, setActiveTab] = useState<SettingsSectionTab>(() => settingsTabForConnection(requestedSettingsGroup));
   const [health, setHealth] = useState<Record<string, "ok" | "error" | "untested" | "optional">>({});
   const { addToast } = useToast();
 
@@ -7642,8 +7797,8 @@ function SettingsPage({
   };
   const testableGroups = new Set(Object.keys(testServiceByGroup));
   const behaviorKeys = new Set(["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","INTAKE_FIRST_QUESTION","OBJECTION_STYLE","AGENT_PERSONA","AGENT_NAME","BUSINESS_NAME"]);
-  const advancedGroupIds = new Set(["openclaw", "openai_tts", "elevenlabs", "google_calendar"]);
-  const voiceGroupIds = new Set(["openai_tts", "elevenlabs", "deepgram"]);
+  const advancedGroupIds = new Set(["openclaw", "google_calendar", "google_places", "lead_providers", "crm"]);
+  const voiceGroupIds = new Set(["google_tts", "cartesia", "openai_tts", "elevenlabs", "deepgram"]);
   const behaviorGroupIds = new Set(["behavior", "agent_behavior", "prompts"]);
 
   const tabGroups = {
@@ -7682,6 +7837,15 @@ function SettingsPage({
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!requestedSettingsGroup || groups.length === 0) return;
+    setActiveTab(settingsTabForConnection(requestedSettingsGroup));
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`settings-group-${requestedSettingsGroup}`)?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [groups.length, requestedSettingsGroup]);
 
   const loadKnowledgeSources = async () => {
     setKnowledgeLoading(true);
@@ -7970,7 +8134,7 @@ function SettingsPage({
     </div>
   );
 
-  const tabs: { id: "core" | "voice" | "behavior" | "advanced"; label: string; icon: React.ReactNode }[] = [
+  const tabs: { id: SettingsSectionTab; label: string; icon: React.ReactNode }[] = [
     { id: "core", label: "Connections", icon: <Key size={13} /> },
     { id: "voice", label: "Voice", icon: <Headphones size={13} /> },
     { id: "behavior", label: "Behavior", icon: <MessageSquare size={13} /> },
@@ -8000,6 +8164,10 @@ function SettingsPage({
             </button>
           )}
         </div>
+      </div>
+
+      <div className="border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs leading-5 text-amber-100">
+        <span className="font-semibold">Production secret rule:</span> saving here updates the current SMIRK runtime. Unless Admin Settings reports a mounted persistent path, store the same value in Railway before the next restart or deploy. Secret values remain write-only and are never shown in the admin inventory.
       </div>
 
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
@@ -8543,7 +8711,7 @@ function SettingsPage({
           </div>
         )}
         {visibleGroups.map((group) => (
-          <div key={group.id} className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+          <div id={`settings-group-${group.id}`} key={group.id} className="scroll-mt-6 rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
             {/* Section header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
               <div className="flex items-center gap-3 min-w-0">
@@ -20223,6 +20391,14 @@ type OwnerControlConnection = {
   balanceValue?: string | null;
   latencyMs?: number | null;
   verification: "provider_probe" | "configuration" | "policy" | string;
+  credentialState: "active" | "missing" | "rejected" | "unverified" | "not_applicable";
+  actionRequired: boolean;
+  actions: Array<{
+    id: "configure" | "provider" | "billing";
+    label: string;
+    href: string;
+    external: boolean;
+  }>;
 };
 
 type OwnerProspectAcquisitionOverview = {
@@ -20358,7 +20534,19 @@ type OwnerControlOverview = {
   };
   prospectAcquisition: OwnerProspectAcquisitionOverview;
   connections: OwnerControlConnection[];
-  credentials: { key: string; label: string; configured: boolean; critical: boolean; exposure: string }[];
+  settingsStorage: {
+    mode: string;
+    durableInAppWrites: boolean;
+    detail: string;
+  };
+  operationalChecklist: Array<{
+    id: string;
+    label: string;
+    state: "ready" | "attention" | "blocked" | "unverified";
+    detail: string;
+    next: string;
+  }>;
+  credentials: { key: string; label: string; category: string; configured: boolean; critical: boolean; exposure: string }[];
   guardrails: { label: string; state: string; detail: string }[];
   dataSources: string[];
 };
@@ -20377,6 +20565,28 @@ const ownerVerificationLabel = (verification: string) => {
   return "configuration";
 };
 
+const ownerCredentialLabel = (state: OwnerControlConnection["credentialState"]) => {
+  if (state === "active") return "Active credential";
+  if (state === "missing") return "Credential missing";
+  if (state === "rejected") return "Rejected / expired";
+  if (state === "not_applicable") return "No credential";
+  return "Not live-verified";
+};
+
+const ownerCredentialClass = (state: OwnerControlConnection["credentialState"]) => {
+  if (state === "active") return "text-[#00e479]";
+  if (state === "missing" || state === "rejected") return "text-red-300";
+  if (state === "not_applicable") return "text-[#849585]";
+  return "text-[#ffba20]";
+};
+
+const ownerChecklistClass = (state: "ready" | "attention" | "blocked" | "unverified") => {
+  if (state === "ready") return "border-[#00e479]/40 bg-[#00e479]/10 text-[#00e479]";
+  if (state === "blocked") return "border-red-500/40 bg-red-500/10 text-red-300";
+  if (state === "attention") return "border-[#ffba20]/40 bg-[#ffba20]/10 text-[#ffba20]";
+  return "border-[#526053] bg-[#201f1f] text-[#b9cbb9]";
+};
+
 const ownerProspectStatusClass = (state: "ready" | "blocked" | "disabled" | "enabled" | "invalid") => {
   if (state === "ready") return "border-[#00e479]/40 bg-[#00e479]/10 text-[#00e479]";
   if (state === "disabled") return "border-[#526053] bg-[#201f1f] text-[#b9cbb9]";
@@ -20389,7 +20599,7 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
   const [overview, setOverview] = useState<OwnerControlOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [connectionFilter, setConnectionFilter] = useState<"all" | "provider" | "control">("all");
+  const [connectionFilter, setConnectionFilter] = useState<"all" | "provider" | "control" | "action">("all");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -20413,6 +20623,7 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
   const connections = (overview?.connections || []).filter((connection) => {
     if (connectionFilter === "provider") return ["core", "ai", "payments", "email", "voice", "infra", "calendar", "leads", "integrations"].includes(connection.category);
     if (connectionFilter === "control") return ["access", "approval", "guardrail"].includes(connection.category);
+    if (connectionFilter === "action") return connection.actionRequired;
     return true;
   });
   const usage = overview?.business.usage;
@@ -20432,10 +20643,10 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
       <header className="flex flex-col gap-4 border-b border-[#3b4b3d] pb-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#00e479]">
-            <ShieldCheck size={14} /> Owner access surface
+            <ShieldCheck size={14} /> Full-admin workspace
           </div>
-          <h2 className="font-mono text-2xl font-black uppercase tracking-[0.03em] text-[#f1ffef]">Owner Control</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#b9cbb9]">Full-operator visibility across connections, usage, business operations, and the controls that protect spend.</p>
+          <h2 className="font-mono text-2xl font-black uppercase tracking-[0.03em] text-[#f1ffef]">Admin Settings</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#b9cbb9]">Connection health, credential posture, provider usage, costs, repair paths, and the controls that protect spend.</p>
         </div>
         <div className="flex items-center gap-3 self-start md:self-auto">
           <div className="text-right font-mono text-[10px] uppercase tracking-[0.08em] text-[#849585]">
@@ -20477,6 +20688,37 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
             <div className="mt-2 text-xs text-[#b9cbb9]">{metric.detail}</div>
           </div>
         ))}
+      </section>
+
+      <section aria-label="Operational requirements" className="border border-[#3b4b3d] bg-[#131313]">
+        <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[#00e479]">What still has to be true</div>
+            <h3 className="mt-1 text-base font-bold text-[#f1ffef]">Operational requirements</h3>
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-[#849585]">A connection is not called active unless a provider probe or durable application evidence supports it. Unknown proof stays unknown.</p>
+          </div>
+          <div className={`self-start border px-3 py-2 font-mono text-[9px] font-bold uppercase ${overview?.settingsStorage.durableInAppWrites ? ownerChecklistClass("ready") : ownerChecklistClass("attention")}`}>
+            {overview?.settingsStorage.durableInAppWrites ? "Durable in-app writes" : "Provider env required for durability"}
+          </div>
+        </div>
+        {overview?.settingsStorage && (
+          <div className="border-b border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3 text-xs leading-5 text-[#b9cbb9]">
+            <span className="font-semibold text-[#f1ffef]">Secret storage:</span> {overview.settingsStorage.detail}
+          </div>
+        )}
+        <div className="grid bg-[#3b4b3d] md:grid-cols-2 xl:grid-cols-4">
+          {(overview?.operationalChecklist || []).map((item) => (
+            <div key={item.id} className="min-h-[170px] bg-[#131313] px-4 py-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-sm font-semibold text-[#f1ffef]">{item.label}</div>
+                <span className={`shrink-0 border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerChecklistClass(item.state)}`}>{item.state}</span>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-[#b9cbb9]">{item.detail}</p>
+              <div className="mt-3 border-l-2 border-[#526053] pl-3 text-[11px] leading-4 text-[#849585]">{item.next}</div>
+            </div>
+          ))}
+          {!loading && overview && overview.operationalChecklist.length === 0 && <div className="bg-[#131313] px-4 py-8 text-sm text-[#849585]">No operational checklist is available.</div>}
+        </div>
       </section>
 
       {prospect && (
@@ -20757,6 +20999,7 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
                 ["all", "All"],
                 ["provider", "Providers"],
                 ["control", "Controls"],
+                ["action", "Needs action"],
               ] as const).map(([id, label]) => (
                 <button
                   key={id}
@@ -20771,35 +21014,55 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
               ))}
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <div className="min-w-[690px] divide-y divide-[#3b4b3d]">
-              <div className="grid grid-cols-[1.25fr_100px_1.3fr_130px] gap-4 bg-[#201f1f] px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[#849585]">
-                <span>Connection</span><span>Status</span><span>Evidence</span><span className="text-right">Telemetry</span>
-              </div>
-              {connections.map((connection) => (
-                <div key={connection.id} className="grid grid-cols-[1.25fr_100px_1.3fr_130px] gap-4 px-4 py-3 text-sm">
-                  <div>
-                    <div className="font-semibold text-[#f1ffef]">{connection.label}</div>
-                    <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.category}</div>
-                  </div>
-                  <div>
-                    <span className={`inline-flex border px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.08em] ${ownerStatusClass(connection.status)}`}>{connection.status}</span>
-                  </div>
-                  <div>
-                    <div className="text-xs leading-5 text-[#b9cbb9]">{connection.detail}</div>
-                    <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{ownerVerificationLabel(connection.verification)}</div>
-                  </div>
-                  <div className="text-right">
-                    {connection.balanceValue ? <div className="font-mono text-sm font-bold text-[#e5e2e1]">{connection.balanceValue}</div> : null}
-                    {connection.balanceLabel ? <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.balanceLabel}</div> : null}
-                    {connection.latencyMs ? <div className="mt-1 font-mono text-[10px] text-[#849585]">{connection.latencyMs}ms</div> : null}
-                  </div>
-                </div>
-              ))}
-              {connections.length === 0 && (
-                <div className="px-4 py-8 text-sm text-[#849585]">{loading ? "Refreshing provider inventory..." : "No provider inventory is available."}</div>
-              )}
+          <div className="divide-y divide-[#3b4b3d]">
+            <div className="hidden grid-cols-[1fr_120px_1.35fr_120px_230px] gap-4 bg-[#201f1f] px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[#849585] xl:grid">
+              <span>Connection</span><span>State</span><span>Evidence</span><span>Telemetry</span><span>Actions</span>
             </div>
+            {connections.map((connection) => (
+              <div key={connection.id} className="grid min-w-0 gap-4 px-4 py-4 xl:grid-cols-[1fr_120px_1.35fr_120px_230px] xl:items-start">
+                <div className="min-w-0">
+                  <div className="font-semibold text-[#f1ffef]">{connection.label}</div>
+                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.category}</div>
+                </div>
+                <div className="flex min-w-0 flex-wrap items-center gap-2 xl:block">
+                  <span className={`inline-flex border px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.08em] ${ownerStatusClass(connection.status)}`}>{connection.status}</span>
+                  <div className={`font-mono text-[9px] font-bold uppercase xl:mt-2 ${ownerCredentialClass(connection.credentialState)}`}>{ownerCredentialLabel(connection.credentialState)}</div>
+                </div>
+                <div className="min-w-0">
+                  <div className="break-words text-xs leading-5 text-[#b9cbb9]">{connection.detail}</div>
+                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{ownerVerificationLabel(connection.verification)}</div>
+                </div>
+                <div>
+                  {connection.balanceValue ? <div className="font-mono text-sm font-bold text-[#e5e2e1]">{connection.balanceValue}</div> : <div className="font-mono text-[9px] uppercase text-[#526053]">No balance feed</div>}
+                  {connection.balanceLabel ? <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.balanceLabel}</div> : null}
+                  {connection.latencyMs ? <div className="mt-1 font-mono text-[10px] text-[#849585]">{connection.latencyMs}ms</div> : null}
+                </div>
+                <div className="flex min-w-0 flex-wrap gap-2 pr-16 sm:pr-0 xl:justify-start">
+                  {connection.actions.map((action) => (
+                    <a
+                      key={action.id}
+                      href={action.href}
+                      target={action.external ? "_blank" : undefined}
+                      rel={action.external ? "noreferrer" : undefined}
+                      className={`inline-flex min-h-9 items-center justify-center gap-1.5 border px-3 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.06em] transition-colors ${
+                        action.id === "billing"
+                          ? "border-[#ffba20]/50 bg-[#ffba20]/10 text-[#ffba20] hover:bg-[#ffba20]/15"
+                          : action.id === "configure"
+                            ? "border-[#00e479]/50 bg-[#00e479]/10 text-[#00e479] hover:bg-[#00e479]/15"
+                            : "border-[#526053] text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef]"
+                      }`}
+                    >
+                      {action.id === "configure" ? <Settings size={12} /> : action.id === "billing" ? <CreditCard size={12} /> : <ExternalLink size={12} />}
+                      {action.label}
+                    </a>
+                  ))}
+                  {connection.actions.length === 0 && <span className="font-mono text-[9px] uppercase text-[#526053]">Observed only</span>}
+                </div>
+              </div>
+            ))}
+            {connections.length === 0 && (
+              <div className="px-4 py-8 text-sm text-[#849585]">{loading ? "Refreshing provider inventory..." : connectionFilter === "action" ? "No connections currently require action." : "No provider inventory is available."}</div>
+            )}
           </div>
         </div>
 
@@ -20858,7 +21121,7 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
               <div key={credential.key} className="flex min-h-[74px] items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm text-[#e5e2e1]">{credential.label}</div>
-                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{credential.critical ? "required" : "optional"}</div>
+                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{credential.category} · {credential.critical ? "required" : "optional"}</div>
                 </div>
                 <span className={`shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.08em] ${credential.configured ? "text-[#00e479]" : credential.critical ? "text-red-300" : "text-[#ffba20]"}`}>
                   {credential.configured ? "set" : credential.critical ? "missing" : "not set"}
@@ -21573,7 +21836,7 @@ export default function App() {
     { id: "compliance",     label: "Compliance",     icon: <ShieldCheck size={14} /> },
     { id: "workspaces",     label: "Workspaces",     icon: <Gauge size={14} /> },
     { id: "system_health",  label: "System Health",  icon: <Microscope size={14} /> },
-    { id: "owner_control",  label: "Owner Control",  icon: <Shield size={14} /> },
+    { id: "owner_control",  label: "Admin Settings", icon: <Shield size={14} /> },
     { id: "logs",           label: "Logs",           icon: <FileText size={14} /> },
   ];
   const overflowTabs = allOverflowTabs
@@ -22175,7 +22438,7 @@ export default function App() {
           </aside>}
 
           {/* Main Content */}
-          <main data-smirk-page={activeTab} className={`smirk-ops-main fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-2 transition-[left,right] duration-200 sm:p-4 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
+          <main data-smirk-page={activeTab} className={`smirk-ops-main fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-2 pr-14 transition-[left,right] duration-200 sm:p-4 sm:pr-20 xl:pr-4 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
             <ActiveCallBar calls={activeCalls} />
 
             {!isCustomerView && configStatus && configStatus.missingRequired.length > 0 && (
@@ -22749,10 +23012,10 @@ function SmirkChatBubble({
       {/* Bubble Button */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className={`flex items-center justify-center rounded-full text-[22px] ${
+        className={`flex h-10 w-10 items-center justify-center rounded-full text-base sm:h-14 sm:w-14 sm:text-[22px] ${
           dockToCommandRail && commandRailCollapsed
-            ? "h-14 w-14 xl:h-10 xl:w-10 xl:text-base"
-            : "h-14 w-14"
+            ? "xl:h-10 xl:w-10 xl:text-base"
+            : ""
         }`}
         style={{
           border: "none",

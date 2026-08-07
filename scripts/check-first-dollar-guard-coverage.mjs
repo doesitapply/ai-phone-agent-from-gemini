@@ -363,7 +363,7 @@ const checks = [
   {
     label: 'OpenAPI generator fails non-operator operator route inventory',
     file: 'scripts/generate-openapi.mjs',
-    needle: 'must include requireOperator in openapi.yaml inventory',
+    needle: 'must include an operator guard in openapi.yaml inventory',
   },
   {
     label: 'deploy preflight runs local auth regression guard',
@@ -411,24 +411,24 @@ const checks = [
     needle: 'app.post("/api/openclaw/test", dashboardAuth, requireOperator',
   },
   {
-    label: 'global settings schema route requires operator auth',
+    label: 'global settings schema route requires full-operator auth',
     file: 'src/routes/settings-routes.ts',
-    needle: 'app.get("/api/settings/groups", dashboardAuth, requireOperator',
+    needle: 'app.get("/api/settings/groups", dashboardAuth, requireFullOperator',
   },
   {
-    label: 'global settings route requires operator auth',
+    label: 'global settings route requires full-operator auth',
     file: 'src/routes/settings-routes.ts',
-    needle: 'app.get("/api/settings", dashboardAuth, requireOperator',
+    needle: 'app.get("/api/settings", dashboardAuth, requireFullOperator',
   },
   {
-    label: 'global settings write route requires operator auth',
+    label: 'global settings write route requires full-operator auth',
     file: 'src/routes/settings-routes.ts',
-    needle: 'app.post("/api/settings", dashboardAuth, requireOperator',
+    needle: 'app.post("/api/settings", dashboardAuth, requireFullOperator',
   },
   {
-    label: 'global settings test route requires operator auth',
+    label: 'global settings test route requires full-operator auth',
     file: 'src/routes/settings-routes.ts',
-    needle: 'app.post("/api/settings/test/:service", dashboardAuth, requireOperator',
+    needle: 'app.post("/api/settings/test/:service", dashboardAuth, requireFullOperator',
   },
   {
     label: 'system health route requires operator auth',
@@ -816,14 +816,14 @@ const checks = [
     needle: 'route: "/api/openclaw/status", markers: ["dashboardAuth", "requireOperator"]',
   },
   {
-    label: 'auth regression guards global settings schema operator-only route',
+    label: 'auth regression guards global settings schema full-operator route',
     file: 'scripts/check-auth-regression.mjs',
-    needle: 'route: "/api/settings/groups", markers: ["dashboardAuth", "requireOperator"]',
+    needle: 'route: "/api/settings/groups", markers: ["dashboardAuth", "requireFullOperator"]',
   },
   {
-    label: 'auth regression guards global settings operator-only routes',
+    label: 'auth regression guards global settings full-operator routes',
     file: 'scripts/check-auth-regression.mjs',
-    needle: 'route: "/api/settings", markers: ["dashboardAuth", "requireOperator"]',
+    needle: 'route: "/api/settings", markers: ["dashboardAuth", "requireFullOperator"]',
   },
   {
     label: 'auth regression guards diagnostic operator-only routes',

@@ -29,7 +29,8 @@ expect(
   "owner control overview must require authenticated full operator access and disable caching"
 );
 expect(
-  route.includes('const cleanConfigInventory = (config: any[]) => config.map((item) => ({')
+  route.includes('export const buildOwnerCredentialInventory = (')
+    && route.includes('configured: Boolean(String(env[definition.key] || "").trim()) || Boolean(monitorItem?.set)')
     && route.includes('exposure: "write_only_secret"')
     && !route.includes('value: item?.value')
     && !route.includes('res.json({ env'),

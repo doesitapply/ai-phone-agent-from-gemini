@@ -910,9 +910,13 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
   .smirk-call-ledger__head { padding-inline: 14px; }
 }
 
+@media (min-width: 721px) and (max-width: 1279px) {
+  .smirk-ops-shell .smirk-ops-main { padding-right: 80px !important; }
+}
+
 @media (max-width: 720px) {
   .smirk-ops-shell .smirk-ops-header { height: 56px !important; padding-inline: 14px !important; }
-  .smirk-ops-shell .smirk-ops-main { top: 56px !important; padding: 0 !important; }
+  .smirk-ops-shell .smirk-ops-main { top: 56px !important; padding: 0 56px 0 0 !important; }
   .smirk-ops-shell .smirk-mobile-nav { top: 56px !important; }
   .smirk-calls-page,
   .smirk-overview-page { padding: 22px 16px 76px !important; }

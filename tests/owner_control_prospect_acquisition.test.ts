@@ -2,10 +2,103 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Request, Response } from "express";
 import {
+  buildOwnerCredentialInventory,
+  buildOwnerConnectionManagement,
   buildOwnerProspectAcquisitionOverview,
   loadOwnerProspectAcquisitionUsage,
   registerOwnerControlRoutes,
 } from "../src/routes/owner-control-routes.ts";
+import { SETTINGS_GROUPS } from "../src/settings.ts";
+
+test("owner connection management exposes only allowlisted repair links and redacted credential state", () => {
+  const active = buildOwnerConnectionManagement({
+    id: "openrouter",
+    status: "online",
+    configured: true,
+    detail: "Credits endpoint reachable.",
+    verification: "provider_probe",
+  });
+  assert.equal(active.credentialState, "active");
+  assert.equal(active.actionRequired, false);
+  assert.deepEqual(active.actions.map((action) => action.id), [
+    "configure",
+    "provider",
+    "billing",
+  ]);
+  assert.match(active.actions[0].href, /^\/dashboard\/settings\?connection=/);
+  for (const action of active.actions.filter((item) => item.external)) {
+    assert.match(action.href, /^https:\/\//);
+    assert.doesNotMatch(action.href, /(?:key|token|secret)=/i);
+  }
+
+  const rejected = buildOwnerConnectionManagement({
+    id: "resend",
+    status: "warn",
+    configured: true,
+    detail: "Resend returned 401",
+    verification: "provider_probe",
+  });
+  assert.equal(rejected.credentialState, "rejected");
+  assert.equal(rejected.actionRequired, true);
+
+  const missing = buildOwnerConnectionManagement({
+    id: "twilio",
+    status: "offline",
+    configured: false,
+    detail: "Credentials missing.",
+    verification: "provider_probe",
+  });
+  assert.equal(missing.credentialState, "missing");
+  assert.equal(missing.actionRequired, true);
+
+  const configuredOnly = buildOwnerConnectionManagement({
+    id: "google_tts",
+    status: "unknown",
+    configured: true,
+    detail: "Configured but not provider-probed.",
+    verification: "configuration",
+  });
+  assert.equal(configuredOnly.credentialState, "unverified");
+  assert.equal(configuredOnly.actions[0].href, "/dashboard/settings?connection=google_tts");
+});
+
+test("owner credential inventory is comprehensive and never returns credential bytes", () => {
+  const secret = `sk-${"x".repeat(40)}`;
+  const inventory = buildOwnerCredentialInventory({
+    OPENROUTER_API_KEY: secret,
+    HUBSPOT_ACCESS_TOKEN: secret,
+    APOLLO_API_KEY: secret,
+    TELEGRAM_WEBHOOK_SECRET: secret,
+    VELVET_OUTCOME_SIGNING_SECRET: secret,
+  });
+
+  assert.ok(inventory.length >= 55);
+  for (const key of [
+    "DATABASE_URL",
+    "OPENROUTER_API_KEY",
+    "HUBSPOT_ACCESS_TOKEN",
+    "APOLLO_API_KEY",
+    "TELEGRAM_WEBHOOK_SECRET",
+    "VELVET_OUTCOME_SIGNING_SECRET",
+  ]) {
+    assert.ok(inventory.some((item) => item.key === key), key);
+  }
+  assert.equal(inventory.find((item) => item.key === "OPENROUTER_API_KEY")?.configured, true);
+  assert.equal(JSON.stringify(inventory).includes(secret), false);
+});
+
+test("admin settings expose CRM and lead provider setup without an outreach switch", () => {
+  const crm = SETTINGS_GROUPS.find((group) => group.id === "crm");
+  const leadProviders = SETTINGS_GROUPS.find((group) => group.id === "lead_providers");
+  assert.ok(crm);
+  assert.ok(leadProviders);
+  assert.ok(crm.fields.some((field) => field.key === "HUBSPOT_ACCESS_TOKEN"));
+  assert.ok(crm.fields.some((field) => field.key === "SALESFORCE_REFRESH_TOKEN"));
+  assert.ok(leadProviders.fields.some((field) => field.key === "APOLLO_API_KEY"));
+  assert.ok(leadProviders.fields.some((field) => field.key === "GOOGLE_MAPS_API_KEY"));
+  const serialized = JSON.stringify([crm, leadProviders]);
+  assert.doesNotMatch(serialized, /SMS.*enabled|auto.?dial|send.*enabled/i);
+});
 
 test("owner prospect-acquisition telemetry is redacted and cannot authorize execution", () => {
   const secretValues = {
@@ -117,6 +210,26 @@ test("owner-control overview exposes redacted prospect plumbing to full operator
   assert.equal(state.body.prospectAcquisition.usage.availability, "unavailable");
   assert.equal(state.body.prospectAcquisition.usage.email.recipientsReserved, null);
   assert.deepEqual(state.body.prospectAcquisition.usage.issues, ["database-disabled"]);
+  assert.equal(state.body.settingsStorage.durableInAppWrites, false);
+  assert.equal(state.body.operationalChecklist.length, 8);
+  for (const connectionId of [
+    "google_tts",
+    "hubspot",
+    "salesforce",
+    "airtable",
+    "notion",
+    "apollo",
+    "brave_search",
+    "serper",
+    "google_maps",
+  ]) {
+    assert.ok(state.body.connections.some((item: any) => item.id === connectionId), connectionId);
+  }
+  assert.ok(state.body.credentials.length >= 55);
+  assert.equal(
+    state.body.operationalChecklist.find((item: any) => item.id === "production_backup")?.state,
+    "unverified"
+  );
 });
 
 test("owner prospect usage reports durable rolling reservations, tokens, and approved exposure", async () => {
@@ -220,4 +333,8 @@ test("owner-control UI names the redacted prospect controls and safety boundary"
   assert.match(source, /External evidence unproven/);
   assert.match(source, /No action authorized/i);
   assert.match(source, /cannot enable a switch, contact a prospect, or authorize spend/);
+  assert.match(source, /Operational requirements/);
+  assert.match(source, /action\.id === "billing"/);
+  assert.match(source, /Rejected \/ expired/);
+  assert.match(source, /Production secret rule/);
 });

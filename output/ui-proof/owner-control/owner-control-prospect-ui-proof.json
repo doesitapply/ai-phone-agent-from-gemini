@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "generatedAt": "2026-08-02T12:23:08.129Z",
+  "generatedAt": "2026-08-07T04:42:27.029Z",
   "syntheticApiOnly": true,
   "productionRequests": 0,
   "externalActions": 0,
@@ -8,6 +8,8 @@
     {
       "screenshot": "output/ui-proof/owner-control/owner-control-prospect-desktop.png",
       "usageScreenshot": "output/ui-proof/owner-control/owner-control-prospect-desktop-usage.png",
+      "connectionScreenshot": "output/ui-proof/owner-control/owner-control-prospect-desktop-connections.png",
+      "settingsScreenshot": "output/ui-proof/owner-control/admin-settings-desktop.png",
       "viewport": {
         "width": 1440,
         "height": 1000
@@ -23,24 +25,34 @@
       "overflow": {
         "body": 0,
         "document": 0
+      },
+      "settingsOverflow": {
+        "body": 0,
+        "document": 0
       }
     },
     {
       "screenshot": "output/ui-proof/owner-control/owner-control-prospect-mobile.png",
       "usageScreenshot": "output/ui-proof/owner-control/owner-control-prospect-mobile-usage.png",
+      "connectionScreenshot": "output/ui-proof/owner-control/owner-control-prospect-mobile-connections.png",
+      "settingsScreenshot": "output/ui-proof/owner-control/admin-settings-mobile.png",
       "viewport": {
         "width": 390,
         "height": 844
       },
       "controlPlaneDimensions": {
-        "width": 366,
-        "height": 5217
+        "width": 310,
+        "height": 5411
       },
       "usageDimensions": {
-        "width": 364,
-        "height": 542
+        "width": 308,
+        "height": 558
       },
       "overflow": {
+        "body": 0,
+        "document": 0
+      },
+      "settingsOverflow": {
         "body": 0,
         "document": 0
       }

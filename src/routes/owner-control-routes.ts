@@ -66,6 +66,198 @@ const CREDENTIAL_SEPARATION_LABELS = {
   revenueLoopPreparerAndPrivilegedKeysDistinct: "Preparer and privileged keys",
 } as const;
 
+type OwnerCredentialState =
+  | "active"
+  | "missing"
+  | "rejected"
+  | "unverified"
+  | "not_applicable";
+
+type OwnerConnectionAction = {
+  id: "configure" | "provider" | "billing";
+  label: string;
+  href: string;
+  external: boolean;
+};
+
+const OWNER_CONNECTION_MANAGEMENT: Record<string, {
+  settingsGroup?: string;
+  providerUrl?: string;
+  billingUrl?: string;
+}> = {
+  twilio: {
+    settingsGroup: "core",
+    providerUrl: "https://console.twilio.com/",
+    billingUrl: "https://console.twilio.com/us1/billing",
+  },
+  openrouter: {
+    settingsGroup: "openrouter",
+    providerUrl: "https://openrouter.ai/settings/keys",
+    billingUrl: "https://openrouter.ai/settings/credits",
+  },
+  stripe: {
+    providerUrl: "https://dashboard.stripe.com/payment-links",
+  },
+  resend: {
+    settingsGroup: "email_outreach",
+    providerUrl: "https://resend.com/api-keys",
+    billingUrl: "https://resend.com/settings/billing",
+  },
+  elevenlabs: {
+    settingsGroup: "elevenlabs",
+    providerUrl: "https://elevenlabs.io/app/settings/api-keys",
+    billingUrl: "https://elevenlabs.io/app/subscription",
+  },
+  database_ops: {
+    providerUrl: "https://railway.com/dashboard",
+  },
+  gemini: {
+    settingsGroup: "gemini",
+    providerUrl: "https://aistudio.google.com/app/apikey",
+    billingUrl: "https://aistudio.google.com/app/billing",
+  },
+  google_calendar: {
+    settingsGroup: "google_calendar",
+    providerUrl: "https://console.cloud.google.com/apis/credentials",
+  },
+  google_places: {
+    settingsGroup: "google_places",
+    providerUrl: "https://console.cloud.google.com/apis/credentials",
+    billingUrl: "https://console.cloud.google.com/billing",
+  },
+  google_tts: {
+    settingsGroup: "google_tts",
+    providerUrl: "https://console.cloud.google.com/apis/library/texttospeech.googleapis.com",
+    billingUrl: "https://console.cloud.google.com/billing",
+  },
+  hubspot: {
+    settingsGroup: "crm",
+    providerUrl: "https://app.hubspot.com/",
+  },
+  salesforce: {
+    settingsGroup: "crm",
+    providerUrl: "https://login.salesforce.com/",
+  },
+  airtable: {
+    settingsGroup: "crm",
+    providerUrl: "https://airtable.com/create/tokens",
+  },
+  notion: {
+    settingsGroup: "crm",
+    providerUrl: "https://www.notion.so/profile/integrations",
+  },
+  apollo: {
+    settingsGroup: "lead_providers",
+    providerUrl: "https://app.apollo.io/#/settings/integrations/api",
+  },
+  brave_search: {
+    settingsGroup: "lead_providers",
+    providerUrl: "https://api.search.brave.com/app/keys",
+  },
+  serper: {
+    settingsGroup: "lead_providers",
+    providerUrl: "https://serper.dev/api-key",
+  },
+  google_maps: {
+    settingsGroup: "lead_providers",
+    providerUrl: "https://console.cloud.google.com/apis/credentials",
+    billingUrl: "https://console.cloud.google.com/billing",
+  },
+  operator_access: {
+    settingsGroup: "deployment",
+  },
+  google_admin_allowlist: {
+    providerUrl: "https://railway.com/dashboard",
+  },
+  telegram_approval_guard: {
+    providerUrl: "https://railway.com/dashboard",
+  },
+  openclaw_gateway: {
+    settingsGroup: "openclaw",
+  },
+  cartesia_tts: {
+    settingsGroup: "cartesia",
+    providerUrl: "https://play.cartesia.ai/",
+  },
+  openai_tts: {
+    settingsGroup: "openai_tts",
+    providerUrl: "https://platform.openai.com/api-keys",
+    billingUrl: "https://platform.openai.com/settings/organization/billing/overview",
+  },
+  calendly: {
+    settingsGroup: "booking",
+    providerUrl: "https://calendly.com/integrations",
+  },
+  outbound_webhook: {
+    settingsGroup: "deployment",
+  },
+};
+
+const rejectedCredentialPattern = /(?:\b401\b|\b403\b|unauthori[sz]ed|forbidden|invalid api key|authentication failed)/i;
+const acceptedCredentialPattern = /(?:credential accepted|api reachable|restricted stripe read access (?:reached|succeeded)|characters [\d,]+\s*\/|account .+ is active)/i;
+
+export function buildOwnerConnectionManagement(connection: {
+  id: string;
+  status: string;
+  configured: boolean;
+  detail: string;
+  verification: string;
+}) {
+  const management = OWNER_CONNECTION_MANAGEMENT[connection.id] || {};
+  const actions: OwnerConnectionAction[] = [];
+  if (management.settingsGroup) {
+    actions.push({
+      id: "configure",
+      label: connection.configured ? "Configure" : "Add connection",
+      href: `/dashboard/settings?connection=${encodeURIComponent(management.settingsGroup)}`,
+      external: false,
+    });
+  }
+  if (management.providerUrl) {
+    actions.push({
+      id: "provider",
+      label: "Open provider",
+      href: management.providerUrl,
+      external: true,
+    });
+  }
+  if (management.billingUrl) {
+    actions.push({
+      id: "billing",
+      label: "Billing / credits",
+      href: management.billingUrl,
+      external: true,
+    });
+  }
+
+  let credentialState: OwnerCredentialState = "unverified";
+  if (connection.verification === "policy" || connection.id === "database_ops") {
+    credentialState = "not_applicable";
+  } else if (!connection.configured) {
+    credentialState = "missing";
+  } else if (rejectedCredentialPattern.test(connection.detail)) {
+    credentialState = "rejected";
+  } else if (
+    connection.verification === "provider_probe"
+    && (
+      connection.status === "online"
+      || acceptedCredentialPattern.test(connection.detail)
+    )
+  ) {
+    credentialState = "active";
+  }
+
+  return {
+    credentialState,
+    actionRequired:
+      credentialState === "missing"
+      || credentialState === "rejected"
+      || connection.status === "offline"
+      || connection.status === "warn",
+    actions,
+  };
+}
+
 export function buildOwnerProspectAcquisitionOverview(
   env: Record<string, string | undefined>
 ) {
@@ -369,13 +561,106 @@ const asCount = (value: unknown): number => {
 
 const monthKey = () => new Date().toISOString().slice(0, 7);
 
-const cleanConfigInventory = (config: any[]) => config.map((item) => ({
-  key: String(item?.key || "unknown"),
-  label: String(item?.label || "Configuration"),
-  configured: Boolean(item?.set),
-  critical: Boolean(item?.critical),
-  exposure: "write_only_secret",
-}));
+type OwnerCredentialDefinition = {
+  key: string;
+  label: string;
+  category: string;
+  critical?: boolean;
+};
+
+const OWNER_CREDENTIAL_DEFINITIONS: OwnerCredentialDefinition[] = [
+  { key: "DATABASE_URL", label: "Postgres connection", category: "core", critical: true },
+  { key: "WORKSPACE_SECRET_ENCRYPTION_KEY", label: "Workspace secret encryption", category: "core", critical: true },
+  { key: "DASHBOARD_API_KEY", label: "Full-operator API key", category: "access", critical: true },
+  { key: "DEMO_OPERATOR_API_KEY", label: "Restricted demo-operator key", category: "access" },
+  { key: "PHONE_AGENT_API_KEY", label: "Phone-agent API key", category: "access", critical: true },
+  { key: "PHONE_AGENT_PROVISIONING_SECRET", label: "Phone provisioning secret", category: "access", critical: true },
+  { key: "GOOGLE_OAUTH_CLIENT_ID", label: "Google OAuth client", category: "access" },
+  { key: "GOOGLE_ADMIN_EMAILS", label: "Google admin allowlist", category: "access", critical: true },
+  { key: "TWILIO_ACCOUNT_SID", label: "Twilio account SID", category: "voice", critical: true },
+  { key: "TWILIO_AUTH_TOKEN", label: "Twilio auth token", category: "voice", critical: true },
+  { key: "TWILIO_PHONE_NUMBER", label: "Twilio phone number", category: "voice", critical: true },
+  { key: "OPENROUTER_API_KEY", label: "OpenRouter API key", category: "ai", critical: true },
+  { key: "GEMINI_API_KEY", label: "Gemini API key", category: "ai" },
+  { key: "OPENAI_API_KEY", label: "OpenAI API key", category: "voice" },
+  { key: "GOOGLE_TTS_API_KEY", label: "Google TTS API key", category: "voice" },
+  { key: "CARTESIA_API_KEY", label: "Cartesia API key", category: "voice" },
+  { key: "ELEVENLABS_API_KEY", label: "ElevenLabs API key", category: "voice" },
+  { key: "RESEND_API_KEY", label: "Transactional Resend key", category: "email", critical: true },
+  { key: "FROM_EMAIL", label: "Transactional sender address", category: "email", critical: true },
+  { key: "STRIPE_REVENUE_READ_KEY", label: "Stripe restricted read key", category: "billing", critical: true },
+  { key: "STRIPE_BILLING_PORTAL_KEY", label: "Stripe portal restricted key", category: "billing" },
+  { key: "STRIPE_BILLING_PORTAL_CONFIGURATION_ID", label: "Stripe portal configuration", category: "billing" },
+  { key: "STRIPE_WEBHOOK_SECRET", label: "Stripe webhook signing secret", category: "billing", critical: true },
+  { key: "STRIPE_PAYMENT_LINK_STARTER_ID", label: "Starter payment-link ID", category: "billing", critical: true },
+  { key: "STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS", label: "Starter fulfillment allowlist", category: "billing", critical: true },
+  { key: "GOOGLE_SERVICE_ACCOUNT_JSON", label: "Google service account", category: "google" },
+  { key: "GOOGLE_CALENDAR_ID", label: "Google Calendar ID", category: "google" },
+  { key: "GOOGLE_PLACES_API_KEY", label: "Google Places API key", category: "lead data" },
+  { key: "GOOGLE_MAPS_API_KEY", label: "Google Maps lead-search key", category: "lead data" },
+  { key: "APOLLO_API_KEY", label: "Apollo API key", category: "lead data" },
+  { key: "BRAVE_API_KEY", label: "Brave Search API key", category: "lead data" },
+  { key: "SERPER_API_KEY", label: "Serper API key", category: "lead data" },
+  { key: "HUBSPOT_ACCESS_TOKEN", label: "HubSpot private-app token", category: "crm" },
+  { key: "SALESFORCE_INSTANCE_URL", label: "Salesforce instance URL", category: "crm" },
+  { key: "SALESFORCE_ACCESS_TOKEN", label: "Salesforce access token", category: "crm" },
+  { key: "SALESFORCE_CLIENT_ID", label: "Salesforce client ID", category: "crm" },
+  { key: "SALESFORCE_CLIENT_SECRET", label: "Salesforce client secret", category: "crm" },
+  { key: "SALESFORCE_REFRESH_TOKEN", label: "Salesforce refresh token", category: "crm" },
+  { key: "AIRTABLE_API_KEY", label: "Airtable personal-access token", category: "crm" },
+  { key: "AIRTABLE_BASE_ID", label: "Airtable base ID", category: "crm" },
+  { key: "NOTION_API_KEY", label: "Notion integration secret", category: "crm" },
+  { key: "NOTION_DATABASE_ID", label: "Notion database ID", category: "crm" },
+  { key: "CALENDLY_URL", label: "Calendly booking URL", category: "booking" },
+  { key: "CALENDLY_SIGNING_SECRET", label: "Calendly webhook secret", category: "booking" },
+  { key: "OPENCLAW_GATEWAY_URL", label: "OpenClaw gateway URL", category: "automation" },
+  { key: "OPENCLAW_GATEWAY_TOKEN", label: "OpenClaw gateway token", category: "automation" },
+  { key: "TELEGRAM_WEBHOOK_SECRET", label: "Telegram webhook secret", category: "approval" },
+  { key: "TELEGRAM_ALLOWED_USER_IDS", label: "Telegram user allowlist", category: "approval" },
+  { key: "TELEGRAM_ALLOWED_CHAT_IDS", label: "Telegram chat allowlist", category: "approval" },
+  { key: "VELVET_ALCHEMY_RESEARCH_API_KEY", label: "Velvet research receiver key", category: "velvet" },
+  { key: "VELVET_LEAD_SOURCE_API_KEY", label: "Velvet reviewed-lead source key", category: "velvet" },
+  { key: "VELVET_OUTCOME_API_KEY", label: "Velvet outcome callback key", category: "velvet" },
+  { key: "VELVET_OUTCOME_SIGNING_SECRET", label: "Velvet outcome signing secret", category: "velvet" },
+  { key: "PROSPECT_EMAIL_RESEND_API_KEY", label: "Prospect-email Resend key", category: "outreach" },
+  { key: "PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET", label: "Prospect-email webhook secret", category: "outreach" },
+  { key: "PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY", label: "Prospect reply-receiving key", category: "outreach" },
+  { key: "PROSPECT_QC_OPENROUTER_API_KEY", label: "Advisory-QC model key", category: "outreach" },
+  { key: "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY", label: "Revenue-loop observer key", category: "outreach" },
+  { key: "PROSPECT_REVENUE_LOOP_PREPARER_API_KEY", label: "Revenue-loop preparer key", category: "outreach" },
+];
+
+export const buildOwnerCredentialInventory = (
+  env: Record<string, string | undefined>,
+  config: any[] = []
+) => {
+  const monitorItems = new Map(
+    config.map((item) => [String(item?.key || ""), item])
+  );
+  const definitions = [...OWNER_CREDENTIAL_DEFINITIONS];
+  for (const item of config) {
+    const key = String(item?.key || "").trim();
+    if (!key || definitions.some((definition) => definition.key === key)) continue;
+    definitions.push({
+      key,
+      label: String(item?.label || key),
+      category: "runtime",
+      critical: Boolean(item?.critical),
+    });
+  }
+
+  return definitions.map((definition) => {
+    const monitorItem = monitorItems.get(definition.key);
+    return {
+      key: definition.key,
+      label: definition.label,
+      category: definition.category,
+      configured: Boolean(String(env[definition.key] || "").trim()) || Boolean(monitorItem?.set),
+      critical: Boolean(definition.critical || monitorItem?.critical),
+      exposure: "write_only_secret" as const,
+    };
+  });
+};
 
 const buildGuardrailConnections = (env: Record<string, string | undefined>, adminAllowlistCount: number) => {
   const telegramReady = Boolean(
@@ -389,6 +674,16 @@ const buildGuardrailConnections = (env: Record<string, string | undefined>, admi
   const openClawReady = Boolean(openClawEnabled && env.OPENCLAW_GATEWAY_URL && env.OPENCLAW_GATEWAY_TOKEN);
   const calendlyReady = Boolean(env.CALENDLY_URL && env.CALENDLY_SIGNING_SECRET);
   const webhookReady = Boolean(env.WEBHOOK_URL || env.OUTBOUND_WEBHOOK_URL);
+  const googleTtsReady = Boolean(env.GOOGLE_TTS_API_KEY || env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  const hubspotReady = Boolean(env.HUBSPOT_ACCESS_TOKEN);
+  const salesforceAccessReady = Boolean(env.SALESFORCE_INSTANCE_URL && env.SALESFORCE_ACCESS_TOKEN);
+  const salesforceRefreshReady = Boolean(
+    env.SALESFORCE_CLIENT_ID
+    && env.SALESFORCE_CLIENT_SECRET
+    && env.SALESFORCE_REFRESH_TOKEN
+  );
+  const airtableReady = Boolean(env.AIRTABLE_API_KEY && env.AIRTABLE_BASE_ID);
+  const notionReady = Boolean(env.NOTION_API_KEY && env.NOTION_DATABASE_ID);
 
   return [
     {
@@ -443,28 +738,133 @@ const buildGuardrailConnections = (env: Record<string, string | undefined>, admi
       id: "cartesia_tts",
       label: "Cartesia voice",
       category: "voice",
-      status: process.env.CARTESIA_API_KEY ? "online" : "unknown",
-      configured: Boolean(process.env.CARTESIA_API_KEY),
-      detail: process.env.CARTESIA_API_KEY ? "Voice credential is configured." : "No Cartesia credential is configured.",
+      status: env.CARTESIA_API_KEY ? "unknown" : "unknown",
+      configured: Boolean(env.CARTESIA_API_KEY),
+      detail: env.CARTESIA_API_KEY
+        ? "Voice credential is configured but not provider-probed on this surface."
+        : "No Cartesia credential is configured.",
+      verification: "configuration",
+    },
+    {
+      id: "google_tts",
+      label: "Google Cloud TTS",
+      category: "voice",
+      status: "unknown",
+      configured: googleTtsReady,
+      detail: googleTtsReady
+        ? "Voice credential is configured but has not been provider-probed on this surface."
+        : "No Google TTS API key or service account is configured.",
       verification: "configuration",
     },
     {
       id: "openai_tts",
       label: "OpenAI voice",
       category: "voice",
-      status: env.OPENAI_API_KEY ? "online" : "unknown",
+      status: "unknown",
       configured: Boolean(env.OPENAI_API_KEY),
-      detail: env.OPENAI_API_KEY ? "Voice credential is configured." : "No OpenAI voice credential is configured.",
+      detail: env.OPENAI_API_KEY
+        ? "Voice credential is configured but has not been provider-probed on this surface."
+        : "No OpenAI voice credential is configured.",
+      verification: "configuration",
+    },
+    {
+      id: "hubspot",
+      label: "HubSpot CRM",
+      category: "integrations",
+      status: "unknown",
+      configured: hubspotReady,
+      detail: hubspotReady
+        ? "Private-app token is configured; live CRM access is not probed here."
+        : "No HubSpot private-app token is configured.",
+      verification: "configuration",
+    },
+    {
+      id: "salesforce",
+      label: "Salesforce CRM",
+      category: "integrations",
+      status: salesforceAccessReady && !salesforceRefreshReady ? "warn" : "unknown",
+      configured: salesforceAccessReady,
+      detail: salesforceAccessReady
+        ? salesforceRefreshReady
+          ? "Instance, access token, and refresh credentials are configured; live CRM access is not probed here."
+          : "Instance and access token are configured, but automatic token refresh is incomplete."
+        : "Salesforce needs an instance URL and access token.",
+      verification: "configuration",
+    },
+    {
+      id: "airtable",
+      label: "Airtable CRM",
+      category: "integrations",
+      status: "unknown",
+      configured: airtableReady,
+      detail: airtableReady
+        ? "Token and base ID are configured; live Airtable access is not probed here."
+        : "Airtable needs both a personal-access token and base ID.",
+      verification: "configuration",
+    },
+    {
+      id: "notion",
+      label: "Notion CRM",
+      category: "integrations",
+      status: "unknown",
+      configured: notionReady,
+      detail: notionReady
+        ? "Integration secret and database ID are configured; live Notion access is not probed here."
+        : "Notion needs both an integration secret and database ID.",
+      verification: "configuration",
+    },
+    {
+      id: "apollo",
+      label: "Apollo lead data",
+      category: "leads",
+      status: "unknown",
+      configured: Boolean(env.APOLLO_API_KEY),
+      detail: env.APOLLO_API_KEY
+        ? "Lead-search credential is configured but has not been provider-probed."
+        : "No Apollo credential is configured.",
+      verification: "configuration",
+    },
+    {
+      id: "brave_search",
+      label: "Brave Search",
+      category: "leads",
+      status: "unknown",
+      configured: Boolean(env.BRAVE_API_KEY),
+      detail: env.BRAVE_API_KEY
+        ? "Search credential is configured but has not been provider-probed."
+        : "No Brave Search credential is configured.",
+      verification: "configuration",
+    },
+    {
+      id: "serper",
+      label: "Serper search",
+      category: "leads",
+      status: "unknown",
+      configured: Boolean(env.SERPER_API_KEY),
+      detail: env.SERPER_API_KEY
+        ? "Search credential is configured but has not been provider-probed."
+        : "No Serper credential is configured.",
+      verification: "configuration",
+    },
+    {
+      id: "google_maps",
+      label: "Google Maps lead search",
+      category: "leads",
+      status: "unknown",
+      configured: Boolean(env.GOOGLE_MAPS_API_KEY),
+      detail: env.GOOGLE_MAPS_API_KEY
+        ? "Lead-search key is configured but has not been provider-probed."
+        : "No Google Maps lead-search key is configured.",
       verification: "configuration",
     },
     {
       id: "calendly",
       label: "Calendly booking",
       category: "calendar",
-      status: calendlyReady ? "online" : env.CALENDLY_URL ? "warn" : "unknown",
+      status: calendlyReady ? "unknown" : env.CALENDLY_URL ? "warn" : "unknown",
       configured: calendlyReady,
       detail: calendlyReady
-        ? "Booking URL and webhook signing secret are configured."
+        ? "Booking URL and webhook signing secret are configured; webhook delivery is not live-verified here."
         : env.CALENDLY_URL
           ? "Booking URL is configured, but the webhook signing secret is missing."
           : "No Calendly booking connection is configured.",
@@ -474,9 +874,11 @@ const buildGuardrailConnections = (env: Record<string, string | undefined>, admi
       id: "outbound_webhook",
       label: "Outbound webhook",
       category: "integrations",
-      status: webhookReady ? "online" : "unknown",
+      status: "unknown",
       configured: webhookReady,
-      detail: webhookReady ? "A webhook destination is configured." : "No outbound webhook destination is configured.",
+      detail: webhookReady
+        ? "A webhook destination is configured; delivery is not live-verified here."
+        : "No outbound webhook destination is configured.",
       verification: "configuration",
     },
     {
@@ -586,6 +988,102 @@ const estimateTrackedVariableCost = (usage: { minutes: number; aiTokens: number 
   };
 };
 
+const buildSettingsStoragePosture = (env: Record<string, string | undefined>) => {
+  const configuredPath = String(env.SETTINGS_PATH || "").trim();
+  const durable = Boolean(
+    configuredPath
+    && !configuredPath.startsWith("/tmp")
+    && !configuredPath.startsWith("/var/tmp")
+  );
+  return {
+    mode: durable ? "mounted-persistent-path" : "runtime-or-provider-environment",
+    durableInAppWrites: durable,
+    detail: durable
+      ? "In-app setting writes target an explicitly configured persistent path. Provider environment remains authoritative after deploys."
+      : "In-app values can update the running process, but durable production secrets must still be stored in the deployment provider before restart or redeploy.",
+  };
+};
+
+const buildOwnerOperationalChecklist = (
+  connections: Array<{
+    id: string;
+    status: string;
+    configured: boolean;
+    credentialState: OwnerCredentialState;
+  }>,
+  settingsStorage: ReturnType<typeof buildSettingsStoragePosture>,
+  prospectAcquisition: ReturnType<typeof buildOwnerProspectAcquisitionOverview>
+) => {
+  const byId = new Map(connections.map((connection) => [connection.id, connection]));
+  const available = (id: string) => {
+    const connection = byId.get(id);
+    return Boolean(connection && connection.status !== "offline" && connection.configured);
+  };
+  const probedActive = (id: string) => byId.get(id)?.credentialState === "active";
+  const coreAiReady = probedActive("openrouter") || available("gemini");
+
+  return [
+    {
+      id: "call_path",
+      label: "Inbound call path",
+      state: probedActive("twilio") && coreAiReady ? "ready" : "blocked",
+      detail: "Twilio must pass a live provider probe and at least one AI path must be configured.",
+      next: !probedActive("twilio") ? "Repair Twilio first." : !coreAiReady ? "Add or verify an AI provider." : "No action required.",
+    },
+    {
+      id: "owner_alerts",
+      label: "Owner alerts and proof",
+      state: probedActive("resend") ? "ready" : "blocked",
+      detail: "Transactional owner alerts require a provider-probed Resend connection and verified sender.",
+      next: probedActive("resend") ? "No action required." : "Repair Resend and sender-domain verification.",
+    },
+    {
+      id: "checkout",
+      label: "Self-serve checkout",
+      state: probedActive("stripe") ? "ready" : "blocked",
+      detail: "The exact live Starter Payment Link and restricted read credential must both verify.",
+      next: probedActive("stripe") ? "No action required." : "Repair the exact Stripe checkout lane before promoting it.",
+    },
+    {
+      id: "durable_records",
+      label: "Durable business records",
+      state: available("database_ops") ? "ready" : "blocked",
+      detail: "Calls, transcripts, tasks, leads, usage, and audit receipts require Postgres.",
+      next: available("database_ops") ? "No action required." : "Restore the persistent database connection.",
+    },
+    {
+      id: "secret_persistence",
+      label: "Secret persistence",
+      state: settingsStorage.durableInAppWrites ? "ready" : "attention",
+      detail: settingsStorage.detail,
+      next: settingsStorage.durableInAppWrites
+        ? "Keep provider environment and mounted settings synchronized."
+        : "Use Configure for runtime repair, then store the same secret in Railway before a restart or deploy.",
+    },
+    {
+      id: "prospect_guardrails",
+      label: "Velvet acquisition guardrails",
+      state: prospectAcquisition.safeStagingState ? "ready" : "attention",
+      detail: "Cold SMS, bulk email, and automated prospect dialing stay prohibited; execution switches require separate approval.",
+      next: prospectAcquisition.nextAction.title,
+    },
+    {
+      id: "production_backup",
+      label: "Production backup receipt",
+      state: "unverified",
+      detail: "No backup receipt is connected to this endpoint, so this page cannot claim recoverability.",
+      next: "Run the production-backup readiness check before a database-affecting release.",
+    },
+    {
+      id: "deploy_parity",
+      label: "GitHub and live deploy parity",
+      state: "unverified",
+      detail: "Connection health does not prove that production is running the current approved commit.",
+      next: "Run the live-current and failed-deploy checks before deployment approval.",
+    },
+  ];
+};
+
 export function registerOwnerControlRoutes(app: Express, deps: OwnerControlRouteDeps): void {
   const {
     dashboardAuth,
@@ -638,7 +1136,7 @@ export function registerOwnerControlRoutes(app: Express, deps: OwnerControlRoute
       ...buildOwnerProspectAcquisitionOverview(env),
       usage: prospectUsage,
     };
-    const connections = [
+    const baseConnections = [
       ...(ops.services || []).map((service: any) => ({
         id: String(service?.id || "provider"),
         label: String(service?.label || "Provider"),
@@ -655,6 +1153,16 @@ export function registerOwnerControlRoutes(app: Express, deps: OwnerControlRoute
       })),
       ...buildGuardrailConnections(env, getAdminAllowlistCount()),
     ];
+    const connections = baseConnections.map((connection) => ({
+      ...connection,
+      ...buildOwnerConnectionManagement(connection),
+    }));
+    const settingsStorage = buildSettingsStoragePosture(env);
+    const operationalChecklist = buildOwnerOperationalChecklist(
+      connections,
+      settingsStorage,
+      prospectAcquisition
+    );
 
     return res.json({
       ok: true,
@@ -682,8 +1190,10 @@ export function registerOwnerControlRoutes(app: Express, deps: OwnerControlRoute
       },
       selectedWorkspaceSpend: ops.spend || null,
       connections,
+      settingsStorage,
+      operationalChecklist,
       prospectAcquisition,
-      credentials: cleanConfigInventory(ops.config || []),
+      credentials: buildOwnerCredentialInventory(env, ops.config || []),
       guardrails: [
         { label: "SMS and outbound delivery", state: "separate approval gate", detail: "No send control is available from this console." },
         { label: "Provider changes", state: "separate action", detail: "Connection state is visible here; provider writes stay in their guarded workflows." },

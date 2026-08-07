@@ -1325,7 +1325,7 @@ test("experiment preparation fails closed when the untouched eligible cohort is 
 
 test("experiment activation rejects a forged definition hash before mutation", async () => {
   const { sql, queries } = makeExperimentLifecycleSql();
-  const routes = captureRoutes(sql);
+  const routes = captureRoutes(sql, experimentActivationNow);
   const handler = routes.get(
     "POST /api/prospecting/learning/experiments/:experimentId/activate"
   );
@@ -1368,7 +1368,7 @@ test("experiment activation rejects selected-prospect eligibility drift", async 
     state: "PREPARED",
     eligibleProspectIds: [3],
   });
-  const handler = captureRoutes(fixture.sql).get(
+  const handler = captureRoutes(fixture.sql, experimentActivationNow).get(
     "POST /api/prospecting/learning/experiments/:experimentId/activate"
   );
   assert.ok(handler);
@@ -1393,7 +1393,11 @@ test("experiment activation rejects selected-prospect eligibility drift", async 
     () => undefined
   );
 
-  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.statusCode,
+    409,
+    JSON.stringify({ body: state.body, queries: fixture.queries.slice(-3) })
+  );
   assert.equal(
     state.body.code,
     "PROSPECT_MESSAGE_EXPERIMENT_COHORT_ELIGIBILITY_DRIFT"
@@ -1444,7 +1448,7 @@ test("experiment activation rejects an overlapping active frozen cohort", async 
       },
     ],
   });
-  const handler = captureRoutes(fixture.sql).get(
+  const handler = captureRoutes(fixture.sql, experimentActivationNow).get(
     "POST /api/prospecting/learning/experiments/:experimentId/activate"
   );
   assert.ok(handler);
@@ -1469,7 +1473,11 @@ test("experiment activation rejects an overlapping active frozen cohort", async 
     () => undefined
   );
 
-  assert.equal(state.statusCode, 409, JSON.stringify(state.body));
+  assert.equal(
+    state.statusCode,
+    409,
+    JSON.stringify({ body: state.body, queries: fixture.queries.slice(-3) })
+  );
   assert.equal(
     state.body.code,
     "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVATION_CONFLICT"
@@ -1484,7 +1492,7 @@ test("experiment activation rejects an overlapping active frozen cohort", async 
 
 test("experiment activation is single-row and replay-idempotent", async () => {
   const first = makeExperimentLifecycleSql({ state: "PREPARED" });
-  const handler = captureRoutes(first.sql).get(
+  const handler = captureRoutes(first.sql, experimentActivationNow).get(
     "POST /api/prospecting/learning/experiments/:experimentId/activate"
   );
   assert.ok(handler);
@@ -1504,7 +1512,11 @@ test("experiment activation is single-row and replay-idempotent", async () => {
   } as unknown as Request;
 
   await handler(request, firstResponse.response, () => undefined);
-  assert.equal(firstResponse.state.statusCode, 200);
+  assert.equal(
+    firstResponse.state.statusCode,
+    200,
+    JSON.stringify({ body: firstResponse.state.body, queries: first.queries.slice(-3) })
+  );
   assert.equal(firstResponse.state.body.outcome, "activated");
   assert.equal(firstResponse.state.body.externalAction, "none");
   assert.equal(
@@ -1525,7 +1537,7 @@ test("experiment activation is single-row and replay-idempotent", async () => {
   assert.ok(reservationReadIndex > campaignLockIndex);
 
   const replay = makeExperimentLifecycleSql({ state: "ACTIVE" });
-  const replayHandler = captureRoutes(replay.sql).get(
+  const replayHandler = captureRoutes(replay.sql, experimentActivationNow).get(
     "POST /api/prospecting/learning/experiments/:experimentId/activate"
   );
   assert.ok(replayHandler);
@@ -2505,6 +2517,8 @@ function measuredLearningRows() {
 const experimentId = "22222222-2222-4222-8222-222222222222";
 const inboxPlacementTestId =
   "33333333-3333-4333-8333-333333333333";
+const experimentActivationNow = () =>
+  new Date("2026-07-31T16:00:00.000Z");
 
 function makeInboxPlacementProofFixture(input: {
   controlVariantKey: string;

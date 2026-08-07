@@ -90,7 +90,56 @@ const ownerOverview = {
     estimated: { twilioVoice: 0.57, ai: 0.0049, total: 0.5749 },
     note: "Synthetic tracked estimate. Provider invoices remain authoritative.",
   },
-  connections: [],
+  settingsStorage: {
+    mode: "runtime-or-provider-environment",
+    durableInAppWrites: false,
+    detail: "Synthetic fixture: production secrets must be stored in the deployment provider before restart or redeploy.",
+  },
+  operationalChecklist: [
+    { id: "call_path", label: "Inbound call path", state: "ready", detail: "Twilio and AI evidence are present.", next: "No action required." },
+    { id: "owner_alerts", label: "Owner alerts and proof", state: "blocked", detail: "Resend credential was rejected.", next: "Repair Resend." },
+    { id: "checkout", label: "Self-serve checkout", state: "ready", detail: "Exact Stripe lane verified.", next: "No action required." },
+    { id: "production_backup", label: "Production backup receipt", state: "unverified", detail: "No backup receipt is connected.", next: "Run the production-backup check." },
+  ],
+  connections: [
+    {
+      id: "twilio", label: "Twilio Voice", category: "core", status: "online", configured: true,
+      detail: "Synthetic provider probe accepted the credential.", balanceLabel: "Balance", balanceValue: "$42.18", latencyMs: 184,
+      verification: "provider_probe", credentialState: "active", actionRequired: false,
+      actions: [
+        { id: "configure", label: "Configure", href: "/dashboard/settings?connection=core", external: false },
+        { id: "provider", label: "Open provider", href: "https://console.twilio.com/", external: true },
+        { id: "billing", label: "Billing / credits", href: "https://console.twilio.com/us1/billing", external: true },
+      ],
+    },
+    {
+      id: "openrouter", label: "OpenRouter", category: "ai", status: "warn", configured: true,
+      detail: "Credential accepted. Credit balance needs attention.", balanceLabel: "Credits left", balanceValue: "$1.12", latencyMs: 211,
+      verification: "provider_probe", credentialState: "active", actionRequired: true,
+      actions: [
+        { id: "configure", label: "Configure", href: "/dashboard/settings?connection=openrouter", external: false },
+        { id: "billing", label: "Billing / credits", href: "https://openrouter.ai/settings/credits", external: true },
+      ],
+    },
+    {
+      id: "resend", label: "Resend Email", category: "email", status: "warn", configured: true,
+      detail: "Resend returned 401.", balanceLabel: null, balanceValue: null, latencyMs: 93,
+      verification: "provider_probe", credentialState: "rejected", actionRequired: true,
+      actions: [
+        { id: "configure", label: "Configure", href: "/dashboard/settings?connection=email_outreach", external: false },
+        { id: "provider", label: "Open provider", href: "https://resend.com/api-keys", external: true },
+      ],
+    },
+    {
+      id: "gemini", label: "Gemini Fallback", category: "ai", status: "warn", configured: false,
+      detail: "GEMINI_API_KEY missing.", balanceLabel: null, balanceValue: null, latencyMs: null,
+      verification: "configuration", credentialState: "missing", actionRequired: true,
+      actions: [
+        { id: "configure", label: "Add connection", href: "/dashboard/settings?connection=gemini", external: false },
+        { id: "billing", label: "Billing / credits", href: "https://aistudio.google.com/app/billing", external: true },
+      ],
+    },
+  ],
   credentials: [],
   guardrails: [
     {
@@ -212,6 +261,31 @@ const ownerOverview = {
   },
 };
 
+const settingsGroups = [
+  {
+    id: "crm",
+    label: "CRM Connections",
+    description: "Optional destinations for contacts and call outcomes. Configuration alone does not perform a CRM write.",
+    required: false,
+    fields: [
+      { key: "HUBSPOT_ACCESS_TOKEN", label: "HubSpot Private-App Token", type: "password", placeholder: "pat-...", help: "Least-privilege private-app token." },
+      { key: "SALESFORCE_INSTANCE_URL", label: "Salesforce Instance URL", type: "text", placeholder: "https://example.my.salesforce.com", help: "Organization-specific base URL." },
+      { key: "AIRTABLE_API_KEY", label: "Airtable Personal-Access Token", type: "password", placeholder: "pat...", help: "Token scoped to one base." },
+      { key: "NOTION_API_KEY", label: "Notion Integration Secret", type: "password", placeholder: "secret_...", help: "Integration secret." },
+    ],
+  },
+  {
+    id: "lead_providers",
+    label: "Lead Data Providers",
+    description: "Optional sources for bounded lead research. Adding a key does not authorize outreach, SMS, or automated dialing.",
+    required: false,
+    fields: [
+      { key: "APOLLO_API_KEY", label: "Apollo API Key", type: "password", placeholder: "Apollo API key", help: "Operator-started lead search only." },
+      { key: "GOOGLE_MAPS_API_KEY", label: "Google Maps API Key", type: "password", placeholder: "AIza...", help: "Restricted lead-search key." },
+    ],
+  },
+];
+
 function respond(route, body) {
   return route.fulfill({
     status: 200,
@@ -253,6 +327,17 @@ async function installSyntheticApi(context) {
     const requestPath = new URL(route.request().url()).pathname;
     if (requestPath === "/api/owner-control/overview") {
       return respond(route, ownerOverview);
+    }
+    if (requestPath === "/api/settings" || requestPath === "/api/settings/groups") {
+      return respond(route, {
+        groups: settingsGroups,
+        values: {},
+        status: { isConfigured: true, missingRequired: [], warnings: [] },
+      });
+    }
+    if (requestPath === "/api/workspace/profile") return respond(route, {});
+    if (requestPath === "/api/workspace/knowledge") {
+      return respond(route, { sources: [], agent_context: "" });
     }
     if (requestPath === "/api/workspaces") {
       return respond(route, {
@@ -297,6 +382,7 @@ async function pageProof(browser, viewport, name) {
   await page.getByText("Execution switches", { exact: true }).waitFor();
   await page.getByText("Credential separation", { exact: true }).waitFor();
   await page.getByText("Rolling 24-hour controlled usage", { exact: true }).waitFor();
+  await page.getByText("Operational requirements", { exact: true }).waitFor();
   const overflow = await page.evaluate(() => ({
     body: document.body.scrollWidth - document.body.clientWidth,
     document:
@@ -328,14 +414,47 @@ async function pageProof(browser, viewport, name) {
     width: Math.round(element.getBoundingClientRect().width),
     height: Math.round(element.getBoundingClientRect().height),
   }));
+  const connectionInventory = page
+    .getByText("Connection inventory", { exact: true })
+    .locator("xpath=../../..");
+  await connectionInventory.scrollIntoViewIfNeeded();
+  await page.getByText("Billing / credits", { exact: true }).first().waitFor();
+  await page.getByText("Rejected / expired", { exact: true }).waitFor();
+  const connectionScreenshot = path.join(
+    outputDir,
+    name.replace(/\.png$/, "-connections.png")
+  );
+  await connectionInventory.screenshot({ path: connectionScreenshot });
+  await page.goto(`${baseUrl}/dashboard/settings?connection=crm`, {
+    waitUntil: "networkidle",
+  });
+  const crmSettings = page.locator("#settings-group-crm");
+  await crmSettings.waitFor({ state: "visible" });
+  await page.getByText("Production secret rule:", { exact: true }).waitFor();
+  await page.getByText("Lead Data Providers", { exact: true }).waitFor();
+  const settingsScreenshot = path.join(
+    outputDir,
+    name.replace(/owner-control-prospect-(desktop|mobile)\.png$/, "admin-settings-$1.png")
+  );
+  await page.screenshot({ path: settingsScreenshot });
+  const settingsOverflow = await page.evaluate(() => ({
+    body: document.body.scrollWidth - document.body.clientWidth,
+    document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  }));
+  if (settingsOverflow.body > 1 || settingsOverflow.document > 1) {
+    throw new Error(`Settings horizontal overflow at ${viewport.width}px: ${JSON.stringify(settingsOverflow)}`);
+  }
   await context.close();
   return {
     screenshot: path.relative(process.cwd(), screenshot),
     usageScreenshot: path.relative(process.cwd(), usageScreenshot),
+    connectionScreenshot: path.relative(process.cwd(), connectionScreenshot),
+    settingsScreenshot: path.relative(process.cwd(), settingsScreenshot),
     viewport,
     controlPlaneDimensions,
     usageDimensions,
     overflow,
+    settingsOverflow,
   };
 }
 

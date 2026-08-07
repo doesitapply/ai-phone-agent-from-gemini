@@ -6,6 +6,7 @@ const files = {
   authRoutes: fs.readFileSync("src/routes/auth-routes.ts", "utf8"),
   operatorRoutes: fs.readFileSync("src/routes/operator-routes.ts", "utf8"),
   workspaceAdminRoutes: fs.readFileSync("src/routes/workspace-admin-routes.ts", "utf8"),
+  settingsRoutes: fs.readFileSync("src/routes/settings-routes.ts", "utf8"),
   chat: fs.readFileSync("src/smirk-chat.ts", "utf8"),
   chatPolicy: fs.readFileSync("src/smirk-chat-policy.ts", "utf8"),
   app: fs.readFileSync("src/App.tsx", "utf8"),
@@ -51,6 +52,12 @@ expect("demo allowlist permits read-only chat", allowedRoutesBlock.includes('{ m
 expect("demo allowlist does not expose workspace API keys", !allowedRoutesBlock.includes("apikey"));
 expect("demo allowlist does not expose settings", !allowedRoutesBlock.includes("\\/api\\/settings"));
 expect("demo allowlist does not expose SMS safety or SMS test", !allowedRoutesBlock.includes("\\/api\\/sms"));
+expect(
+  "global settings require full operator at the route boundary",
+  files.settingsRoutes.includes('app.get("/api/settings", dashboardAuth, requireFullOperator')
+    && files.settingsRoutes.includes('app.post("/api/settings", dashboardAuth, requireFullOperator')
+    && files.settingsRoutes.includes('app.post("/api/settings/test/:service", dashboardAuth, requireFullOperator')
+);
 
 expect("auth routes accept DEMO_OPERATOR_API_KEY", files.authRoutes.includes("DEMO_OPERATOR_API_KEY?: string;"));
 expect("auth routes accept googleDemoOperatorEmails", files.authRoutes.includes("googleDemoOperatorEmails: () => string[];"));

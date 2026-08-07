@@ -99,10 +99,32 @@ const EnvSchema = z.object({
   GOOGLE_TTS_LANGUAGE: z.string().optional(),
   GOOGLE_TTS_SPEED: z.string().optional(),
   GOOGLE_TTS_PITCH: z.string().optional(),
+  // Cartesia streaming TTS
+  CARTESIA_API_KEY: z.string().optional(),
+  CARTESIA_VOICE_ID: z.string().optional(),
+  CARTESIA_MODEL_ID: z.string().optional(),
   // Google Calendar sync
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_CALENDAR_ID: z.string().optional(),
   GOOGLE_CALENDAR_TZ: z.string().optional(),
+  GOOGLE_PLACES_API_KEY: z.string().optional(),
+  GOOGLE_MAPS_API_KEY: z.string().optional(),
+  APOLLO_API_KEY: z.string().optional(),
+  BRAVE_API_KEY: z.string().optional(),
+  SERPER_API_KEY: z.string().optional(),
+  HUBSPOT_ACCESS_TOKEN: z.string().optional(),
+  SALESFORCE_INSTANCE_URL: z.string().optional(),
+  SALESFORCE_ACCESS_TOKEN: z.string().optional(),
+  SALESFORCE_CLIENT_ID: z.string().optional(),
+  SALESFORCE_CLIENT_SECRET: z.string().optional(),
+  SALESFORCE_REFRESH_TOKEN: z.string().optional(),
+  AIRTABLE_API_KEY: z.string().optional(),
+  AIRTABLE_BASE_ID: z.string().optional(),
+  AIRTABLE_CONTACTS_TABLE: z.string().optional(),
+  AIRTABLE_CALLS_TABLE: z.string().optional(),
+  NOTION_API_KEY: z.string().optional(),
+  NOTION_DATABASE_ID: z.string().optional(),
+  SETTINGS_PATH: z.string().optional(),
   // Business timezone for date/time injection
   BUSINESS_TIMEZONE: z.string().optional(),
   // Business identity fields — injected into every call's system prompt
@@ -3879,7 +3901,7 @@ registerCalendarRoutes(app, {
 
 registerSettingsRoutes(app, {
   dashboardAuth,
-  requireOperator,
+  requireFullOperator,
   sql,
   dbEnabled: DB_ENABLED,
   env,
@@ -4214,7 +4236,7 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
     elevenlabs: !!env.ELEVENLABS_API_KEY,
     googleTts: !!env.GOOGLE_TTS_API_KEY,
     googleCalendar: !!(env.GOOGLE_SERVICE_ACCOUNT_JSON && env.GOOGLE_CALENDAR_ID),
-    googlePlaces: !!process.env.GOOGLE_PLACES_API_KEY,
+    googlePlaces: !!env.GOOGLE_PLACES_API_KEY,
     resend: !!env.RESEND_API_KEY,
     stripe: /^rk_live_[A-Za-z0-9_]+$/.test(String(env.STRIPE_REVENUE_READ_KEY || "").trim())
       && evaluatePaymentLinkConfiguration(env).ready,
@@ -4232,9 +4254,11 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
         if (!client) throw new Error("Twilio client unavailable");
         const account: any = await withOpsTimeout("Twilio account fetch", 3500, () => (client.api.accounts(env.TWILIO_ACCOUNT_SID!) as any).fetch());
         let balanceValue: string | undefined;
+        let balanceAmount: number | null = null;
         try {
           const bal: any = await withOpsTimeout("Twilio balance fetch", 3500, () => (client.api.v2010.account.balance as any).fetch());
           const amount = Number(bal.balance);
+          balanceAmount = Number.isFinite(amount) ? amount : null;
           balanceValue = Number.isFinite(amount) ? `${formatOpsMoney(amount, String(bal.currency || "USD").toUpperCase())}` : undefined;
         } catch {
           balanceValue = undefined;
@@ -4243,9 +4267,9 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
           id: "twilio",
           label: "Twilio Voice",
           category: "core",
-          status: account?.status === "active" ? "online" : "warn",
+          status: account?.status !== "active" || (balanceAmount !== null && balanceAmount <= 10) ? "warn" : "online",
           configured: true,
-          detail: `Account ${account?.friendlyName || env.TWILIO_ACCOUNT_SID} is ${account?.status || "reachable"}; number ${env.TWILIO_PHONE_NUMBER}.`,
+          detail: `Account ${account?.friendlyName || env.TWILIO_ACCOUNT_SID} is ${account?.status || "reachable"}; number ${env.TWILIO_PHONE_NUMBER}.${balanceAmount !== null && balanceAmount <= 10 ? " Balance needs attention." : ""}`,
           balanceLabel: "Balance",
           balanceValue,
           latencyMs: Date.now() - started,
@@ -4264,13 +4288,14 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
         if (!resp.ok) throw new Error(`OpenRouter returned ${resp.status}`);
         const data = await resp.json() as any;
         const remaining = Number(data?.data?.total_credits) - Number(data?.data?.total_usage || 0);
+        const creditStatus = !Number.isFinite(remaining) ? "warn" : remaining <= 0 ? "offline" : remaining <= 5 ? "warn" : "online";
         return service({
           id: "openrouter",
           label: "OpenRouter",
           category: "ai",
-          status: "online",
+          status: creditStatus,
           configured: true,
-          detail: `Model ${openRouterConfig?.model || env.OPENROUTER_MODEL || "default"} reachable.`,
+          detail: `Model ${openRouterConfig?.model || env.OPENROUTER_MODEL || "default"} credential accepted.${creditStatus === "online" ? "" : " Credit balance needs attention."}`,
           balanceLabel: "Credits left",
           balanceValue: Number.isFinite(remaining) ? formatOpsMoney(remaining) : undefined,
           latencyMs: Date.now() - started,
@@ -4358,9 +4383,9 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
 
   const staticServices: OpsServiceStatus[] = [
     service({ id: "database_ops", label: "Postgres", category: "infra", status: configured.database ? "online" : "offline", configured: configured.database, detail: configured.database ? "Database URL configured; core DB check runs above." : "DATABASE_URL missing." }),
-    service({ id: "gemini", label: "Gemini Fallback", category: "ai", status: configured.gemini ? "online" : "warn", configured: configured.gemini, detail: configured.gemini ? `Configured with ${env.GEMINI_MODEL || "default model"}.` : "GEMINI_API_KEY missing; OpenRouter must carry AI traffic." }),
-    service({ id: "google_calendar", label: "Google Calendar", category: "calendar", status: configured.googleCalendar ? "online" : "warn", configured: configured.googleCalendar, detail: configured.googleCalendar ? `Calendar ${env.GOOGLE_CALENDAR_ID} configured.` : "Calendar service account or calendar ID missing; booking tools may not create events." }),
-    service({ id: "google_places", label: "Google Places", category: "leads", status: configured.googlePlaces ? "online" : "warn", configured: configured.googlePlaces, detail: configured.googlePlaces ? "Lead search key configured." : "GOOGLE_PLACES_API_KEY missing; prospect discovery is limited." }),
+    service({ id: "gemini", label: "Gemini Fallback", category: "ai", status: configured.gemini ? "unknown" : "warn", configured: configured.gemini, detail: configured.gemini ? `Configured with ${env.GEMINI_MODEL || "default model"}; provider access is not probed here.` : "GEMINI_API_KEY missing; OpenRouter must carry AI traffic." }),
+    service({ id: "google_calendar", label: "Google Calendar", category: "calendar", status: configured.googleCalendar ? "unknown" : "warn", configured: configured.googleCalendar, detail: configured.googleCalendar ? `Calendar ${env.GOOGLE_CALENDAR_ID} is configured; provider access is not probed here.` : "Calendar service account or calendar ID missing; booking tools may not create events." }),
+    service({ id: "google_places", label: "Google Places", category: "leads", status: "unknown", configured: configured.googlePlaces, detail: configured.googlePlaces ? "Lead-search key is configured; provider access is not probed here." : "GOOGLE_PLACES_API_KEY missing; prospect discovery is limited." }),
   ];
 
   let spend = {
@@ -4463,7 +4488,7 @@ registerOwnerControlRoutes(app, {
   requireFullOperator,
   sql,
   dbEnabled: DB_ENABLED,
-  env,
+  env: process.env,
   getWorkspaceId,
   getAdminAllowlistCount: () => googleAdminEmails().length,
   buildOpsMonitor,

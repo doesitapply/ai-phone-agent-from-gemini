@@ -202,8 +202,8 @@ function validateSecurityInventory(routes) {
     const hasOperatorGuard =
       route.sourceLine.includes("requireOperator") ||
       route.sourceLine.includes("requireFullOperator");
-    if (operatorOnlyPaths.has(routeKey) && !route.sourceLine.includes("requireOperator")) {
-      failures.push(`${routeKey} must include requireOperator in openapi.yaml inventory`);
+    if (operatorOnlyPaths.has(routeKey) && !hasOperatorGuard) {
+      failures.push(`${routeKey} must include an operator guard in openapi.yaml inventory`);
     }
     if (testCallSecretOnlyPaths.has(routeKey) && !route.sourceLine.includes("requireTestCallSecret")) {
       failures.push(`${routeKey} must include requireTestCallSecret in openapi.yaml inventory`);
