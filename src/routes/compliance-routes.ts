@@ -33,7 +33,10 @@ export function registerComplianceRoutes(app: Express, deps: ComplianceRouteDeps
 
   app.delete("/api/compliance/dnc/:phone", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
-    const reason = typeof req.body?.reason === "string" ? req.body.reason : "manual removal";
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (reason.length < 8) {
+      return res.status(400).json({ error: "A consent or correction note is required to remove DNC." });
+    }
     await removeFromDNC(decodeURIComponent(req.params.phone), reason);
     res.json({ success: true });
   });

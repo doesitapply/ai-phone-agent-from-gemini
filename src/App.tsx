@@ -22557,6 +22557,11 @@ export default function App() {
     .filter((t) => visibleForSession(t.id))
     .filter((t) => !visiblePrimaryTabs.some((primary) => primary.id === t.id));
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
+  if (pathname === "/admin") {
+    window.location.replace("/dashboard?admin=1");
+    return null;
+  }
+
   if (pathname === "/app") {
     window.location.replace("/dashboard");
     return null;
@@ -22985,6 +22990,20 @@ export default function App() {
                 title="Start an outbound AI call"
               >
                 <PhoneOutgoing size={13} /> <span className="hidden sm:inline">Call</span>
+              </button>}
+              {isCustomerView && googleConfig.adminEnabled && <button
+                onClick={() => window.location.assign('/dashboard?admin=1')}
+                className="inline-flex h-8 items-center justify-center gap-1.5 border border-[#3b4b3d] bg-[#201f1f] px-2 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-[#b9cbb9] transition-colors hover:border-[#00e479] hover:text-[#00e479] sm:px-3"
+                title="Sign in with an allowlisted full-admin account"
+              >
+                <ShieldCheck size={13} /> <span className="hidden sm:inline">Admin sign-in</span>
+              </button>}
+              {!isCustomerView && !isDemoOperator && <button
+                onClick={() => navigateToTab('owner_control')}
+                className="inline-flex h-8 items-center justify-center gap-1.5 border border-[#3b4b3d] bg-[#201f1f] px-2 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-[#b9cbb9] transition-colors hover:border-[#00e479] hover:text-[#00e479] sm:px-3"
+                title="Open Admin Settings"
+              >
+                <Shield size={13} /> <span className="hidden sm:inline">Admin Settings</span>
               </button>}
               {!isCustomerView && configStatus && (
                 <button onClick={() => navigateToTab('settings')}
@@ -25155,9 +25174,15 @@ function CompliancePage() {
   const removeFromDNC = async (phone: string) => {
     try {
       const reason = prompt("Removal reason or consent note");
+      if (reason === null) return;
+      const normalizedReason = reason.trim();
+      if (normalizedReason.length < 8) {
+        addToast({ type: "warning", message: "Add a consent or correction note before removing DNC." });
+        return;
+      }
       await api(`/api/compliance/dnc/${encodeURIComponent(phone)}`, {
         method: "DELETE",
-        body: JSON.stringify({ reason: reason || "manual removal" }),
+        body: JSON.stringify({ reason: normalizedReason }),
       });
       setDncList((l) => l.filter((x) => x.phone !== phone));
       addToast({ type: "success", message: `${phone} removed from DNC list` });

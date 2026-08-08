@@ -76,7 +76,7 @@
     "check:handoff-transfer": "tsx scripts/check-handoff-transfer-routing.ts",
     "check:call-intelligence": "node scripts/check-call-intelligence-contract.mjs && node scripts/check-post-call-durability.mjs",
     "check:post-call-durability": "node scripts/check-post-call-durability.mjs && tsx scripts/check-post-call-durability-fixtures.ts",
-    "check:contact-management": "node scripts/check-contact-management-contract.mjs",
+    "check:contact-management": "node scripts/check-contact-management-contract.mjs && node --import tsx --test tests/compliance_route_dnc_removal.test.ts",
     "check:customer-dashboard": "node scripts/check-customer-dashboard-contract.mjs && npm run -s check:setup-wizard-buyer",
     "check:setup-wizard-buyer": "tsx scripts/check-setup-wizard-buyer-fixtures.ts && node --import tsx --test tests/buyer_ui_regressions.test.ts",
     "check:live-workspace-entitlements": "node scripts/check-live-workspace-entitlements.mjs",

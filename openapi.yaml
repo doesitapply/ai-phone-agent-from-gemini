@@ -356,7 +356,7 @@ paths:
       tags:
         - "analytics"
       summary: "GET /api/analytics/agents"
-      x-source: "src/routes/compliance-routes.ts:56"
+      x-source: "src/routes/compliance-routes.ts:59"
       x-express-path: "/api/analytics/agents"
       security:
         - ApiKeyAuth: []
@@ -927,7 +927,7 @@ paths:
       tags:
         - "compliance"
       summary: "GET /api/compliance/audit"
-      x-source: "src/routes/compliance-routes.ts:41"
+      x-source: "src/routes/compliance-routes.ts:44"
       x-express-path: "/api/compliance/audit"
       security:
         - ApiKeyAuth: []
@@ -946,7 +946,7 @@ paths:
       tags:
         - "compliance"
       summary: "POST /api/compliance/check"
-      x-source: "src/routes/compliance-routes.ts:48"
+      x-source: "src/routes/compliance-routes.ts:51"
       x-express-path: "/api/compliance/check"
       security:
         - ApiKeyAuth: []
