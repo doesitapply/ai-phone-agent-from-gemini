@@ -52,6 +52,12 @@ const snapshot = {
   deploymentIds: ["deployment-before"],
   backups: [],
   schedules: [],
+  providerBackupCapability: {
+    ok: true,
+    error: null,
+    subscriptionType: "pro",
+    maxBackupsCount: 10,
+  },
   checkedAt,
 };
 
@@ -164,6 +170,28 @@ test("target, binding, source, and deployment drift fail closed", () => {
     assert.equal(plan.mutationRequired, false, entry.expected);
     assert.equal(plan.approvalPhrase, null, entry.expected);
   }
+});
+
+test("a plan with zero provider backup capacity fails before approval", () => {
+  const plan = buildProductionBackupCreatePlan({
+    snapshot: {
+      ...snapshot,
+      providerBackupCapability: {
+        ok: false,
+        error: "railway-backups-unavailable-on-current-plan",
+        subscriptionType: "hobby",
+        maxBackupsCount: 0,
+      },
+    },
+  });
+  assert.equal(plan.ok, false);
+  assert.equal(plan.mutationRequired, false);
+  assert.equal(plan.approvalPhrase, null);
+  assert.ok(plan.blockers.includes(
+    "RAILWAY_BACKUPS_UNAVAILABLE_ON_CURRENT_PLAN"
+  ));
+  assert.equal(plan.observed.subscriptionType, "hobby");
+  assert.equal(plan.observed.maxBackupsCount, 0);
 });
 
 test("a fresh exact-volume backup turns apply into an idempotent no-op", () => {

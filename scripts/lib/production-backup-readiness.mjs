@@ -7,6 +7,39 @@ export const SMIRK_RAILWAY_PRODUCTION_TARGET = Object.freeze({
 export const DEFAULT_BACKUP_MAX_AGE_HOURS = 24;
 export const DEFAULT_BACKUP_MIN_REMAINING_MINUTES = 60;
 
+export function evaluateProviderBackupCapability({
+  subscriptionType,
+  subscriptionPlanLimit,
+} = {}) {
+  const normalizedSubscriptionType = typeof subscriptionType === "string"
+    ? subscriptionType.trim().toLowerCase()
+    : null;
+  const rawMaxBackupsCount = subscriptionPlanLimit?.volumes?.maxBackupsCount;
+  const maxBackupsCount = Number(rawMaxBackupsCount);
+  if (!normalizedSubscriptionType || !Number.isFinite(maxBackupsCount)) {
+    return {
+      ok: false,
+      error: "railway-backup-plan-limit-unconfirmed",
+      subscriptionType: normalizedSubscriptionType,
+      maxBackupsCount: null,
+    };
+  }
+  if (maxBackupsCount < 1) {
+    return {
+      ok: false,
+      error: "railway-backups-unavailable-on-current-plan",
+      subscriptionType: normalizedSubscriptionType,
+      maxBackupsCount,
+    };
+  }
+  return {
+    ok: true,
+    error: null,
+    subscriptionType: normalizedSubscriptionType,
+    maxBackupsCount,
+  };
+}
+
 export function databaseEndpointFingerprint(value) {
   try {
     const url = new URL(String(value || ""));

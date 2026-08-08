@@ -2,11 +2,39 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   databaseEndpointFingerprint,
+  evaluateProviderBackupCapability,
   evaluateProductionBackupReadiness,
   selectBoundDatabaseVolume,
 } from "../scripts/lib/production-backup-readiness.mjs";
 
 const now = new Date("2026-07-30T20:00:00.000Z");
+
+test("provider backup capability rejects missing and zero plan limits", () => {
+  assert.deepEqual(evaluateProviderBackupCapability({}), {
+    ok: false,
+    error: "railway-backup-plan-limit-unconfirmed",
+    subscriptionType: null,
+    maxBackupsCount: null,
+  });
+  assert.deepEqual(evaluateProviderBackupCapability({
+    subscriptionType: "HOBBY",
+    subscriptionPlanLimit: { volumes: { maxBackupsCount: 0 } },
+  }), {
+    ok: false,
+    error: "railway-backups-unavailable-on-current-plan",
+    subscriptionType: "hobby",
+    maxBackupsCount: 0,
+  });
+  assert.deepEqual(evaluateProviderBackupCapability({
+    subscriptionType: "PRO",
+    subscriptionPlanLimit: { volumes: { maxBackupsCount: 10 } },
+  }), {
+    ok: true,
+    error: null,
+    subscriptionType: "pro",
+    maxBackupsCount: 10,
+  });
+});
 
 test("database endpoint fingerprints never expose credentials", () => {
   const fingerprint = databaseEndpointFingerprint(

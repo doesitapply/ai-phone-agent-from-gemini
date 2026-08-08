@@ -7,6 +7,7 @@ import {
   DEFAULT_BACKUP_MAX_AGE_HOURS,
   DEFAULT_BACKUP_MIN_REMAINING_MINUTES,
   SMIRK_RAILWAY_PRODUCTION_TARGET,
+  evaluateProviderBackupCapability,
   evaluateProductionBackupReadiness,
   selectBoundDatabaseVolume,
 } from "./lib/production-backup-readiness.mjs";
@@ -41,6 +42,11 @@ try {
       $environmentId: String!,
       $projectId: String!
     ) {
+      project(id: $projectId) {
+        id
+        subscriptionType
+        subscriptionPlanLimit
+      }
       environment(id: $environmentId, projectId: $projectId) {
         id
         name
@@ -66,6 +72,10 @@ try {
     projectId: target.projectId,
   });
 
+  const project = environmentData?.project;
+  if (project?.id !== target.projectId) {
+    fail("railway-production-project-mismatch");
+  }
   const environment = environmentData?.environment;
   const instances = environment?.volumeInstances?.edges
     ?.map((edge) => edge?.node)
@@ -139,9 +149,13 @@ try {
     maxAgeHours,
     minRemainingMinutes,
   });
+  const providerBackupCapability = evaluateProviderBackupCapability({
+    subscriptionType: project.subscriptionType,
+    subscriptionPlanLimit: project.subscriptionPlanLimit,
+  });
   const output = {
     ok: readiness.ok,
-    error: readiness.error,
+    error: readiness.ok ? null : providerBackupCapability.error || readiness.error,
     checkedAt: checkedAt.toISOString(),
     target,
     databaseBindingVerified: true,
@@ -161,6 +175,7 @@ try {
       minRemainingMinutes,
     },
     backupCount: backups.length,
+    providerBackupCapability,
     scheduleCount: schedules.length,
     schedules: schedules.map((schedule) => ({
       id: schedule.id,
@@ -175,7 +190,9 @@ try {
     externalMutation: false,
     nextAction: readiness.ok
       ? "Regenerate the exact deploy approval bundle; deploy confirmation will recheck this same provider backup."
-      : "Create and retain a manual backup for the bound Postgres-sTit volume in Railway's Backups tab, wait until it is listed as complete, then rerun npm run -s check:production-backup.",
+      : providerBackupCapability.ok
+        ? "Create and retain a manual backup for the bound Postgres-sTit volume in Railway's Backups tab, wait until it is listed as complete, then rerun npm run -s check:production-backup."
+        : "The current Railway plan permits zero volume backups. Do not retry or change billing; wait for explicit owner authorization or a provider capability change.",
   };
   console.log(JSON.stringify(output, null, 2));
   if (!output.ok) process.exit(1);

@@ -156,6 +156,14 @@ export function buildProductionBackupCreatePlan(input) {
     now: snapshot.checkedAt,
   });
   const backupAlreadyReady = readiness.ok === true;
+  if (!backupAlreadyReady && snapshot.providerBackupCapability?.ok !== true) {
+    blockers.push(
+      snapshot.providerBackupCapability?.error ===
+          "railway-backups-unavailable-on-current-plan"
+        ? "RAILWAY_BACKUPS_UNAVAILABLE_ON_CURRENT_PLAN"
+        : "RAILWAY_BACKUP_PLAN_LIMIT_UNCONFIRMED"
+    );
+  }
   const backupName = validCommit(snapshot.headCommit) &&
     validCommit(snapshot.liveCommit)
     ? `smirk-predeploy-${snapshot.headCommit.slice(0, 12)}-${snapshot.liveCommit.slice(0, 12)}`
@@ -237,6 +245,16 @@ export function buildProductionBackupCreatePlan(input) {
       worktreeClean: snapshot.worktreeClean === true,
       headPublished: snapshot.headPublished === true,
       activeDeploymentPresent: snapshot.activeDeploymentPresent === true,
+      subscriptionType:
+        snapshot.providerBackupCapability?.subscriptionType || null,
+      maxBackupsCount:
+        snapshot.providerBackupCapability?.maxBackupsCount !== null &&
+        snapshot.providerBackupCapability?.maxBackupsCount !== undefined &&
+        Number.isFinite(Number(
+          snapshot.providerBackupCapability.maxBackupsCount
+        ))
+        ? Number(snapshot.providerBackupCapability.maxBackupsCount)
+        : null,
     },
     guardrails: {
       providerMutationAuthorized: false,

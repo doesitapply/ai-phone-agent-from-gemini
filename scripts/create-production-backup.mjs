@@ -9,6 +9,7 @@ import {
 } from "./railway-json.mjs";
 import {
   SMIRK_RAILWAY_PRODUCTION_TARGET,
+  evaluateProviderBackupCapability,
   selectBoundDatabaseVolume,
 } from "./lib/production-backup-readiness.mjs";
 import {
@@ -180,6 +181,11 @@ async function readSnapshot() {
       $environmentId: String!,
       $projectId: String!
     ) {
+      project(id: $projectId) {
+        id
+        subscriptionType
+        subscriptionPlanLimit
+      }
       environment(id: $environmentId, projectId: $projectId) {
         id
         name
@@ -204,6 +210,10 @@ async function readSnapshot() {
     environmentId: target.environmentId,
     projectId: target.projectId,
   });
+  const project = environmentData?.project;
+  if (project?.id !== target.projectId) {
+    throw new Error("RAILWAY_PRODUCTION_PROJECT_MISMATCH");
+  }
   const environment = environmentData?.environment;
   if (
     environment?.id !== target.environmentId ||
@@ -287,6 +297,10 @@ async function readSnapshot() {
     deploymentIds: deploymentIds(deployments),
     backups: providerBackupState.backups,
     schedules: providerBackupState.schedules,
+    providerBackupCapability: evaluateProviderBackupCapability({
+      subscriptionType: project.subscriptionType,
+      subscriptionPlanLimit: project.subscriptionPlanLimit,
+    }),
     checkedAt: new Date().toISOString(),
   };
 }
