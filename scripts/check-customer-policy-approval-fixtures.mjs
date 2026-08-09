@@ -47,7 +47,7 @@ const baseFixtureManifest = {
   },
   starterUsagePolicy: {
     ownerApproved: true,
-    usageRule: { mode: "hard_cap", monthlyCallHardCap: 500, monthlyMinuteHardCap: 1000 },
+    usageRule: { mode: "hard_cap", monthlyCallHardCap: 200, monthlyMinuteHardCap: 500 },
   },
   publicDocuments: fixtureDocuments,
   enterpriseUsagePolicy: {

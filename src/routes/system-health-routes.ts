@@ -49,6 +49,22 @@ type SystemHealthRouteDeps = {
   buildOpsMonitor: (workspaceId: number) => Promise<{ services: OpsServiceStatus[]; spend: any; config: any[]; generatedAt: string }>;
 };
 
+export type ProofLoopReadinessInput = {
+  dbPass: boolean;
+  aiPass: boolean;
+  twilioPass: boolean;
+  ownerAlertsPass: boolean;
+  ownerAlertsWarn: boolean;
+  callbackPass: boolean;
+};
+
+export function evaluateProofLoopReadiness(input: ProofLoopReadinessInput): { pass: boolean; warn: boolean } {
+  const coreReady = input.dbPass && input.aiPass && input.twilioPass && input.callbackPass;
+  const pass = coreReady && input.ownerAlertsPass;
+  const warn = !pass && coreReady && input.ownerAlertsWarn;
+  return { pass, warn };
+}
+
 export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRouteDeps): void {
   const {
     dashboardAuth,
@@ -72,8 +88,6 @@ export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRoute
     let twilioPass = false;
     let ownerAlertsPass = false;
     let ownerAlertsWarn = false;
-    let paymentPass = false;
-    let paymentWarn = false;
     let callbackPass = false;
 
     try {
@@ -144,8 +158,6 @@ export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRoute
     const paymentLinkConfiguration = evaluatePaymentLinkConfiguration(env, {
       enterpriseUsageReady: customerPolicyApproval.enterpriseUsageReady,
     });
-    paymentPass = paymentLinkConfiguration.ready;
-    paymentWarn = false;
     check(
       'payment_path',
       'Payment Link Configuration',
@@ -203,17 +215,23 @@ export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRoute
         : 'Callback executor blocked — configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER'
     );
 
-    const proofLoopPass = dbPass && aiPass && twilioPass && ownerAlertsPass && callbackPass && paymentPass;
-    const proofLoopWarn = dbPass && aiPass && twilioPass && callbackPass && (ownerAlertsWarn || paymentWarn);
+    const proofLoopReadiness = evaluateProofLoopReadiness({
+      dbPass,
+      aiPass,
+      twilioPass,
+      ownerAlertsPass,
+      ownerAlertsWarn,
+      callbackPass,
+    });
     check(
       'proof_loop',
       'Missed-Call Proof Loop',
-      proofLoopPass,
-      proofLoopWarn,
-      proofLoopPass
+      proofLoopReadiness.pass,
+      proofLoopReadiness.warn,
+      proofLoopReadiness.pass
         ? 'Ready to test summary + owner email + callback task + dashboard proof'
-        : proofLoopWarn
-          ? 'Almost ready, but paid signup or owner alerts still need final real-world configuration'
+        : proofLoopReadiness.warn
+          ? 'Almost ready, but owner alerts still need final real-world configuration'
           : 'Not ready for end-to-end proof yet — fix the failed dependency checks above first'
     );
 

@@ -307,20 +307,27 @@ const proofCall = correlatedProofCalls[0] || null;
 const proofCallSid = callSidOf(proofCall);
 const proofOwnerActionTask = proofCallSid ? ownerActionTasksByCallSid.get(proofCallSid) || null : null;
 const proofOwnerEmailEvent = proofCallSid ? ownerEmailEventsByCallSid.get(proofCallSid) || null : null;
-const proofLoopStatus = Array.isArray(health?.checks)
-  ? health.checks.find((check) => check?.id === 'proof_loop')?.status || null
-  : null;
+const healthChecks = Array.isArray(health?.checks) ? health.checks : [];
+const proofLoopStatus = healthChecks.find((check) => check?.id === 'proof_loop')?.status || null;
+const paymentPathStatus = healthChecks.find((check) => check?.id === 'payment_path')?.status || null;
+const proofPipelineReady = proofLoopStatus === 'pass';
+const proofArtifactsReady = Boolean(proofCall);
+const paymentPathReady = paymentPathStatus === 'pass';
 const pinnedCallText = expectedCallSid ? ' for the placed PROOF_CALL_SID' : '';
 const pinnedCallAction = expectedCallSid
   ? 'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, owner-action task, and owner email event, then rerun this check with the same PROOF_STARTED_AT and PROOF_CALL_SID.'
   : null;
 
 const out = {
-  ok: proofLoopStatus === 'pass' && Boolean(proofCall),
+  ok: proofPipelineReady && proofArtifactsReady,
   proofWorkspaceId,
   workspaceAssertions,
+  proofPipelineReady,
+  proofArtifactsReady,
+  paymentPathReady,
   status: {
     proofLoop: proofLoopStatus,
+    paymentPath: paymentPathStatus,
     totalCalls: calls.length,
     freshCalls: freshCalls.length,
     summarizedCalls: summarizedCalls.length,

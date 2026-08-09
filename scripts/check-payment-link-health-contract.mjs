@@ -21,6 +21,8 @@ expect(helper.includes("pro-payment-link-out-of-first-dollar-scope") && helper.i
 expect(systemHealth.includes("evaluatePaymentLinkConfiguration(env"), "operator system health must use the shared Starter-only launch configuration predicate");
 expect(systemHealth.includes("provider verification is not checked here"), "operator system health must disclose its configuration-only scope");
 expect(!systemHealth.includes("starterLinkReady && proLinkReady"), "operator system health still requires both core links");
+expect(systemHealth.includes("evaluateProofLoopReadiness"), "operator system health must use the proof-pipeline readiness predicate");
+expect(!systemHealth.includes("paymentPass") && !systemHealth.includes("paymentWarn"), "checkout readiness must not be folded into proof-pipeline readiness");
 
 expect(server.includes("const paymentLinksConfigured = paymentLinkConfiguration.ready"), "/health must use Starter-only URL + ID configuration readiness");
 expect(server.includes('STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS: z.string().optional()'), "server env parsing must preserve the exact fulfillment-ID allowlist for health and provider monitoring");
@@ -35,6 +37,7 @@ expect(!/^\s*railway\s+(?:variable|variables)\s+set\b/m.test(legacySetter), "leg
 expect(fixture.includes("one complete Starter pair") && fixture.includes("one complete Pro pair must not satisfy"), "behavior fixtures must prove Starter succeeds and Pro-only fails");
 expect(fixture.includes("current Starter pair without an explicit fulfillment-ID allowlist") && fixture.includes("current Starter ID must be explicitly included") && fixture.includes("inactive historical Starter ID"), "behavior fixtures must prove the fulfillment allowlist fails closed and supports an exact safe rotation");
 expect(fixture.includes("partial configured sibling") && fixture.includes("placeholder sibling"), "behavior fixtures must cover partial and placeholder sibling failures");
+expect(fixture.includes("proof pipeline can be ready while checkout remains fail-closed"), "behavior fixtures must keep proof-pipeline and checkout readiness independent");
 expect(packageJson.includes('"check:payment-link-health-contract"'), "package scripts must expose Payment Link health contract coverage");
 
 if (failures.length > 0) {
@@ -43,4 +46,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log("OK health surfaces use one Starter-only launch predicate with exact fulfillment IDs and the legacy URL-only setter cannot mutate Railway");
+console.log("OK health surfaces keep proof readiness independent while using one strict Starter-only checkout predicate, and the legacy URL-only setter cannot mutate Railway");

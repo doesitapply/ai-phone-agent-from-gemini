@@ -114,9 +114,7 @@ await check(
       const body = JSON.parse(text);
       const plans = Array.isArray(body.plans) ? body.plans : [];
       const expected = new Map([
-        ['starter', { price: 197, usage: '500 calls and 1,000 minutes per month.' }],
-        ['pro', { price: 397, usage: '2,000 calls and 5,000 minutes per month.' }],
-        ['enterprise', { price: 697, usage: 'Usage limits and any overage terms require an owner-approved Enterprise policy before checkout is available.' }],
+        ['starter', { price: 197, usage: 'Hard cap: 200 calls or 500 minutes per month, whichever comes first. No overage charges.' }],
       ]);
 
       if (plans.length !== expected.size) return false;
@@ -254,7 +252,7 @@ await check(
   (status, text, headers) => {
     if (status === 429) return /too many demo requests/i.test(text);
     return status !== 404 &&
-      /business_name and owner_email required/i.test(text) &&
+      /business_name, valid owner_email, and phone required/i.test(text) &&
       cacheProtected(headers);
   }
 );

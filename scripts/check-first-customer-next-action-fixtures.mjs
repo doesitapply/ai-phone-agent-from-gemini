@@ -5,6 +5,7 @@ import {
   defaultDeployApprovalPhrase,
   defaultLocalGitCommitApprovalPhrase,
   deriveFirstCustomerNextAction,
+  summarizeBuyerRouteAudit,
 } from "./lib/first-customer-next-action.mjs";
 
 const stripeApproval = "APPROVE_ONE_SIGNED_STRIPE_SMOKE";
@@ -78,5 +79,38 @@ const smoke = derive([
 ]);
 assert.equal(smoke.stage, "approved-checkout-provisioning-write");
 assert.equal(smoke.requiredNextApproval, stripeApproval);
+
+assert.equal(
+  summarizeBuyerRouteAudit({
+    ok: false,
+    stdout: [
+      "OK   GET / -> 200",
+      "FAIL GET /api/pricing -> 200",
+      "FAIL GET /api/first-dollar-readiness -> 200",
+      "OK   GET /cancel -> 200",
+    ].join("\n"),
+    stderr: "FAIL buyer route audit for https://example.invalid",
+  }),
+  "FAIL GET /api/pricing -> 200; FAIL GET /api/first-dollar-readiness -> 200",
+  "buyer-route summary must surface the specific failures instead of the last successful route",
+);
+assert.equal(
+  summarizeBuyerRouteAudit({
+    ok: true,
+    stdout: "OK   GET /cancel -> 200\nOK buyer route audit for https://example.invalid",
+    stderr: "",
+  }),
+  "OK buyer route audit for https://example.invalid",
+  "passing buyer-route summary must preserve the terminal audit result",
+);
+assert.equal(
+  summarizeBuyerRouteAudit({
+    ok: false,
+    stdout: "unexpected buyer-route output",
+    stderr: "",
+  }),
+  "buyer route audit failed",
+  "a subprocess without the required terminal marker must not be summarized as passing",
+);
 
 console.log("OK first-customer next-action precedence fixtures passed.");

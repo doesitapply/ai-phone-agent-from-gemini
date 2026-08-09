@@ -60,7 +60,13 @@ const server = http.createServer((req, res) => {
   if (req.url === '/api/system-health') {
     return json(res, {
       ...workspace,
-      checks: [{ id: 'proof_loop', status: 'pass' }],
+      checks: [
+        { id: 'payment_path', status: 'fail' },
+        { id: 'owner_alerts', status: 'pass' },
+        { id: 'callbacks', status: 'pass' },
+        { id: 'proof_loop', status: 'pass' },
+        { id: 'auth', status: 'pass' },
+      ],
     });
   }
   if (req.url?.startsWith('/api/calls?')) {
@@ -163,6 +169,33 @@ try {
     `every proof fetch must carry x-workspace-id=${proofWorkspaceId}: ${JSON.stringify(requests)}`,
   );
 
+  const artifactSeparationResult = await runScript('scripts/check-proof-artifacts-live.mjs');
+  assert.equal(
+    artifactSeparationResult.code,
+    0,
+    `correlated proof artifacts must pass independently of checkout readiness: ${artifactSeparationResult.stderr || artifactSeparationResult.stdout}`,
+  );
+  const artifactSeparation = JSON.parse(artifactSeparationResult.stdout);
+  assert.equal(artifactSeparation.ok, true);
+  assert.equal(artifactSeparation.proofPipelineReady, true);
+  assert.equal(artifactSeparation.proofArtifactsReady, true);
+  assert.equal(artifactSeparation.paymentPathReady, false);
+  assert.equal(artifactSeparation.status.paymentPath, 'fail');
+  assert.equal(artifactSeparation.status.correlatedProofCalls, 1);
+
+  const pipelineSeparationResult = await runScript('scripts/check-proof-loop-live.mjs');
+  assert.equal(
+    pipelineSeparationResult.code,
+    0,
+    `proof-pipeline readiness must pass independently of checkout readiness: ${pipelineSeparationResult.stderr || pipelineSeparationResult.stdout}`,
+  );
+  const pipelineSeparation = JSON.parse(pipelineSeparationResult.stdout);
+  assert.equal(pipelineSeparation.ok, true);
+  assert.equal(pipelineSeparation.proofPipelineReady, true);
+  assert.equal(pipelineSeparation.proofLoop, 'pass');
+  assert.equal(pipelineSeparation.paymentPath, 'fail');
+  assert.equal(pipelineSeparation.paymentPathReady, false);
+
   reportedWorkspaceId = 1;
   requests.length = 0;
   const mismatch = await runScript('scripts/check-post-call-intelligence-live.mjs');
@@ -191,7 +224,7 @@ try {
   assert.notEqual(invalidRequestRunner.code, 0, 'the proof runner must reject a non-decimal proof request ID before preflight');
   assert.match(`${invalidRequestRunner.stdout}\n${invalidRequestRunner.stderr}`, /missing-customer-proof-request-context/);
 
-  console.log(`OK live proof checks carry and verify exact non-1 workspace ${proofWorkspaceId}`);
+  console.log(`OK live proof checks carry and verify exact non-1 workspace ${proofWorkspaceId}, and correlated proof remains independent of fail-closed checkout readiness`);
 } finally {
   await new Promise((resolve) => server.close(resolve));
   fs.rmSync(tempDir, { recursive: true, force: true });

@@ -114,7 +114,7 @@ expect("Starter approval binds the owner-approved hard stop to runtime limits",
   && manifest.includes("starter_usage_policy_runtime_limits_mismatch")
   && manifest.includes("PLAN_LIMITS.starter?.calls !== starterUsageRule?.monthlyCallHardCap")
   && fixtures.includes("invalidStarterPolicy")
-  && limits.includes('starter: Object.freeze({ calls: 500, minutes: 1000'));
+  && limits.includes('starter: Object.freeze({ calls: 200, minutes: 500'));
 for (const documentName of ["terms", "privacy", "cancellationRefund", "billingManagement", "support", "dataConsent"]) {
   expect(`manifest requires versioned and digest-bound ${documentName} publication`,
     manifest.includes(`${documentName}: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null })`));
@@ -147,7 +147,8 @@ expect("live gate verifies exact policy bodies without redirects",
   && manifest.includes("customer_policy_publication_digests_not_unique"));
 expect("Enterprise unlimited claim is removed and exposure is policy-gated",
   !buyerRoutes.includes("No built-in monthly call or minute cap")
-  && buyerRoutes.includes("Usage limits and any overage terms require an owner-approved Enterprise policy")
+  && buyerRoutes.includes('unavailablePaymentLinkProof("first-dollar-launch-starter-only")')
+  && !buyerRoutes.includes('name: "SMIRK AI Agency"')
   && manifest.includes("enterprise_usage_policy_owner_approval_missing")
   && manifest.includes('usageRule?.mode !== "hard_cap"')
   && manifest.includes("enterprise_usage_policy_runtime_limits_mismatch")
@@ -180,7 +181,7 @@ expect("owner policy decision card is canonical, explicit, and has no selected d
   && policyDecisions.includes("tax_mode=<choose exactly stripe_automatic_tax OR stripe_automatic_tax_disabled>")
   && policyDecisions.includes("cancellation_mode=<choose exactly at_period_end OR immediately>")
   && policyDecisions.includes("cancellation_proration_behavior=<choose exactly none OR create_prorations>")
-  && policyDecisions.includes("starter_usage_decision=<choose exactly approve_existing_hard_cap_500_calls_1000_minutes OR request_separately_reviewed_change>")
+  && policyDecisions.includes("starter_usage_decision=<choose exactly approve_existing_hard_cap_200_calls_500_minutes OR request_separately_reviewed_change>")
   && policyDecisions.includes("final_owner_confirmation=<required explicit confirmation binding the exact version and six listed documents; no default>")
   && !policyDecisions.includes("tax_mode=stripe_automatic_tax\n")
   && !policyDecisions.includes("cancellation_mode=at_period_end\n")

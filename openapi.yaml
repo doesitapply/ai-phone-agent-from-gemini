@@ -464,7 +464,7 @@ paths:
       tags:
         - "billing"
       summary: "POST /api/billing/portal"
-      x-source: "src/routes/buyer-routes.ts:951"
+      x-source: "src/routes/buyer-routes.ts:934"
       x-express-path: "/api/billing/portal"
       security: []
       responses:
@@ -886,7 +886,7 @@ paths:
       tags:
         - "checkout"
       summary: "POST /api/checkout/create"
-      x-source: "src/routes/buyer-routes.ts:782"
+      x-source: "src/routes/buyer-routes.ts:756"
       x-express-path: "/api/checkout/create"
       security: []
       responses:
@@ -1342,7 +1342,7 @@ paths:
       tags:
         - "first-dollar-readiness"
       summary: "GET /api/first-dollar-readiness"
-      x-source: "src/routes/buyer-routes.ts:702"
+      x-source: "src/routes/buyer-routes.ts:676"
       x-express-path: "/api/first-dollar-readiness"
       security: []
       responses:
@@ -1400,7 +1400,7 @@ paths:
       tags:
         - "health"
       summary: "GET /api/health"
-      x-source: "src/routes/buyer-routes.ts:698"
+      x-source: "src/routes/buyer-routes.ts:672"
       x-express-path: "/api/health"
       security:
         - ApiKeyAuth: []
@@ -1533,7 +1533,7 @@ paths:
       tags:
         - "invite"
       summary: "GET /api/invite/:token"
-      x-source: "src/routes/buyer-routes.ts:1096"
+      x-source: "src/routes/buyer-routes.ts:1079"
       x-express-path: "/api/invite/:token"
       security: []
       responses:
@@ -1551,7 +1551,7 @@ paths:
       tags:
         - "invite"
       summary: "POST /api/invite/:token/accept"
-      x-source: "src/routes/buyer-routes.ts:1124"
+      x-source: "src/routes/buyer-routes.ts:1107"
       x-express-path: "/api/invite/:token/accept"
       security: []
       responses:
@@ -2263,7 +2263,7 @@ paths:
       tags:
         - "pricing"
       summary: "GET /api/pricing"
-      x-source: "src/routes/buyer-routes.ts:755"
+      x-source: "src/routes/buyer-routes.ts:729"
       x-express-path: "/api/pricing"
       security: []
       responses:
@@ -3020,7 +3020,7 @@ paths:
       tags:
         - "stripe"
       summary: "POST /api/stripe/webhook"
-      x-source: "src/routes/buyer-routes.ts:1007"
+      x-source: "src/routes/buyer-routes.ts:990"
       x-express-path: "/api/stripe/webhook"
       security: []
       responses:
@@ -3057,7 +3057,7 @@ paths:
       tags:
         - "system-health"
       summary: "GET /api/system-health"
-      x-source: "src/routes/system-health-routes.ts:64"
+      x-source: "src/routes/system-health-routes.ts:80"
       x-express-path: "/api/system-health"
       security:
         - ApiKeyAuth: []
@@ -3457,7 +3457,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2824"
+      x-source: "server.ts:2829"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3475,7 +3475,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3532"
+      x-source: "server.ts:3537"
       x-express-path: "/api/twilio/process"
       security: []
       responses:
@@ -3699,7 +3699,7 @@ paths:
       tags:
         - "version"
       summary: "GET /api/version"
-      x-source: "src/routes/buyer-routes.ts:686"
+      x-source: "src/routes/buyer-routes.ts:660"
       x-express-path: "/api/version"
       security: []
       responses:

@@ -11886,12 +11886,12 @@ function AnalyticsPage() {
       <div className="rounded-2xl bg-gradient-to-br from-violet-950/60 to-gray-900 border border-violet-800/40 p-6">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-sm font-bold text-white mb-1">Upgrade to unlock more</p>
-            <p className="text-xs text-gray-400">Starter ($197/mo) · Pro ($397/mo) · Agency ($697/mo) — simple monthly plans, no trial maze</p>
+            <p className="text-sm font-bold text-white mb-1">Start missed-call recovery</p>
+            <p className="text-xs text-gray-400">$197/month · one plan · month-to-month · standard setup included · no promo codes</p>
           </div>
           <button onClick={() => window.open('/pricing', '_blank')}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors shrink-0 ml-4">
-            <CreditCard size={12} /> View Plans
+            <CreditCard size={12} /> View Offer
           </button>
         </div>
       </div>
@@ -15345,7 +15345,7 @@ function WorkspacesPage() {
 
   const PLAN_LIMITS: Record<string, { calls: number; minutes: number; agents: number }> = {
     free:       { calls: 50,   minutes: 100,  agents: 1 },
-    starter:    { calls: 500,  minutes: 1000, agents: 3 },
+    starter:    { calls: 200,  minutes: 500,  agents: 3 },
     pro:        { calls: 2000, minutes: 5000, agents: 9 },
     enterprise: { calls: 0,    minutes: 0,    agents: 0 },
   };

@@ -121,22 +121,28 @@ try {
 
 const checks = Array.isArray(parsed?.checks) ? parsed.checks : [];
 const byId = Object.fromEntries(checks.map((check) => [check.id, check]));
-const required = ['payment_path', 'owner_alerts', 'callbacks', 'proof_loop', 'auth'];
+const proofPipelineChecks = ['owner_alerts', 'callbacks', 'proof_loop', 'auth'];
+const separatelyReportedChecks = ['payment_path'];
+const required = [...proofPipelineChecks, ...separatelyReportedChecks];
 const missing = required.filter((id) => !byId[id]);
 if (missing.length) {
   console.error(JSON.stringify({ ok: false, status: res.status, error: 'missing-checks', missing }, null, 2));
   process.exit(1);
 }
 
-const failed = required.filter((id) => byId[id]?.status === 'fail');
+const failedProofPipelineChecks = proofPipelineChecks.filter((id) => byId[id]?.status === 'fail');
 const cacheControl = String(res.headers.get('cache-control') || '').toLowerCase();
 const cacheProtected = cacheControl.includes('no-store');
+const proofPipelineReady = res.ok && cacheProtected && failedProofPipelineChecks.length === 0;
+const paymentPathReady = byId.payment_path?.status === 'pass';
 const out = {
-  ok: res.ok && cacheProtected && failed.length === 0,
+  ok: proofPipelineReady,
   status: res.status,
   url: `${appUrl}/api/system-health`,
+  proofPipelineReady,
   proofLoop: byId.proof_loop?.status || null,
   paymentPath: byId.payment_path?.status || null,
+  paymentPathReady,
   ownerAlerts: byId.owner_alerts?.status || null,
   callbacks: byId.callbacks?.status || null,
   auth: byId.auth?.status || null,

@@ -2,7 +2,10 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { deriveFirstCustomerNextAction } from "./lib/first-customer-next-action.mjs";
+import {
+  deriveFirstCustomerNextAction,
+  summarizeBuyerRouteAudit,
+} from "./lib/first-customer-next-action.mjs";
 
 const outputDir = path.resolve("output");
 const readinessPath = path.join(outputDir, "first-customer-10of10-readiness.json");
@@ -231,7 +234,7 @@ recordCommand(checks, "buyer-routes-live", "npm", ["run", "-s", "check:buyer-rou
   return {
     ok,
     status: ok ? "PASS" : "PARTIAL",
-    summary: result.stdout.split(/\r?\n/).filter(Boolean).slice(-1)[0] || result.stdout.slice(0, 200),
+    summary: summarizeBuyerRouteAudit({ ...result, ok }),
   };
 });
 recordCommand(checks, "railway-first-dollar-env", "npm", ["run", "-s", "check:railway:first-dollar-env"], (result) => ({
