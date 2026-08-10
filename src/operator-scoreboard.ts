@@ -9,25 +9,36 @@ export type OperatorScoreInputs = {
 };
 
 export type OperatorMissionControlMetrics = {
-  workspaces: { total: number; active: number };
-  calls: { last7d: number; previous7d: number; completed7d: number; summarized7d: number };
-  contacts: { new7d: number };
-  tasks: { created7d: number; completed7d: number; open: number; overdue: number };
-  handoffs: { created7d: number; cleared7d: number; pending: number };
-  appointments: { created7d: number; upcoming: number };
-  provisioning: { needsAttention: number };
+  workspacesTotal: number;
+  workspacesActive: number;
+  calls7d: number;
+  callsPrevious7d: number;
+  completedCalls7d: number;
+  summarizedCalls7d: number;
+  contacts7d: number;
+  tasks7d: number;
+  completedTasks7d: number;
+  openTasks: number;
+  overdueTasks: number;
+  handoffs7d: number;
+  clearedHandoffs7d: number;
+  pendingHandoffs: number;
+  appointments7d: number;
+  upcomingAppointments: number;
+  provisioningAttention: number;
 };
 
 export type OperatorScoreComponent = {
   id: "call_completion" | "intelligence_coverage" | "follow_up_clearance" | "handoff_clearance";
   label: string;
-  score: number;
+  score: number | null;
   weight: number;
   detail: string;
+  applicable: boolean;
 };
 
-const boundedPercent = (numerator: number, denominator: number) => {
-  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return 0;
+const boundedPercent = (numerator: number, denominator: number): number | null => {
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null;
   return Math.max(0, Math.min(100, Math.round((numerator / denominator) * 100)));
 };
 
@@ -38,36 +49,50 @@ export function calculateOperatorScoreboard(input: OperatorScoreInputs) {
       label: "Call completion",
       score: boundedPercent(input.completedCalls, input.calls),
       weight: 30,
-      detail: `${input.completedCalls} of ${input.calls} calls completed`,
+      detail: input.calls > 0 ? `${input.completedCalls} of ${input.calls} calls completed` : "No calls in this window",
+      applicable: input.calls > 0,
     },
     {
       id: "intelligence_coverage",
       label: "Intelligence coverage",
       score: boundedPercent(input.summarizedCalls, input.completedCalls),
       weight: 25,
-      detail: `${input.summarizedCalls} of ${input.completedCalls} completed calls summarized`,
+      detail: input.completedCalls > 0
+        ? `${input.summarizedCalls} of ${input.completedCalls} completed calls summarized`
+        : "No completed calls in this window",
+      applicable: input.completedCalls > 0,
     },
     {
       id: "follow_up_clearance",
-      label: "Follow-up clearance",
+      label: "New-task disposition",
       score: boundedPercent(input.completedTasks, input.tasks),
       weight: 25,
-      detail: `${input.completedTasks} of ${input.tasks} follow-up tasks cleared`,
+      detail: input.tasks > 0
+        ? `${input.completedTasks} of ${input.tasks} tasks created this window are now cleared`
+        : "No tasks created in this window",
+      applicable: input.tasks > 0,
     },
     {
       id: "handoff_clearance",
-      label: "Handoff clearance",
+      label: "New-handoff disposition",
       score: boundedPercent(input.clearedHandoffs, input.handoffs),
       weight: 20,
-      detail: `${input.clearedHandoffs} of ${input.handoffs} human handoffs cleared`,
+      detail: input.handoffs > 0
+        ? `${input.clearedHandoffs} of ${input.handoffs} handoffs created this window are now cleared or transferred`
+        : "No handoffs created in this window",
+      applicable: input.handoffs > 0,
     },
   ];
 
   const activity = input.calls + input.tasks + input.handoffs;
-  const overall = activity === 0
-    ? 0
-    : Math.round(components.reduce((sum, component) => sum + (component.score * component.weight) / 100, 0));
-  const grade = overall >= 90 ? "A" : overall >= 80 ? "B" : overall >= 70 ? "C" : overall >= 60 ? "D" : "F";
+  const applicable = components.filter((component) => component.applicable && component.score !== null);
+  const applicableWeight = applicable.reduce((sum, component) => sum + component.weight, 0);
+  const overall = applicableWeight === 0
+    ? null
+    : Math.round(applicable.reduce((sum, component) => sum + Number(component.score) * component.weight, 0) / applicableWeight);
+  const grade = overall === null
+    ? "N/A"
+    : overall >= 90 ? "A" : overall >= 80 ? "B" : overall >= 70 ? "C" : overall >= 60 ? "D" : "F";
 
-  return { overall, grade, activity, components };
+  return { overall, grade, activity, components, applicableWeight };
 }

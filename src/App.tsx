@@ -15923,10 +15923,11 @@ type OperatorMissionControl = {
   scope: "all_workspaces";
   access: "full_operator";
   score: {
-    overall: number;
+    overall: number | null;
     grade: string;
     activity: number;
-    components: Array<{ id: string; label: string; score: number; weight: number; detail: string }>;
+    applicableWeight: number;
+    components: Array<{ id: string; label: string; score: number | null; weight: number; detail: string; applicable: boolean }>;
   };
   metrics: {
     workspacesTotal: number;
@@ -15947,6 +15948,7 @@ type OperatorMissionControl = {
     upcomingAppointments: number;
     provisioningAttention: number;
   };
+  workspacePage: { returned: number; total: number; limit: number; truncated: boolean };
   workspaces: Array<{
     id: number;
     name: string;
@@ -15972,6 +15974,7 @@ function MissionControlPage() {
 
   const [stats, setStats] = useState<Stats | null>(null);
   const [operatorControl, setOperatorControl] = useState<OperatorMissionControl | null>(null);
+  const [operatorControlError, setOperatorControlError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [calls, setCalls] = useState<Call[]>([]);
   const [handoffs, setHandoffs] = useState<any[]>([]);
@@ -15991,10 +15994,13 @@ function MissionControlPage() {
         api<{ calls: Call[] }>("/api/calls?limit=30"),
         api<{ handoffs: any[] }>("/api/handoffs"),
         api<{ appointments: any[] }>("/api/appointments"),
-        api<OperatorMissionControl>("/api/operator/mission-control").catch(() => null),
+        api<OperatorMissionControl>("/api/operator/mission-control")
+          .then(data => ({ data, error: null as string | null }))
+          .catch((error: any) => ({ data: null, error: error?.message || "Portfolio scoreboard unavailable" })),
       ]);
       setStats(s);
-      setOperatorControl(control);
+      setOperatorControl(control.data);
+      setOperatorControlError(control.error);
       setTasks(t.tasks || []);
       setCalls(c.calls || []);
       setHandoffs(h.handoffs || []);
@@ -16140,6 +16146,13 @@ function MissionControlPage() {
         </button>
       </div>
 
+      {operatorControlError && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="alert">
+          <span><strong>Portfolio scoreboard unavailable.</strong> {operatorControlError}</span>
+          <button onClick={load} className="shrink-0 rounded-lg border border-amber-400/30 px-2.5 py-1 text-xs font-bold hover:bg-amber-400/10">Retry</button>
+        </div>
+      )}
+
       {/* Owner Operator Scoreboard */}
       {operatorControl && portfolio && (
         <section className="relative overflow-hidden rounded-3xl border border-emerald-500/30 bg-[#07110d] p-5 md:p-6 shadow-[0_0_60px_rgba(0,255,136,0.06)]">
@@ -16151,10 +16164,10 @@ function MissionControlPage() {
                   <Gauge size={13} /> 7-day operator score
                 </div>
                 <div className="mt-4 flex items-end gap-3">
-                  <span className="text-6xl font-black leading-none text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>{operatorControl.score.overall}</span>
+                  <span className="text-6xl font-black leading-none text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>{operatorControl.score.overall ?? "—"}</span>
                   <span className="mb-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xl font-black text-emerald-300">{operatorControl.score.grade}</span>
                 </div>
-                <p className="mt-3 text-xs leading-relaxed text-gray-500">Measured from real call completion, post-call intelligence, task clearance, and human-handoff closure. No pretend revenue math.</p>
+                <p className="mt-3 text-xs leading-relaxed text-gray-500">Applicable 7-day signals are weight-normalized; missing work is shown N/A rather than counted as failure. New-task and new-handoff rates are cohort disposition, not old-backlog throughput. No pretend revenue math.</p>
               </div>
               <div className="mt-5 text-[10px] font-mono text-gray-600">Updated {fmt.date(operatorControl.generatedAt)} · all workspaces</div>
             </div>
@@ -16183,10 +16196,10 @@ function MissionControlPage() {
                   <div key={component.id} className="rounded-xl border border-white/5 bg-black/20 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-xs font-semibold text-gray-300">{component.label}</span>
-                      <span className="font-mono text-xs font-bold text-white">{component.score}% <span className="text-gray-700">· {component.weight}% wt</span></span>
+                      <span className="font-mono text-xs font-bold text-white">{component.score === null ? "N/A" : `${component.score}%`} <span className="text-gray-700">· {component.weight}% base wt</span></span>
                     </div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-900">
-                      <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-emerald-400" style={{ width: `${component.score}%` }} />
+                      <div className={`h-full rounded-full ${component.applicable ? "bg-gradient-to-r from-violet-500 to-emerald-400" : "bg-gray-800"}`} style={{ width: component.score === null ? "0%" : `${component.score}%` }} />
                     </div>
                     <div className="mt-1.5 text-[10px] text-gray-600">{component.detail}</div>
                   </div>
@@ -16199,7 +16212,7 @@ function MissionControlPage() {
             <div className="flex items-center justify-between border-b border-white/5 bg-white/[0.025] px-4 py-3">
               <div>
                 <h2 className="text-sm font-bold text-white">Workspace Scoreboard</h2>
-                <p className="mt-0.5 text-[10px] text-gray-600">Ranked by overdue work, then call volume. Select a workspace to operate it.</p>
+                <p className="mt-0.5 text-[10px] text-gray-600">Ranked by overdue work, then call volume. Select a workspace to operate it.{operatorControl.workspacePage.truncated ? ` Showing ${operatorControl.workspacePage.returned} highest-attention workspaces of ${operatorControl.workspacePage.total}.` : ""}</p>
               </div>
               <BarChart3 size={16} className="text-emerald-400" />
             </div>

@@ -36,7 +36,21 @@ const idle = calculateOperatorScoreboard({
   handoffs: 0,
   clearedHandoffs: 0,
 });
-assert.equal(idle.overall, 0, "an idle portfolio must not receive a fabricated perfect score");
+assert.equal(idle.overall, null, "an idle portfolio must be N/A rather than fabricated success or failure");
+assert.equal(idle.grade, "N/A");
+assert.ok(idle.components.every(component => !component.applicable && component.score === null));
+
+const callsOnly = calculateOperatorScoreboard({
+  calls: 10,
+  completedCalls: 10,
+  summarizedCalls: 10,
+  tasks: 0,
+  completedTasks: 0,
+  handoffs: 0,
+  clearedHandoffs: 0,
+});
+assert.equal(callsOnly.overall, 100, "nonexistent task and handoff work must not depress the score");
+assert.equal(callsOnly.applicableWeight, 55);
 
 const routes = readFileSync(new URL("../src/routes/operator-routes.ts", import.meta.url), "utf8");
 assert.match(
@@ -46,6 +60,9 @@ assert.match(
 );
 assert.match(routes, /scope: "all_workspaces"/);
 assert.match(routes, /access: "full_operator"/);
+assert.match(routes, /'acknowledged', 'resolved', 'completed', 'transferred'/);
+assert.match(routes, /status IN \('pending', 'screening'\)/);
+assert.match(routes, /truncated: rawMetrics\.workspacesTotal > workspaceRows\.length/);
 assert.doesNotMatch(
   routes,
   /app\.get\("\/api\/operator\/mission-control", dashboardAuth, requireOperator/,
@@ -56,6 +73,8 @@ const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 assert.match(app, /Owner operator · full access/);
 assert.match(app, /No pretend revenue math/);
 assert.match(app, /Workspace Scoreboard/);
+assert.match(app, /Portfolio scoreboard unavailable/);
+assert.match(app, /component\.score === null \? "N\/A"/);
 
 const authRoutes = readFileSync(new URL("../src/routes/auth-routes.ts", import.meta.url), "utf8");
 assert.match(authRoutes, /allowedAdminEmails\.includes\(identity\.email\)/);

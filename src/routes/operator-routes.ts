@@ -184,8 +184,8 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
             (SELECT COUNT(*) FROM tasks WHERE status IN ('open', 'in_progress')) AS open_tasks,
             (SELECT COUNT(*) FROM tasks WHERE status IN ('open', 'in_progress') AND due_at IS NOT NULL AND due_at < NOW()) AS overdue_tasks,
             (SELECT COUNT(*) FROM handoffs WHERE created_at >= NOW() - INTERVAL '7 days') AS handoffs_7d,
-            (SELECT COUNT(*) FROM handoffs WHERE created_at >= NOW() - INTERVAL '7 days' AND status IN ('acknowledged', 'resolved', 'completed')) AS cleared_handoffs_7d,
-            (SELECT COUNT(*) FROM handoffs WHERE status = 'pending') AS pending_handoffs,
+            (SELECT COUNT(*) FROM handoffs WHERE created_at >= NOW() - INTERVAL '7 days' AND status IN ('acknowledged', 'resolved', 'completed', 'transferred')) AS cleared_handoffs_7d,
+            (SELECT COUNT(*) FROM handoffs WHERE status IN ('pending', 'screening')) AS pending_handoffs,
             (SELECT COUNT(*) FROM appointments WHERE created_at >= NOW() - INTERVAL '7 days') AS appointments_7d,
             (SELECT COUNT(*) FROM appointments WHERE status != 'cancelled' AND scheduled_at >= NOW()) AS upcoming_appointments,
             (SELECT COUNT(*) FROM provisioning_requests WHERE status NOT IN ('workspace_and_line_created', 'workspace_created', 'activated', 'complete', 'cancelled')) AS provisioning_attention
@@ -205,7 +205,7 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
             (SELECT COUNT(*) FROM contacts c WHERE c.workspace_id = w.id AND c.created_at >= NOW() - INTERVAL '7 days') AS contacts_7d,
             (SELECT COUNT(*) FROM tasks t WHERE t.workspace_id = w.id AND t.status IN ('open', 'in_progress')) AS open_tasks,
             (SELECT COUNT(*) FROM tasks t WHERE t.workspace_id = w.id AND t.status IN ('open', 'in_progress') AND t.due_at IS NOT NULL AND t.due_at < NOW()) AS overdue_tasks,
-            (SELECT COUNT(*) FROM handoffs h WHERE h.workspace_id = w.id AND h.status = 'pending') AS pending_handoffs,
+            (SELECT COUNT(*) FROM handoffs h WHERE h.workspace_id = w.id AND h.status IN ('pending', 'screening')) AS pending_handoffs,
             (SELECT COUNT(*) FROM appointments a WHERE a.workspace_id = w.id AND a.created_at >= NOW() - INTERVAL '7 days') AS appointments_7d
           FROM workspaces w
           ORDER BY
@@ -218,7 +218,7 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
 
       const row = metricRows[0] || {};
       const number = (value: unknown) => Number(value || 0);
-      const rawMetrics = {
+      const rawMetrics: OperatorMissionControlMetrics = {
         workspacesTotal: number(row.workspaces_total),
         workspacesActive: number(row.workspaces_active),
         calls7d: number(row.calls_7d),
@@ -246,32 +246,7 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
         handoffs: rawMetrics.handoffs7d,
         clearedHandoffs: rawMetrics.clearedHandoffs7d,
       });
-      const metrics: OperatorMissionControlMetrics = {
-        workspaces: { total: rawMetrics.workspacesTotal, active: rawMetrics.workspacesActive },
-        calls: {
-          last7d: rawMetrics.calls7d,
-          previous7d: rawMetrics.callsPrevious7d,
-          completed7d: rawMetrics.completedCalls7d,
-          summarized7d: rawMetrics.summarizedCalls7d,
-        },
-        contacts: { new7d: rawMetrics.contacts7d },
-        tasks: {
-          created7d: rawMetrics.tasks7d,
-          completed7d: rawMetrics.completedTasks7d,
-          open: rawMetrics.openTasks,
-          overdue: rawMetrics.overdueTasks,
-        },
-        handoffs: {
-          created7d: rawMetrics.handoffs7d,
-          cleared7d: rawMetrics.clearedHandoffs7d,
-          pending: rawMetrics.pendingHandoffs,
-        },
-        appointments: {
-          created7d: rawMetrics.appointments7d,
-          upcoming: rawMetrics.upcomingAppointments,
-        },
-        provisioning: { needsAttention: rawMetrics.provisioningAttention },
-      };
+      const metrics = rawMetrics;
 
       return res.json({
         ok: true,
@@ -280,6 +255,12 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
         access: "full_operator",
         score,
         metrics,
+        workspacePage: {
+          returned: workspaceRows.length,
+          total: rawMetrics.workspacesTotal,
+          limit: 50,
+          truncated: rawMetrics.workspacesTotal > workspaceRows.length,
+        },
         workspaces: workspaceRows.map((workspace: any) => ({
           id: number(workspace.id),
           name: String(workspace.name || `Workspace ${workspace.id}`),
