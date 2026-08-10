@@ -2074,7 +2074,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/active-calls"
-      x-source: "src/routes/operator-routes.ts:357"
+      x-source: "src/routes/operator-routes.ts:383"
       x-express-path: "/api/openclaw/active-calls"
       security:
         - ApiKeyAuth: []
@@ -2093,7 +2093,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/inject"
-      x-source: "src/routes/operator-routes.ts:322"
+      x-source: "src/routes/operator-routes.ts:348"
       x-express-path: "/api/openclaw/inject"
       security:
         - ApiKeyAuth: []
@@ -2112,7 +2112,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/status"
-      x-source: "src/routes/operator-routes.ts:281"
+      x-source: "src/routes/operator-routes.ts:307"
       x-express-path: "/api/openclaw/status"
       security:
         - ApiKeyAuth: []
@@ -2131,7 +2131,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/test"
-      x-source: "src/routes/operator-routes.ts:305"
+      x-source: "src/routes/operator-routes.ts:331"
       x-express-path: "/api/openclaw/test"
       security:
         - ApiKeyAuth: []
