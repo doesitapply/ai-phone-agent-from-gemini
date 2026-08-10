@@ -8,6 +8,16 @@ export type OperatorScoreInputs = {
   clearedHandoffs: number;
 };
 
+export type OperatorMissionControlMetrics = {
+  workspaces: { total: number; active: number };
+  calls: { last7d: number; previous7d: number; completed7d: number; summarized7d: number };
+  contacts: { new7d: number };
+  tasks: { created7d: number; completed7d: number; open: number; overdue: number };
+  handoffs: { created7d: number; cleared7d: number; pending: number };
+  appointments: { created7d: number; upcoming: number };
+  provisioning: { needsAttention: number };
+};
+
 export type OperatorScoreComponent = {
   id: "call_completion" | "intelligence_coverage" | "follow_up_clearance" | "handoff_clearance";
   label: string;

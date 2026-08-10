@@ -1,6 +1,6 @@
 import type { Express, NextFunction, Request, Response, RequestHandler } from "express";
 import type { OpenClawConfig } from "../openclaw.js";
-import { calculateOperatorScoreboard } from "../operator-scoreboard.js";
+import { calculateOperatorScoreboard, type OperatorMissionControlMetrics } from "../operator-scoreboard.js";
 
 type OperatorRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -218,7 +218,7 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
 
       const row = metricRows[0] || {};
       const number = (value: unknown) => Number(value || 0);
-      const metrics = {
+      const rawMetrics = {
         workspacesTotal: number(row.workspaces_total),
         workspacesActive: number(row.workspaces_active),
         calls7d: number(row.calls_7d),
@@ -238,14 +238,40 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
         provisioningAttention: number(row.provisioning_attention),
       };
       const score = calculateOperatorScoreboard({
-        calls: metrics.calls7d,
-        completedCalls: metrics.completedCalls7d,
-        summarizedCalls: metrics.summarizedCalls7d,
-        tasks: metrics.tasks7d,
-        completedTasks: metrics.completedTasks7d,
-        handoffs: metrics.handoffs7d,
-        clearedHandoffs: metrics.clearedHandoffs7d,
+        calls: rawMetrics.calls7d,
+        completedCalls: rawMetrics.completedCalls7d,
+        summarizedCalls: rawMetrics.summarizedCalls7d,
+        tasks: rawMetrics.tasks7d,
+        completedTasks: rawMetrics.completedTasks7d,
+        handoffs: rawMetrics.handoffs7d,
+        clearedHandoffs: rawMetrics.clearedHandoffs7d,
       });
+      const metrics: OperatorMissionControlMetrics = {
+        workspaces: { total: rawMetrics.workspacesTotal, active: rawMetrics.workspacesActive },
+        calls: {
+          last7d: rawMetrics.calls7d,
+          previous7d: rawMetrics.callsPrevious7d,
+          completed7d: rawMetrics.completedCalls7d,
+          summarized7d: rawMetrics.summarizedCalls7d,
+        },
+        contacts: { new7d: rawMetrics.contacts7d },
+        tasks: {
+          created7d: rawMetrics.tasks7d,
+          completed7d: rawMetrics.completedTasks7d,
+          open: rawMetrics.openTasks,
+          overdue: rawMetrics.overdueTasks,
+        },
+        handoffs: {
+          created7d: rawMetrics.handoffs7d,
+          cleared7d: rawMetrics.clearedHandoffs7d,
+          pending: rawMetrics.pendingHandoffs,
+        },
+        appointments: {
+          created7d: rawMetrics.appointments7d,
+          upcoming: rawMetrics.upcomingAppointments,
+        },
+        provisioning: { needsAttention: rawMetrics.provisioningAttention },
+      };
 
       return res.json({
         ok: true,
