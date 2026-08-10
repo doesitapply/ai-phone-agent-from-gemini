@@ -3842,7 +3842,9 @@ registerWorkspaceOverviewRoutes(app, {
 registerOperatorRoutes(app, {
   dashboardAuth,
   requireOperator,
+  requireFullOperator,
   sql,
+  dbEnabled: DB_ENABLED,
   env,
   getOpenClawConfig: () => openClawConfig,
   testOpenClawConnection,

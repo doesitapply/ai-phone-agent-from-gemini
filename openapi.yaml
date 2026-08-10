@@ -2074,7 +2074,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/active-calls"
-      x-source: "src/routes/operator-routes.ts:228"
+      x-source: "src/routes/operator-routes.ts:357"
       x-express-path: "/api/openclaw/active-calls"
       security:
         - ApiKeyAuth: []
@@ -2093,7 +2093,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/inject"
-      x-source: "src/routes/operator-routes.ts:193"
+      x-source: "src/routes/operator-routes.ts:322"
       x-express-path: "/api/openclaw/inject"
       security:
         - ApiKeyAuth: []
@@ -2112,7 +2112,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/status"
-      x-source: "src/routes/operator-routes.ts:152"
+      x-source: "src/routes/operator-routes.ts:281"
       x-express-path: "/api/openclaw/status"
       security:
         - ApiKeyAuth: []
@@ -2131,8 +2131,27 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/test"
-      x-source: "src/routes/operator-routes.ts:176"
+      x-source: "src/routes/operator-routes.ts:305"
       x-express-path: "/api/openclaw/test"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/operator/mission-control":
+    get:
+      operationId: "GET_api_operator_mission_control"
+      tags:
+        - "operator"
+      summary: "GET /api/operator/mission-control"
+      x-source: "src/routes/operator-routes.ts:165"
+      x-express-path: "/api/operator/mission-control"
       security:
         - ApiKeyAuth: []
       responses:
@@ -2150,7 +2169,7 @@ paths:
       tags:
         - "operator"
       summary: "GET /api/operator/session"
-      x-source: "src/routes/operator-routes.ts:103"
+      x-source: "src/routes/operator-routes.ts:110"
       x-express-path: "/api/operator/session"
       security:
         - ApiKeyAuth: []

@@ -84,8 +84,11 @@ export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
             user: identity,
             session: {
               apiKey: env.DASHBOARD_API_KEY,
-              label: `SMIRK Admin · ${identity.email}`,
+              label: `SMIRK Owner Operator · ${identity.email}`,
               role: "operator",
+              operatorClass: "owner_operator",
+              access: "full_operator",
+              missionControl: "/api/operator/mission-control",
             },
           });
         }
