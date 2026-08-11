@@ -26,7 +26,7 @@ Do not add:
 
 Dual-mode flyer notes:
 - The demo number is (775) 420-4485.
-- The local founders rate is framed as a launch offer, not the public Starter price.
+- The only current public offer shown is Starter at $197/month.
 - The CTA is call-only until SMS guardrails are explicitly approved for this use.
 
 Live-send guardrail:

@@ -17,8 +17,7 @@ const expect = (label, condition) => {
 const includes = (file, snippet) => files[file].includes(snippet);
 
 expect("public pricing exposes Starter at $197", includes("buyerRoutes", 'id: "starter"') && includes("buyerRoutes", "price: 197"));
-expect("public pricing exposes Pro at $397", includes("buyerRoutes", 'id: "pro"') && includes("buyerRoutes", "price: 397"));
-expect("public pricing exposes Agency/Enterprise at $697", includes("buyerRoutes", 'id: "enterprise"') && includes("buyerRoutes", "price: 697"));
+expect("public pricing exposes only the approved Starter offer", !includes("buyerRoutes", 'id: "pro"') && !includes("buyerRoutes", 'id: "enterprise"'));
 expect("checkout metadata carries selected plan", includes("buyerRoutes", "const checkoutMetadata: Record<string, string> = {") && includes("buyerRoutes", "plan: plan.id") && includes("buyerRoutes", "metadata: checkoutMetadata"));
 expect("subscription metadata carries selected plan", includes("buyerRoutes", "subscription_data:") && includes("buyerRoutes", "metadata: checkoutMetadata"));
 expect("checkout completion reads a strictly classified SMIRK plan", includes("saas", "const classification = classifySmirkCheckoutForFulfillment(") && includes("saas", "event,") && includes("saas", "const { session, plan } = classification;") && includes("saas", "const verifiedPlan = plan!;"));
@@ -43,4 +42,4 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log("OK plan boundary contract keeps Basic/Starter and Pro/Agency pricing, provisioning, and entitlement behavior aligned");
+console.log("OK plan boundary contract exposes only Starter publicly while preserving paid-plan provisioning and entitlement behavior");

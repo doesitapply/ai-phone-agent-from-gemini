@@ -2,6 +2,22 @@ export const defaultDeployApprovalPhrase = "APPROVE_SMIRK_POST_CALL_FIX_DEPLOY";
 export const defaultBranchReconcileApprovalPhrase = "APPROVE_SMIRK_BRANCH_RECONCILE";
 export const defaultLocalGitCommitApprovalPhrase = "APPROVE_LOCAL_GIT_COMMIT";
 
+export function summarizeBuyerRouteAudit(result = {}) {
+  const lines = [result.stdout, result.stderr]
+    .filter(Boolean)
+    .join("\n")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const specificFailures = lines.filter((line) => (
+    /^FAIL\s/.test(line) && !/^FAIL buyer route audit for\s/.test(line)
+  ));
+  if (specificFailures.length > 0) return specificFailures.join("; ");
+  const terminalAuditLine = lines.findLast((line) => /^(?:OK|FAIL) buyer route audit for\s/.test(line));
+  if (terminalAuditLine) return terminalAuditLine;
+  return result.ok ? "buyer route audit passed" : "buyer route audit failed";
+}
+
 function failingChecks(checks) {
   return (Array.isArray(checks) ? checks : []).filter((check) => check?.ok !== true);
 }

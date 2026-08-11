@@ -84,8 +84,12 @@ const EnvSchema = z.object({
   OPENROUTER_MODEL: z.string().optional(),
   OPENROUTER_ENABLED: z.enum(["true", "false"]).optional(),
   OPENROUTER_TIMEOUT_MS: z.string().optional(),
+  FAST_LIVE_CALLS: z.enum(["true", "false"]).optional(),
+  // Cartesia TTS
+  CARTESIA_API_KEY: z.string().optional(),
   // ElevenLabs TTS
   ELEVENLABS_API_KEY: z.string().optional(),
+  ELEVENLABS_ENABLED: z.enum(["true", "false"]).optional(),
   ELEVENLABS_VOICE_ID: z.string().optional(),
   ELEVENLABS_MODEL_ID: z.string().optional(),
   // OpenAI TTS
@@ -99,8 +103,8 @@ const EnvSchema = z.object({
   GOOGLE_TTS_LANGUAGE: z.string().optional(),
   GOOGLE_TTS_SPEED: z.string().optional(),
   GOOGLE_TTS_PITCH: z.string().optional(),
+  GOOGLE_TTS_ENABLED: z.enum(["true", "false"]).optional(),
   // Cartesia streaming TTS
-  CARTESIA_API_KEY: z.string().optional(),
   CARTESIA_VOICE_ID: z.string().optional(),
   CARTESIA_MODEL_ID: z.string().optional(),
   // Google Calendar sync
@@ -3945,7 +3949,9 @@ registerWorkspaceOverviewRoutes(app, {
 registerOperatorRoutes(app, {
   dashboardAuth,
   requireOperator,
+  requireFullOperator,
   sql,
+  dbEnabled: DB_ENABLED,
   env,
   getOpenClawConfig: () => openClawConfig,
   testOpenClawConnection,

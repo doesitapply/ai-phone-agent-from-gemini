@@ -5,6 +5,7 @@ const surfaces = [
   "src/components/SetupWizard.tsx",
   "src/routes/workspace-profile-routes.ts",
   "src/db.ts",
+  "scripts/build-smirk-collateral.mjs",
 ];
 
 const bannedClaims = [
@@ -13,6 +14,8 @@ const bannedClaims = [
   ["multi-plan ladder in default prompt", /\bStarter,\s*Pro,\s*Agency\b|\bPro is \$397\b|\bAgency is \$697\b/i],
   ["advanced integrations as first-dollar promise", /\bCRM\/webhook\b|\badvanced routing\b|\bmulti-agent\b|\bpriority deployment\b/i],
   ["smart voicemail positioning in default prompt", /\bSmart Voicemail\b|\bsmart voicemail\b/i],
+  ["inactive founders pricing", /\bfounders? (?:deal|rate)\b|\$99(?:\/month|\/mo|\s+a month)?|locked for life/i],
+  ["unsupported recovered-revenue claim", /one recovered job pays|typical missed call costs/i],
 ];
 
 const requiredClaims = [

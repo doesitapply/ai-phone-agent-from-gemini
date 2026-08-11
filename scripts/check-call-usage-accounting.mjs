@@ -23,6 +23,13 @@ expect('duplicate callbacks become no-ops', saas.includes('if (result?.already_r
 expect('missing call or tenant stays retryable', saas.includes('if (!result?.call_found || !result.usage_claimed) throw new Error'));
 expect('partial counter outcomes abort the SQL statement', saas.includes('1 / CASE') && saas.includes('NOT EXISTS(SELECT 1 FROM usage_upsert)') && saas.includes('NOT EXISTS(SELECT 1 FROM workspace_update)'));
 expect('legacy two-statement increment is gone', !saas.includes('export async function incrementWorkspaceUsage'));
+expect('default operator workspace seeds canonical positive Pro caps',
+  saas.includes("VALUES ('default', 'My Business', ${ownerEmail}, 'pro', 'active', ${PLAN_LIMITS.pro.calls}, ${PLAN_LIMITS.pro.minutes}, ${apiKey})"));
+expect('legacy default operator sentinel caps are repaired without broad customer mutation',
+  saas.includes("AND slug = 'default'")
+  && saas.includes("AND plan = 'pro'")
+  && saas.includes('AND (monthly_call_limit <= 0 OR monthly_minute_limit <= 0)')
+  && saas.includes('SET monthly_call_limit = ${PLAN_LIMITS.pro.calls}'));
 
 if (failures.length) {
   console.error('FAIL completed-call usage accounting contract:');

@@ -487,7 +487,7 @@ paths:
       tags:
         - "billing"
       summary: "POST /api/billing/portal"
-      x-source: "src/routes/buyer-routes.ts:951"
+      x-source: "src/routes/buyer-routes.ts:934"
       x-express-path: "/api/billing/portal"
       security: []
       responses:
@@ -909,7 +909,7 @@ paths:
       tags:
         - "checkout"
       summary: "POST /api/checkout/create"
-      x-source: "src/routes/buyer-routes.ts:782"
+      x-source: "src/routes/buyer-routes.ts:756"
       x-express-path: "/api/checkout/create"
       security: []
       responses:
@@ -1365,7 +1365,7 @@ paths:
       tags:
         - "first-dollar-readiness"
       summary: "GET /api/first-dollar-readiness"
-      x-source: "src/routes/buyer-routes.ts:702"
+      x-source: "src/routes/buyer-routes.ts:676"
       x-express-path: "/api/first-dollar-readiness"
       security: []
       responses:
@@ -1423,7 +1423,7 @@ paths:
       tags:
         - "health"
       summary: "GET /api/health"
-      x-source: "src/routes/buyer-routes.ts:698"
+      x-source: "src/routes/buyer-routes.ts:672"
       x-express-path: "/api/health"
       security:
         - ApiKeyAuth: []
@@ -1575,7 +1575,7 @@ paths:
       tags:
         - "invite"
       summary: "GET /api/invite/:token"
-      x-source: "src/routes/buyer-routes.ts:1096"
+      x-source: "src/routes/buyer-routes.ts:1079"
       x-express-path: "/api/invite/:token"
       security: []
       responses:
@@ -1593,7 +1593,7 @@ paths:
       tags:
         - "invite"
       summary: "POST /api/invite/:token/accept"
-      x-source: "src/routes/buyer-routes.ts:1124"
+      x-source: "src/routes/buyer-routes.ts:1107"
       x-express-path: "/api/invite/:token/accept"
       security: []
       responses:
@@ -2116,7 +2116,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/active-calls"
-      x-source: "src/routes/operator-routes.ts:228"
+      x-source: "src/routes/operator-routes.ts:364"
       x-express-path: "/api/openclaw/active-calls"
       security:
         - ApiKeyAuth: []
@@ -2135,7 +2135,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/inject"
-      x-source: "src/routes/operator-routes.ts:193"
+      x-source: "src/routes/operator-routes.ts:329"
       x-express-path: "/api/openclaw/inject"
       security:
         - ApiKeyAuth: []
@@ -2154,7 +2154,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/status"
-      x-source: "src/routes/operator-routes.ts:152"
+      x-source: "src/routes/operator-routes.ts:288"
       x-express-path: "/api/openclaw/status"
       security:
         - ApiKeyAuth: []
@@ -2173,8 +2173,27 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/test"
-      x-source: "src/routes/operator-routes.ts:176"
+      x-source: "src/routes/operator-routes.ts:312"
       x-express-path: "/api/openclaw/test"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/operator/mission-control":
+    get:
+      operationId: "GET_api_operator_mission_control"
+      tags:
+        - "operator"
+      summary: "GET /api/operator/mission-control"
+      x-source: "src/routes/operator-routes.ts:165"
+      x-express-path: "/api/operator/mission-control"
       security:
         - ApiKeyAuth: []
       responses:
@@ -2192,7 +2211,7 @@ paths:
       tags:
         - "operator"
       summary: "GET /api/operator/session"
-      x-source: "src/routes/operator-routes.ts:103"
+      x-source: "src/routes/operator-routes.ts:110"
       x-express-path: "/api/operator/session"
       security:
         - ApiKeyAuth: []
@@ -2304,7 +2323,7 @@ paths:
       tags:
         - "pricing"
       summary: "GET /api/pricing"
-      x-source: "src/routes/buyer-routes.ts:755"
+      x-source: "src/routes/buyer-routes.ts:729"
       x-express-path: "/api/pricing"
       security: []
       responses:
@@ -4099,7 +4118,7 @@ paths:
       tags:
         - "stripe"
       summary: "POST /api/stripe/webhook"
-      x-source: "src/routes/buyer-routes.ts:1007"
+      x-source: "src/routes/buyer-routes.ts:990"
       x-express-path: "/api/stripe/webhook"
       security: []
       responses:
@@ -4136,7 +4155,7 @@ paths:
       tags:
         - "system-health"
       summary: "GET /api/system-health"
-      x-source: "src/routes/system-health-routes.ts:64"
+      x-source: "src/routes/system-health-routes.ts:80"
       x-express-path: "/api/system-health"
       security:
         - ApiKeyAuth: []
@@ -4536,7 +4555,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2930"
+      x-source: "server.ts:2934"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -4554,7 +4573,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3638"
+      x-source: "server.ts:3642"
       x-express-path: "/api/twilio/process"
       security: []
       responses:
@@ -4778,7 +4797,7 @@ paths:
       tags:
         - "version"
       summary: "GET /api/version"
-      x-source: "src/routes/buyer-routes.ts:686"
+      x-source: "src/routes/buyer-routes.ts:660"
       x-express-path: "/api/version"
       security: []
       responses:

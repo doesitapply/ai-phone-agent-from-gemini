@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import assert from "node:assert/strict";
 import { evaluatePaymentLinkConfiguration } from "../src/payment-link-configuration.js";
+import { evaluateProofLoopReadiness } from "../src/routes/system-health-routes.js";
 
 const starter = {
   STRIPE_PAYMENT_LINK_STARTER: "https://buy.stripe.com/starter_live_fixture",
@@ -20,6 +21,35 @@ const missing = evaluatePaymentLinkConfiguration({});
 assert.equal(missing.ready, false);
 assert.ok(missing.blockers.includes("starter-payment-link-pair-missing"));
 assert.equal(missing.providerVerification, "not_checked");
+
+const proofReadyWithoutCheckout = evaluateProofLoopReadiness({
+  dbPass: true,
+  aiPass: true,
+  twilioPass: true,
+  ownerAlertsPass: true,
+  ownerAlertsWarn: false,
+  callbackPass: true,
+});
+assert.deepEqual(
+  proofReadyWithoutCheckout,
+  { pass: true, warn: false },
+  "proof pipeline can be ready while checkout remains fail-closed",
+);
+assert.equal(missing.ready, false, "missing checkout configuration must remain blocked independently of proof readiness");
+
+const proofBlockedByMissingCallback = evaluateProofLoopReadiness({
+  dbPass: true,
+  aiPass: true,
+  twilioPass: true,
+  ownerAlertsPass: true,
+  ownerAlertsWarn: false,
+  callbackPass: false,
+});
+assert.deepEqual(
+  proofBlockedByMissingCallback,
+  { pass: false, warn: false },
+  "proof readiness must still fail when a real proof-pipeline dependency is unavailable",
+);
 
 const starterOnly = evaluatePaymentLinkConfiguration(starter);
 assert.equal(starterOnly.ready, true, "one complete Starter pair must satisfy configuration health");
@@ -110,4 +140,4 @@ assert.equal(approvedEnterprise.enterpriseConfigured, true);
 assert.ok(approvedEnterprise.blockers.includes("enterprise-payment-link-out-of-first-dollar-scope"));
 assert.equal(approvedEnterprise.providerVerification, "not_checked", "configuration health must never imply provider verification");
 
-console.log("OK Payment Link health requires Starter plus an exact fulfillment-ID allowlist, rejects configured Pro/Enterprise lanes, and keeps provider proof separate");
+console.log("OK proof readiness is independent while Payment Link health still requires Starter plus an exact fulfillment-ID allowlist, rejects configured Pro/Enterprise lanes, and keeps provider proof separate");

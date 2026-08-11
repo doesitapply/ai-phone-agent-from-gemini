@@ -1217,11 +1217,11 @@ function PublicComparePage() {
                 ))}
               </div>
               <div className="mt-5 flex flex-wrap gap-3">
-                <a href="/#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                <a href="/pricing" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
                   Start recovery
                 </a>
-                <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
-                  See plans
+                <a href="/book" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                  Request setup help
                 </a>
               </div>
             </div>
@@ -1315,7 +1315,7 @@ function PublicLaunchPage() {
               </p>
               <div className="mt-7 flex flex-wrap gap-3">
                 <a
-                  href="/#request-activation"
+                  href="/pricing"
                   onClick={() => trackLaunchEvent("cta_clicked", { cta: "proof_start_recovery", channel: "proof_page" })}
                   className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black"
                 >
@@ -1326,7 +1326,7 @@ function PublicLaunchPage() {
                   onClick={() => trackLaunchEvent("cta_clicked", { cta: "proof_see_plans", channel: "proof_page" })}
                   className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]"
                 >
-                  See plans
+                  See the offer
                 </a>
               </div>
             </div>
@@ -1462,11 +1462,11 @@ function PublicIndustryPage({ slug }: { slug: string }) {
               </h1>
               <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">{page.description}</p>
               <div className="mt-7 flex flex-wrap gap-3">
-                <a href="/#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                <a href="/pricing" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
                   <PhoneForwarded size={16} /> Start recovery
                 </a>
-                <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
-                  See plans
+                <a href="/book" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                  Request setup help
                 </a>
               </div>
             </div>
@@ -1626,8 +1626,8 @@ function PublicPricingPage() {
           <div className="mb-4 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
             <PhoneMissed size={14} /> Missed-call recovery
           </div>
-          <h1 className="max-w-3xl text-4xl font-black leading-[0.96] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Simple plans for protecting missed job calls.</h1>
-          <p className="mt-4 max-w-2xl text-lg leading-8 text-gray-300">Starter keeps owners focused on Calls, Contacts, and Tasks. Pro opens the full suite when the business is ready for deeper operations.</p>
+          <h1 className="max-w-3xl text-4xl font-black leading-[0.96] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>One plan for protecting missed job calls.</h1>
+          <p className="mt-4 max-w-2xl text-lg leading-8 text-gray-300">Starter is $197 per month. It keeps the owner focused on the call record, callback task, and next action.</p>
           </div>
           <PublicDashboardPreview />
         </div>
@@ -1660,7 +1660,7 @@ function PublicPricingPage() {
           </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid max-w-3xl gap-6">
           {plans.map((plan) => (
             <div key={plan.id} className="border border-[#2f4637] bg-[#101510]/90 p-6">
               <div className="mb-4">
@@ -20144,12 +20144,12 @@ function AnalyticsPage() {
       <div className="rounded-2xl bg-gradient-to-br from-violet-950/60 to-gray-900 border border-violet-800/40 p-6">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-sm font-bold text-white mb-1">Upgrade to unlock more</p>
-            <p className="text-xs text-gray-400">Starter ($197/mo) · Pro ($397/mo) · Agency ($697/mo) — simple monthly plans, no trial maze</p>
+            <p className="text-sm font-bold text-white mb-1">Start missed-call recovery</p>
+            <p className="text-xs text-gray-400">$197/month · one plan · month-to-month · standard setup included · no promo codes</p>
           </div>
           <button onClick={() => window.open('/pricing', '_blank')}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors shrink-0 ml-4">
-            <CreditCard size={12} /> View Plans
+            <CreditCard size={12} /> View Offer
           </button>
         </div>
       </div>
@@ -24731,7 +24731,7 @@ function WorkspacesPage() {
 
   const PLAN_LIMITS: Record<string, { calls: number; minutes: number; agents: number }> = {
     free:       { calls: 50,   minutes: 100,  agents: 1 },
-    starter:    { calls: 500,  minutes: 1000, agents: 3 },
+    starter:    { calls: 200,  minutes: 500,  agents: 3 },
     pro:        { calls: 2000, minutes: 5000, agents: 9 },
     enterprise: { calls: 0,    minutes: 0,    agents: 0 },
   };
@@ -25309,11 +25309,64 @@ function CompliancePage() {
 
 
 // ── Mission Control Page ──────────────────────────────────────────────────────
+type OperatorMissionControl = {
+  ok: boolean;
+  generatedAt: string;
+  scope: "all_workspaces";
+  access: "full_operator";
+  score: {
+    overall: number | null;
+    grade: string;
+    activity: number;
+    applicableWeight: number;
+    components: Array<{ id: string; label: string; score: number | null; weight: number; detail: string; applicable: boolean }>;
+  };
+  metrics: {
+    workspacesTotal: number;
+    workspacesActive: number;
+    calls7d: number;
+    callsPrevious7d: number;
+    completedCalls7d: number;
+    summarizedCalls7d: number;
+    contacts7d: number;
+    tasks7d: number;
+    completedTasks7d: number;
+    openTasks: number;
+    overdueTasks: number;
+    handoffs7d: number;
+    clearedHandoffs7d: number;
+    pendingHandoffs: number;
+    appointments7d: number;
+    upcomingAppointments: number;
+    provisioningAttention: number;
+  };
+  workspacePage: { returned: number; total: number; limit: number; truncated: boolean };
+  workspaces: Array<{
+    id: number;
+    name: string;
+    slug: string;
+    plan: string;
+    subscriptionStatus: string;
+    callsThisMonth: number;
+    minutesThisMonth: number;
+    monthlyCallLimit: number;
+    monthlyMinuteLimit: number;
+    calls7d: number;
+    contacts7d: number;
+    openTasks: number;
+    overdueTasks: number;
+    pendingHandoffs: number;
+    appointments7d: number;
+  }>;
+};
+
 function MissionControlPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
 
   const [stats, setStats] = useState<Stats | null>(null);
+  const [operatorControl, setOperatorControl] = useState<OperatorMissionControl | null>(null);
+  const [operatorControlError, setOperatorControlError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [calls, setCalls] = useState<Call[]>([]);
   const [handoffs, setHandoffs] = useState<any[]>([]);
@@ -25327,14 +25380,19 @@ function MissionControlPage() {
 
   const load = async () => {
     try {
-      const [s, t, c, h, a] = await Promise.all([
+      const [s, t, c, h, a, control] = await Promise.all([
         api<Stats>("/api/stats"),
         api<{ tasks: Task[] }>("/api/tasks"),
         api<{ calls: Call[] }>("/api/calls?limit=30"),
         api<{ handoffs: any[] }>("/api/handoffs"),
         api<{ appointments: any[] }>("/api/appointments"),
+        api<OperatorMissionControl>("/api/operator/mission-control")
+          .then(data => ({ data, error: null as string | null }))
+          .catch((error: any) => ({ data: null, error: error?.message || "Portfolio scoreboard unavailable" })),
       ]);
       setStats(s);
+      setOperatorControl(control.data);
+      setOperatorControlError(control.error);
       setTasks(t.tasks || []);
       setCalls(c.calls || []);
       setHandoffs(h.handoffs || []);
@@ -25423,6 +25481,14 @@ function MissionControlPage() {
     : tasks;
   const clearableFilteredTasks = filteredTasks.filter(t => t.status === "open" || t.status === "in_progress");
   const clearableAllTasks = actionTasks;
+  const portfolio = operatorControl?.metrics;
+  const callTrend = portfolio
+    ? portfolio.calls7d - portfolio.callsPrevious7d
+    : 0;
+  const selectWorkspace = (workspaceId: number) => {
+    writeActiveWorkspaceId(workspaceId);
+    window.location.reload();
+  };
 
   const card = `rounded-2xl border p-5 ${dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200"}`;
   const label = `text-xs font-semibold uppercase tracking-widest ${dark ? "text-gray-500" : "text-gray-400"}`;
@@ -25453,10 +25519,15 @@ function MissionControlPage() {
     <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Mission Control</h1>
-          <p className={`text-sm mt-0.5 ${dark ? "text-gray-500" : "text-gray-400"}`}>Live view of all activity, follow-ups, and routing decisions</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-xl font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Mission Control</h1>
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-300">
+              <ShieldCheck size={11} /> Owner operator · full access
+            </span>
+          </div>
+          <p className={`text-sm mt-0.5 ${dark ? "text-gray-500" : "text-gray-400"}`}>Cross-workspace command view · current workspace operations below</p>
         </div>
         <button
           onClick={load}
@@ -25467,7 +25538,118 @@ function MissionControlPage() {
         </button>
       </div>
 
-      {/* Stats Row */}
+      {operatorControlError && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="alert">
+          <span><strong>Portfolio scoreboard unavailable.</strong> {operatorControlError}</span>
+          <button onClick={load} className="shrink-0 rounded-lg border border-amber-400/30 px-2.5 py-1 text-xs font-bold hover:bg-amber-400/10">Retry</button>
+        </div>
+      )}
+
+      {/* Owner Operator Scoreboard */}
+      {operatorControl && portfolio && (
+        <section className="relative overflow-hidden rounded-3xl border border-emerald-500/30 bg-[#07110d] p-5 md:p-6 shadow-[0_0_60px_rgba(0,255,136,0.06)]">
+          <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-emerald-400/10 blur-3xl" />
+          <div className="relative grid grid-cols-1 gap-6 xl:grid-cols-[260px_1fr]">
+            <div className="flex flex-col justify-between rounded-2xl border border-emerald-500/20 bg-black/20 p-5">
+              <div>
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-400">
+                  <Gauge size={13} /> 7-day operator score
+                </div>
+                <div className="mt-4 flex items-end gap-3">
+                  <span className="text-6xl font-black leading-none text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>{operatorControl.score.overall ?? "—"}</span>
+                  <span className="mb-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xl font-black text-emerald-300">{operatorControl.score.grade}</span>
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-gray-500">Applicable 7-day signals are weight-normalized; missing work is shown N/A rather than counted as failure. New-task and new-handoff rates are cohort disposition, not old-backlog throughput. No pretend revenue math.</p>
+              </div>
+              <div className="mt-5 text-[10px] font-mono text-gray-600">Updated {fmt.date(operatorControl.generatedAt)} · all workspaces</div>
+            </div>
+
+            <div className="space-y-5">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+                {[
+                  { label: "Active workspaces", value: `${portfolio.workspacesActive}/${portfolio.workspacesTotal}`, tone: "text-violet-300" },
+                  { label: "Calls · 7d", value: portfolio.calls7d, tone: "text-emerald-300", sub: `${callTrend >= 0 ? "+" : ""}${callTrend} vs prior` },
+                  { label: "New contacts", value: portfolio.contacts7d, tone: "text-cyan-300" },
+                  { label: "Open tasks", value: portfolio.openTasks, tone: portfolio.overdueTasks ? "text-amber-300" : "text-gray-200", sub: `${portfolio.overdueTasks} overdue` },
+                  { label: "Pending handoffs", value: portfolio.pendingHandoffs, tone: portfolio.pendingHandoffs ? "text-red-300" : "text-gray-200" },
+                  { label: "Appointments", value: portfolio.appointments7d, tone: "text-blue-300", sub: `${portfolio.upcomingAppointments} upcoming` },
+                  { label: "Provisioning", value: portfolio.provisioningAttention, tone: portfolio.provisioningAttention ? "text-amber-300" : "text-gray-200", sub: "need attention" },
+                ].map(item => (
+                  <div key={item.label} className="rounded-xl border border-white/5 bg-white/[0.025] p-3">
+                    <div className={`text-2xl font-black ${item.tone}`} style={{ fontFamily: "'Space Grotesk', system-ui" }}>{item.value}</div>
+                    <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-gray-600">{item.label}</div>
+                    {item.sub && <div className="mt-1 text-[9px] text-gray-700">{item.sub}</div>}
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {operatorControl.score.components.map(component => (
+                  <div key={component.id} className="rounded-xl border border-white/5 bg-black/20 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-gray-300">{component.label}</span>
+                      <span className="font-mono text-xs font-bold text-white">{component.score === null ? "N/A" : `${component.score}%`} <span className="text-gray-700">· {component.weight}% base wt</span></span>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-900">
+                      <div className={`h-full rounded-full ${component.applicable ? "bg-gradient-to-r from-violet-500 to-emerald-400" : "bg-gray-800"}`} style={{ width: component.score === null ? "0%" : `${component.score}%` }} />
+                    </div>
+                    <div className="mt-1.5 text-[10px] text-gray-600">{component.detail}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="relative mt-6 overflow-x-auto rounded-2xl border border-white/5">
+            <div className="flex items-center justify-between border-b border-white/5 bg-white/[0.025] px-4 py-3">
+              <div>
+                <h2 className="text-sm font-bold text-white">Workspace Scoreboard</h2>
+                <p className="mt-0.5 text-[10px] text-gray-600">Ranked by overdue work, then call volume. Select a workspace to operate it.{operatorControl.workspacePage.truncated ? ` Showing ${operatorControl.workspacePage.returned} highest-attention workspaces of ${operatorControl.workspacePage.total}.` : ""}</p>
+              </div>
+              <BarChart3 size={16} className="text-emerald-400" />
+            </div>
+            <table className="w-full min-w-[900px] text-left text-xs">
+              <thead className="bg-black/20 text-[9px] uppercase tracking-widest text-gray-600">
+                <tr>
+                  <th className="px-4 py-2.5">Workspace</th>
+                  <th className="px-3 py-2.5">Status</th>
+                  <th className="px-3 py-2.5">Calls · 7d</th>
+                  <th className="px-3 py-2.5">Calls · month</th>
+                  <th className="px-3 py-2.5">Contacts</th>
+                  <th className="px-3 py-2.5">Open / overdue</th>
+                  <th className="px-3 py-2.5">Handoffs</th>
+                  <th className="px-3 py-2.5">Appointments</th>
+                  <th className="px-4 py-2.5 text-right">Operate</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {operatorControl.workspaces.map(workspace => (
+                  <tr key={workspace.id} className="bg-black/10 text-gray-400 transition-colors hover:bg-emerald-500/[0.04]">
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-white">{workspace.name}</div>
+                      <div className="mt-0.5 font-mono text-[9px] text-gray-700">#{workspace.id} · {workspace.plan}</div>
+                    </td>
+                    <td className="px-3 py-3"><span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${["active", "trialing"].includes(workspace.subscriptionStatus) ? "bg-emerald-500/10 text-emerald-300" : "bg-gray-800 text-gray-500"}`}>{workspace.subscriptionStatus}</span></td>
+                    <td className="px-3 py-3 font-mono text-white">{workspace.calls7d}</td>
+                    <td className="px-3 py-3 font-mono">{workspace.callsThisMonth}/{workspace.monthlyCallLimit > 0 ? workspace.monthlyCallLimit : "—"}</td>
+                    <td className="px-3 py-3 font-mono">{workspace.contacts7d}</td>
+                    <td className="px-3 py-3 font-mono"><span className="text-white">{workspace.openTasks}</span> / <span className={workspace.overdueTasks ? "text-amber-300" : "text-gray-600"}>{workspace.overdueTasks}</span></td>
+                    <td className={`px-3 py-3 font-mono ${workspace.pendingHandoffs ? "text-red-300" : ""}`}>{workspace.pendingHandoffs}</td>
+                    <td className="px-3 py-3 font-mono">{workspace.appointments7d}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button onClick={() => selectWorkspace(workspace.id)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-[10px] font-bold text-emerald-300 hover:bg-emerald-500/10">
+                        Open <ChevronRight size={11} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* Current Workspace Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
         {[
           { label: "Total Calls", value: stats?.totalCalls ?? stats?.total_calls ?? 0, accent: "#a78bfa", onClick: () => setExpandedCall(null) },

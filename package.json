@@ -14,11 +14,12 @@
     "generate:openapi": "node scripts/generate-openapi.mjs",
     "check:openapi": "node scripts/generate-openapi.mjs --check",
     "lint": "tsc --noEmit",
-    "test": "npm run -s lint && npm run -s check:openapi && npm run -s check:git-deploy-sync:fixtures && npm run -s check:deploy-archive-safety && node --import tsx --test tests/production_backup_readiness.test.ts tests/production_backup_create.test.ts && npm run -s check:launch-prospect-readiness:fixtures && npm run -s check:launch-ledger-reconciliation && npm run -s check:market-validation-actions && npm run -s check:demo-operator-access && npm run -s check:owner-control && npm run -s check:webhook-buffer && npm run -s check:chat-safety && npm run -s check:prospecting-safety && npm run -s check:prospect-outreach && npm run -s check:velvet-research && npm run -s check:velvet-lead-source && npm run -s check:velvet-discovery && npm run -s check:velvet-handoff && npm run -s check:telegram-approval-safety && npm run -s check:first-customer-next-action && npm run -s check:real-revenue-contract && node --check scripts/place-operator-alert-call.mjs && npm run -s smoke:operator-alert-call",
+    "test": "npm run -s lint && npm run -s check:openapi && npm run -s check:git-deploy-sync:fixtures && npm run -s check:deploy-archive-safety && node --import tsx --test tests/production_backup_readiness.test.ts tests/production_backup_create.test.ts && npm run -s check:launch-prospect-readiness:fixtures && npm run -s check:launch-ledger-reconciliation && npm run -s check:market-validation-actions && npm run -s check:demo-operator-access && npm run -s check:operator-mission-control && npm run -s check:owner-control && npm run -s check:webhook-buffer && npm run -s check:chat-safety && npm run -s check:prospecting-safety && npm run -s check:prospect-outreach && npm run -s check:velvet-research && npm run -s check:velvet-lead-source && npm run -s check:velvet-discovery && npm run -s check:velvet-handoff && npm run -s check:telegram-approval-safety && npm run -s check:first-customer-next-action && npm run -s check:real-revenue-contract && node --check scripts/place-operator-alert-call.mjs && npm run -s smoke:operator-alert-call",
     "check:auth": "node scripts/check-auth-regression.mjs . && tsx scripts/check-chat-route-security.ts && tsx scripts/check-google-auth-safety.ts && node scripts/check-call-usage-accounting.mjs && node --import tsx --test tests/call_delete_tenant_isolation.test.ts",
     "check:auth-regression": "npm run check:auth",
     "check:chat-safety": "node scripts/check-smirk-chat-safety-contract.mjs && node --import tsx --test tests/smirk_chat_provider.test.ts",
     "check:demo-operator-access": "node scripts/check-demo-operator-access.mjs",
+    "check:operator-mission-control": "tsx scripts/check-operator-mission-control.ts",
     "check:owner-control": "node scripts/check-owner-control-contract.mjs && node --import tsx --test tests/owner_control_prospect_acquisition.test.ts tests/prospect_acquisition_configuration_stage.test.ts",
     "check:owner-control-ui": "npm run -s build:frontend && node scripts/check-owner-control-ui.mjs",
     "check:public-landing-ui": "npm run -s build:frontend && node scripts/check-public-landing-ui.mjs",
@@ -320,7 +321,8 @@
   "overrides": {
     "axios": "1.18.1",
     "body-parser": "1.20.6",
-    "brace-expansion": "5.0.8",
+    "brace-expansion": "5.0.9",
+    "brace-expansion@2": "2.1.4",
     "form-data": "4.0.6",
     "google-gax": {
       "rimraf": "6.1.3"

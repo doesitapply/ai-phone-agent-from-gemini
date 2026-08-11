@@ -1,10 +1,13 @@
 import type { Express, NextFunction, Request, Response, RequestHandler } from "express";
 import type { OpenClawConfig } from "../openclaw.js";
+import { calculateOperatorScoreboard, type OperatorMissionControlMetrics } from "../operator-scoreboard.js";
 
 type OperatorRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: (req: Request, res: Response, next: NextFunction) => void;
+  requireFullOperator: (req: Request, res: Response, next: NextFunction) => void;
   sql: any;
+  dbEnabled: boolean;
   env: Record<string, string | undefined>;
   getOpenClawConfig: () => OpenClawConfig | null;
   testOpenClawConnection: (config: OpenClawConfig) => Promise<{ ok: boolean; latencyMs?: number; error?: string }>;
@@ -21,7 +24,9 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
   const {
     dashboardAuth,
     requireOperator,
+    requireFullOperator,
     sql,
+    dbEnabled,
     env,
     getOpenClawConfig,
     testOpenClawConnection,
@@ -57,6 +62,8 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
     "lead_hunter",
     "system_health",
     "owner_control",
+    "mission_control_scoreboard",
+    "portfolio_observability",
     "admin_api",
   ];
 
@@ -141,12 +148,141 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
     res.json({
       ok: true,
       role: "operator",
-      label: "SMIRK Operator Admin",
+      operatorClass: "owner_operator",
+      label: "SMIRK Owner Operator Admin",
       spendRestricted: false,
       access: "full_operator",
+      missionControl: {
+        enabled: true,
+        scope: "all_workspaces",
+        scoreboardEndpoint: "/api/operator/mission-control",
+      },
       capabilities: fullOperatorCapabilities,
       pages: fullOperatorPages,
     });
+  });
+
+  app.get("/api/operator/mission-control", dashboardAuth, requireFullOperator, async (_req: Request, res: Response) => {
+    res.set("Cache-Control", "no-store");
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Mission Control requires durable workspace storage.", code: "MISSION_CONTROL_DB_REQUIRED" });
+    }
+
+    try {
+      const [metricRows, workspaceRows] = await Promise.all([
+        sql<any[]>`
+          SELECT
+            (SELECT COUNT(*) FROM workspaces) AS workspaces_total,
+            (SELECT COUNT(*) FROM workspaces WHERE subscription_status IN ('active', 'trialing')) AS workspaces_active,
+            (SELECT COUNT(*) FROM calls WHERE started_at >= NOW() - INTERVAL '7 days') AS calls_7d,
+            (SELECT COUNT(*) FROM calls WHERE started_at >= NOW() - INTERVAL '14 days' AND started_at < NOW() - INTERVAL '7 days') AS calls_previous_7d,
+            (SELECT COUNT(*) FROM calls WHERE started_at >= NOW() - INTERVAL '7 days' AND status = 'completed') AS completed_calls_7d,
+            (SELECT COUNT(DISTINCT cs.call_sid) FROM call_summaries cs JOIN calls c ON c.call_sid = cs.call_sid WHERE c.started_at >= NOW() - INTERVAL '7 days') AS summarized_calls_7d,
+            (SELECT COUNT(*) FROM contacts WHERE created_at >= NOW() - INTERVAL '7 days') AS contacts_7d,
+            (SELECT COUNT(*) FROM tasks WHERE created_at >= NOW() - INTERVAL '7 days') AS tasks_7d,
+            (SELECT COUNT(*) FROM tasks WHERE created_at >= NOW() - INTERVAL '7 days' AND status = 'completed') AS completed_tasks_7d,
+            (SELECT COUNT(*) FROM tasks WHERE status IN ('open', 'in_progress')) AS open_tasks,
+            (SELECT COUNT(*) FROM tasks WHERE status IN ('open', 'in_progress') AND due_at IS NOT NULL AND due_at < NOW()) AS overdue_tasks,
+            (SELECT COUNT(*) FROM handoffs WHERE created_at >= NOW() - INTERVAL '7 days') AS handoffs_7d,
+            (SELECT COUNT(*) FROM handoffs WHERE created_at >= NOW() - INTERVAL '7 days' AND status IN ('acknowledged', 'resolved', 'completed', 'transferred')) AS cleared_handoffs_7d,
+            (SELECT COUNT(*) FROM handoffs WHERE status IN ('pending', 'screening')) AS pending_handoffs,
+            (SELECT COUNT(*) FROM appointments WHERE created_at >= NOW() - INTERVAL '7 days') AS appointments_7d,
+            (SELECT COUNT(*) FROM appointments WHERE status != 'cancelled' AND scheduled_at >= NOW()) AS upcoming_appointments,
+            (SELECT COUNT(*) FROM provisioning_requests WHERE status NOT IN ('workspace_and_line_created', 'workspace_created', 'activated', 'complete', 'cancelled')) AS provisioning_attention
+        `,
+        sql<any[]>`
+          SELECT
+            w.id,
+            w.name,
+            w.slug,
+            w.plan,
+            w.subscription_status,
+            w.calls_this_month,
+            w.minutes_this_month,
+            w.monthly_call_limit,
+            w.monthly_minute_limit,
+            (SELECT COUNT(*) FROM calls c WHERE c.workspace_id = w.id AND c.started_at >= NOW() - INTERVAL '7 days') AS calls_7d,
+            (SELECT COUNT(*) FROM contacts c WHERE c.workspace_id = w.id AND c.created_at >= NOW() - INTERVAL '7 days') AS contacts_7d,
+            (SELECT COUNT(*) FROM tasks t WHERE t.workspace_id = w.id AND t.status IN ('open', 'in_progress')) AS open_tasks,
+            (SELECT COUNT(*) FROM tasks t WHERE t.workspace_id = w.id AND t.status IN ('open', 'in_progress') AND t.due_at IS NOT NULL AND t.due_at < NOW()) AS overdue_tasks,
+            (SELECT COUNT(*) FROM handoffs h WHERE h.workspace_id = w.id AND h.status IN ('pending', 'screening')) AS pending_handoffs,
+            (SELECT COUNT(*) FROM appointments a WHERE a.workspace_id = w.id AND a.created_at >= NOW() - INTERVAL '7 days') AS appointments_7d
+          FROM workspaces w
+          ORDER BY
+            (SELECT COUNT(*) FROM tasks t WHERE t.workspace_id = w.id AND t.status IN ('open', 'in_progress') AND t.due_at IS NOT NULL AND t.due_at < NOW()) DESC,
+            (SELECT COUNT(*) FROM calls c WHERE c.workspace_id = w.id AND c.started_at >= NOW() - INTERVAL '7 days') DESC,
+            w.id ASC
+          LIMIT 50
+        `,
+      ]);
+
+      const row = metricRows[0] || {};
+      const number = (value: unknown) => Number(value || 0);
+      const rawMetrics: OperatorMissionControlMetrics = {
+        workspacesTotal: number(row.workspaces_total),
+        workspacesActive: number(row.workspaces_active),
+        calls7d: number(row.calls_7d),
+        callsPrevious7d: number(row.calls_previous_7d),
+        completedCalls7d: number(row.completed_calls_7d),
+        summarizedCalls7d: number(row.summarized_calls_7d),
+        contacts7d: number(row.contacts_7d),
+        tasks7d: number(row.tasks_7d),
+        completedTasks7d: number(row.completed_tasks_7d),
+        openTasks: number(row.open_tasks),
+        overdueTasks: number(row.overdue_tasks),
+        handoffs7d: number(row.handoffs_7d),
+        clearedHandoffs7d: number(row.cleared_handoffs_7d),
+        pendingHandoffs: number(row.pending_handoffs),
+        appointments7d: number(row.appointments_7d),
+        upcomingAppointments: number(row.upcoming_appointments),
+        provisioningAttention: number(row.provisioning_attention),
+      };
+      const score = calculateOperatorScoreboard({
+        calls: rawMetrics.calls7d,
+        completedCalls: rawMetrics.completedCalls7d,
+        summarizedCalls: rawMetrics.summarizedCalls7d,
+        tasks: rawMetrics.tasks7d,
+        completedTasks: rawMetrics.completedTasks7d,
+        handoffs: rawMetrics.handoffs7d,
+        clearedHandoffs: rawMetrics.clearedHandoffs7d,
+      });
+      const metrics = rawMetrics;
+
+      return res.json({
+        ok: true,
+        generatedAt: new Date().toISOString(),
+        scope: "all_workspaces",
+        access: "full_operator",
+        score,
+        metrics,
+        workspacePage: {
+          returned: workspaceRows.length,
+          total: rawMetrics.workspacesTotal,
+          limit: 50,
+          truncated: rawMetrics.workspacesTotal > workspaceRows.length,
+        },
+        workspaces: workspaceRows.map((workspace: any) => ({
+          id: number(workspace.id),
+          name: String(workspace.name || `Workspace ${workspace.id}`),
+          slug: String(workspace.slug || ""),
+          plan: String(workspace.plan || "free"),
+          subscriptionStatus: String(workspace.subscription_status || "none"),
+          callsThisMonth: number(workspace.calls_this_month),
+          minutesThisMonth: number(workspace.minutes_this_month),
+          monthlyCallLimit: number(workspace.monthly_call_limit),
+          monthlyMinuteLimit: number(workspace.monthly_minute_limit),
+          calls7d: number(workspace.calls_7d),
+          contacts7d: number(workspace.contacts_7d),
+          openTasks: number(workspace.open_tasks),
+          overdueTasks: number(workspace.overdue_tasks),
+          pendingHandoffs: number(workspace.pending_handoffs),
+          appointments7d: number(workspace.appointments_7d),
+        })),
+      });
+    } catch (error: any) {
+      log("error", "Operator Mission Control scoreboard failed", { error: error?.message || String(error) });
+      return res.status(503).json({ error: "Mission Control scoreboard is temporarily unavailable.", code: "MISSION_CONTROL_UNAVAILABLE" });
+    }
   });
 
   app.get("/api/openclaw/status", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {

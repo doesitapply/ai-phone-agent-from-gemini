@@ -19,7 +19,7 @@ qualified_review_completed_at_utc=<required ISO-8601 timestamp; no default>
 tax_mode=<choose exactly stripe_automatic_tax OR stripe_automatic_tax_disabled>
 cancellation_mode=<choose exactly at_period_end OR immediately>
 cancellation_proration_behavior=<choose exactly none OR create_prorations>
-starter_usage_decision=<choose exactly approve_existing_hard_cap_500_calls_1000_minutes OR request_separately_reviewed_change>
+starter_usage_decision=<choose exactly approve_existing_hard_cap_200_calls_500_minutes OR request_separately_reviewed_change>
 refund_policy_reference=<exact reviewed document/version plus refund approver and response target; no default>
 billing_management_choice=<choose exactly stripe_hosted_customer_portal OR identify an exact reviewed authenticated alternative>
 privacy_recording_retention_reference=<exact reviewed document/version and approved jurisdictions; no default>
@@ -37,6 +37,28 @@ final_owner_confirmation=<required explicit confirmation binding the exact versi
 After the exact reviewed documents are published, tooling may calculate their SHA-256 digests and prepare a manifest diff for review. It must not fill this card, select a choice, change `approvalState`, or treat a partial response as approval.
 <!-- SMIRK_OWNER_POLICY_DECISION_CARD_END -->
 
+## Provisional Owner Direction — Not Approval
+
+Current status: **NOT APPROVED**.
+
+The following records Cameron Doyle Church's in-principle business direction so policy drafting and qualified review can proceed. It does not populate or return the canonical decision card above, approve a policy version, publish customer-facing terms, change `src/customer-policy-approval.js`, enable checkout, authorize Stripe or Railway changes, authorize a deploy, permit outreach, or authorize recurring charges.
+
+- Proposed version label for the later exact review: `SMIRK-FIRST-DOLLAR-V1`.
+- Proposed owner identity: Cameron Doyle Church. No approval timestamp may be recorded until all six exact public documents are final, published, and reviewed.
+- Proposed tax direction: use `stripe_automatic_tax`, subject to verified Stripe account and Product tax configuration and an identified setup owner.
+- Proposed cancellation direction: use `at_period_end` with proration behavior `none`.
+- Proposed Starter usage direction: use the currently enforceable `hard_cap` of 200 calls and 500 minutes per month, whichever comes first. No overage charges or uncapped usage are approved.
+- Proposed offer and price: one public offer only, `SMIRK Missed-Call Recovery`, at `$197/month` on a monthly subscription.
+- Proposed packaging: one business, one recovery number, standard setup included, no setup fee, no free trial, no annual plan, no public add-ons, no promo codes, and no public Pro, Agency, Enterprise, or Founders lane.
+- Proposed billing-management direction: use the Stripe-hosted customer portal, subject to exact live portal-configuration and authenticated workspace-binding evidence.
+- Proposed refund-policy scope: duplicate or erroneous charges may be refunded after verification; unused subscription time is not automatically refunded; a documented material service outage may receive a discretionary prorated credit or refund; exceptional refunds require Cameron Doyle Church's approval; the proposed initial support-response target is one business day. This language remains a draft until it appears in an exact reviewed document.
+- Proposed support identity: `support@smirkcalls.com`; proposed initial response target one business day; escalation owner Cameron Doyle Church; customer-facing identity SMIRK. The address and operating path must be verified before approval.
+- Privacy, recording, retention, consent, deletion, access, and launch-jurisdiction rules remain unresolved. A qualified jurisdictional review must set exact retention periods, disclosure and consent mechanics, deletion procedures, access permissions, and initially approved sales jurisdictions before publication or live sales.
+- The public-proof workspace remains unresolved. Final approval requires one exact workspace ID and either verified SMIRK-owned synthetic/demo data or documented owner consent.
+- The qualified reviewer's name, role, and completion timestamp remain unresolved.
+- The exact reviewed public HTTPS URLs for Terms, Privacy, cancellation/refund, billing management, support, and data/recording consent remain unresolved.
+- Final owner confirmation has not been granted. These directions cannot be converted into selected card fields, manifest approval, policy digests, Payment Link metadata, checkout availability, or production authority until every required document and evidence item is complete.
+
 ## Decisions Cameron Must Approve
 
 1. **Cancellation timing**
@@ -49,10 +71,10 @@ After the exact reviewed documents are published, tooling may calculate their SH
    - Name who can approve a refund and the support response target.
 
 3. **Included usage**
-   - Starter currently advertises 500 calls and 1,000 minutes per month.
-   - Pro currently advertises 2,000 calls and 5,000 minutes per month.
+   - Starter advertises a hard cap of 200 calls or 500 minutes per month, whichever comes first.
+   - Pro is not publicly offered in the first-dollar launch.
    - Choose a hard stop, a disclosed overage price, or different public copy. Code, billing, alerts, and copy must use the same rule.
-   - The current first-dollar code path can enforce only a hard stop for Starter. If that is the approved choice, record `hard_cap`, 500 monthly calls, and 1,000 monthly minutes in the checked-in `starterUsagePolicy`; checkout remains blocked unless those owner-approved values exactly match `PLAN_LIMITS.starter`. Choosing overages or different copy requires a separately reviewed implementation/copy change before approval—the repository must not translate that choice into a hard stop automatically.
+   - The current first-dollar code path can enforce only a hard stop for Starter. If that is the approved choice, record `hard_cap`, 200 monthly calls, and 500 monthly minutes in the checked-in `starterUsagePolicy`; checkout remains blocked unless those owner-approved values exactly match `PLAN_LIMITS.starter`. Choosing overages or different copy requires a separately reviewed implementation/copy change before approval—the repository must not translate that choice into a hard stop automatically.
    - Enterprise/Agency currently has no owner-approved usage rule and is disabled with zero runtime caps. Explicitly approve positive hard caps before that plan is exposed. Code does not accept an arbitrary string, an overage model it cannot enforce, or an internal `-1` value as an unlimited customer promise.
 
 4. **Billing management**
@@ -82,7 +104,7 @@ After the exact reviewed documents are published, tooling may calculate their SH
 - The authenticated `POST /api/billing/portal` path is proven with a non-customer test workspace before real sales; it must bind the signed-in workspace's exact Stripe customer to the exact active live portal configuration, approved Terms/Privacy URLs, cancellation mode/proration behavior, and trusted return URL. Its restricted key must be distinct from the revenue-read key.
 - Support and deletion-request paths have named owners.
 - The policy/version approved for the first live buyer is recorded with the deployment handoff.
-- `src/customer-policy-approval.js` records the explicit core owner approval, approver, timestamp, exact shared version, all six required stable core policy URLs, and an explicit Starter usage decision bound exactly to the enforced 500-call/1,000-minute hard caps. The Enterprise usage rule remains a separate approval record and is required only before Enterprise is enabled.
+- `src/customer-policy-approval.js` records the explicit core owner approval, approver, timestamp, exact shared version, all six required stable core policy URLs, and an explicit Starter usage decision bound exactly to the enforced 200-call/500-minute hard caps. No broader paid plan is part of this launch.
 - Railway has `SMIRK_CUSTOMER_POLICY_APPROVED_VERSION` set to that exact checked-in version. The environment value cannot approve policy by itself.
 - The live policy verifier confirms six unique approved core URLs return the exact checked-in SHA-256 bytes and unique document/version markers without redirects before core buyer readiness can open. A seventh unique Enterprise policy URL is required only for the separately approved Enterprise launch path.
 

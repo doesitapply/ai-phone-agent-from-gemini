@@ -83,6 +83,16 @@ const railwayEnvCheck = fs.readFileSync('scripts/check-railway-first-dollar-env.
 const railwaySetter = fs.readFileSync('scripts/set-first-dollar-live-env.sh', 'utf8');
 const server = fs.readFileSync('server.ts', 'utf8');
 const systemHealth = fs.readFileSync('src/routes/system-health-routes.ts', 'utf8');
+const serverVoiceEnvSchema = [
+  ['FAST_LIVE_CALLS', 'FAST_LIVE_CALLS: z.enum(["true", "false"]).optional()'],
+  ['CARTESIA_API_KEY', 'CARTESIA_API_KEY: z.string().optional()'],
+  ['ELEVENLABS_ENABLED', 'ELEVENLABS_ENABLED: z.enum(["true", "false"]).optional()'],
+  ['GOOGLE_TTS_ENABLED', 'GOOGLE_TTS_ENABLED: z.enum(["true", "false"]).optional()'],
+];
+for (const [key, schemaMarker] of serverVoiceEnvSchema) {
+  assert.ok(server.includes(schemaMarker), `server EnvSchema must preserve ${key} for system-health dependency injection`);
+  assert.ok(systemHealth.includes(`${key}?: string`), `system-health dependency type must accept ${key}`);
+}
 assert.ok(buyerRoutes.includes('evaluateFirstDollarVoiceReadiness(process.env)'), 'buyer readiness must use the shared exact voice predicate');
 assert.ok(buyerRoutes.includes('&& voiceReadiness.ready'), 'checkout activation readiness must require managed Twilio and streaming AI');
 for (const source of [localEnvCheck, railwayEnvCheck]) {

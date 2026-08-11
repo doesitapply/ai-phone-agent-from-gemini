@@ -63,41 +63,15 @@ const getPublicPricingPlans = (env: BuyerRouteDeps["env"]) => {
   return [
     {
       id: "starter",
-      name: "SMIRK AI Starter",
+      name: "SMIRK Missed-Call Recovery",
       price: 197,
       interval: "month",
-      description: "Smart voicemail and missed-call recovery for small local service businesses.",
-      features: ["Smart voicemail", "Dedicated recovery number", "Lead capture", "Owner email alerts", "Callback task queue", "Proof dashboard", "Up to 500 calls and 1,000 minutes each month"],
-      usage_summary: "500 calls and 1,000 minutes per month.",
-      best_for: "Best for solo operators and small teams.",
-      cta: "Start Starter Plan",
+      description: "One focused service that catches missed job calls and turns them into callback-ready work.",
+      features: ["One business and one recovery number", "Caller, job, urgency, and callback capture", "Owner email alerts", "Callback task queue", "Proof dashboard", "Standard setup included", "Hard cap: 200 calls or 500 minutes each month, whichever comes first"],
+      usage_summary: "Hard cap: 200 calls or 500 minutes per month, whichever comes first. No overage charges.",
+      best_for: "Best for one solo operator or small local-service team.",
+      cta: "Start Missed-Call Recovery",
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_STARTER || "").trim() || null,
-      fallback_url: bookingLink || null,
-    },
-    {
-      id: "pro",
-      name: "SMIRK AI Pro",
-      price: 397,
-      interval: "month",
-      description: "More automation and setup help for businesses ready to recover more missed calls.",
-      features: ["Everything in Starter", "Full Answer Mode option", "Requested callback windows", "Custom intake logic", "Call transfer and handoff rules", "Priority setup", "Up to 2,000 calls and 5,000 minutes each month"],
-      usage_summary: "2,000 calls and 5,000 minutes per month.",
-      best_for: "Built for businesses actively scaling lead flow.",
-      cta: "Start Pro Plan",
-      checkout_url: String(process.env.STRIPE_PAYMENT_LINK_PRO || "").trim() || null,
-      fallback_url: bookingLink || null,
-    },
-    {
-      id: "enterprise",
-      name: "SMIRK AI Agency",
-      price: 697,
-      interval: "month",
-      description: "Higher-volume lane for agencies, multi-location operators, and heavier call workflows.",
-      features: ["Everything in Pro", "Higher-volume usage", "Multi-agent workflows", "Advanced routing", "CRM and webhook integrations", "Priority deployment support"],
-      usage_summary: "Usage limits and any overage terms require an owner-approved Enterprise policy before checkout is available.",
-      best_for: "For agency and multi-business operators.",
-      cta: "Start Agency Plan",
-      checkout_url: String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || "").trim() || null,
       fallback_url: bookingLink || null,
     },
   ];
@@ -782,7 +756,16 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
   app.post("/api/checkout/create", publicCheckoutRateLimit, async (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
     const planId = String((req.body as any)?.plan || "starter").trim().toLowerCase();
-    const plan = getPublicPricingPlans(env).find((item) => item.id === planId);
+    const publicPlans = getPublicPricingPlans(env);
+    if (planId === "pro" || planId === "enterprise" || planId === "agency") {
+      return res.status(409).json({
+        ok: false,
+        code: "FIRST_DOLLAR_STARTER_ONLY",
+        error: "The current first-dollar launch accepts Starter checkout only. Pro and Agency require owner review after the first qualifying payment.",
+        fallback_url: publicPlans[0]?.fallback_url || null,
+      });
+    }
+    const plan = publicPlans.find((item) => item.id === planId);
     if (!plan) return res.status(400).json({ ok: false, error: "Unknown plan" });
     const selectedPlanId = plan.id as StripeCheckoutPlan;
     if (selectedPlanId !== FIRST_DOLLAR_SELF_SERVE_PLAN) {

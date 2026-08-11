@@ -426,18 +426,36 @@ export async function initSaasSchema(): Promise<void> {
     )
   `;
 
-  // Seed a default workspace if none exists (single-operator mode)
+  // Seed a default workspace if none exists (single-operator mode). Runtime
+  // usage checks intentionally reject sentinel/non-positive caps, so the seeded
+  // operator workspace must use the canonical positive Pro limits.
   const existing = await sql`SELECT id FROM workspaces LIMIT 1`;
   if (existing.length === 0) {
     const apiKey = generateApiKey();
     const ownerEmail = process.env.OWNER_EMAIL || 'owner@example.com';
     await sql`
       INSERT INTO workspaces (slug, name, owner_email, plan, subscription_status, monthly_call_limit, monthly_minute_limit, api_key)
-      VALUES ('default', 'My Business', ${ownerEmail}, 'pro', 'active', -1, -1, ${apiKey})
+      VALUES ('default', 'My Business', ${ownerEmail}, 'pro', 'active', ${PLAN_LIMITS.pro.calls}, ${PLAN_LIMITS.pro.minutes}, ${apiKey})
     `;
-  } else if (process.env.OWNER_EMAIL) {
-    // Update placeholder email if OWNER_EMAIL is now configured
-    await sql`UPDATE workspaces SET owner_email = ${process.env.OWNER_EMAIL} WHERE owner_email = 'owner@example.com'`;
+  } else {
+    // Repair only the legacy single-operator seed that historically used -1 as
+    // "unlimited". Do not broaden this to customer workspaces: their missing
+    // caps must continue to fail closed until explicitly provisioned.
+    await sql`
+      UPDATE workspaces
+      SET monthly_call_limit = ${PLAN_LIMITS.pro.calls},
+        monthly_minute_limit = ${PLAN_LIMITS.pro.minutes},
+        updated_at = NOW()
+      WHERE id = 1
+        AND slug = 'default'
+        AND plan = 'pro'
+        AND subscription_status = 'active'
+        AND (monthly_call_limit <= 0 OR monthly_minute_limit <= 0)
+    `;
+    if (process.env.OWNER_EMAIL) {
+      // Update placeholder email if OWNER_EMAIL is now configured
+      await sql`UPDATE workspaces SET owner_email = ${process.env.OWNER_EMAIL} WHERE owner_email = 'owner@example.com'`;
+    }
   }
 }
 
