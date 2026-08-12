@@ -25,7 +25,8 @@ Do not add:
 - SMS-first language.
 
 Dual-mode flyer notes:
-- The demo number is (775) 420-4485.
+- The live SMIRK demo number is (775) 420-3005.
+- Cameron's Google Voice number is (775) 420-4485; it is labeled as owner contact, not as the demo line.
 - The only current public offer shown is Starter at $197/month.
 - The CTA is call-only until SMS guardrails are explicitly approved for this use.
 

@@ -44,6 +44,16 @@ for (const [label, pattern] of requiredClaims) {
 }
 
 const buyerRoutes = readFileSync("src/routes/buyer-routes.ts", "utf8");
+const collateralSource = readFileSync("scripts/build-smirk-collateral.mjs", "utf8");
+if (!collateralSource.includes('const demoPhone = "(775) 420-3005";')) {
+  failures.push("collateral must identify (775) 420-3005 as the live SMIRK demo line");
+}
+if (!collateralSource.includes('const ownerPhone = "(775) 420-4485";')) {
+  failures.push("collateral must identify (775) 420-4485 as Cameron's owner contact line");
+}
+if (!collateralSource.includes("Cameron / Google Voice: ${ownerPhone}")) {
+  failures.push("collateral must label the personal Google Voice number separately from the SMIRK demo line");
+}
 if (!buyerRoutes.includes('const FIRST_DOLLAR_SELF_SERVE_PLAN: StripeCheckoutPlan = "starter";')) {
   failures.push("buyer checkout route missing server-owned Starter-only launch plan");
 }

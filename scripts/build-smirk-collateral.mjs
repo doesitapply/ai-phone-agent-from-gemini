@@ -349,7 +349,8 @@ ${brand}
 </section>
 `, "email");
 
-const demoPhone = "(775) 420-4485";
+const demoPhone = "(775) 420-3005";
+const ownerPhone = "(775) 420-4485";
 
 const dualModeFrontBody = `
 ${brand.replace("Home services first", "Reno trades launch")}
@@ -499,8 +500,9 @@ ${brand.replace("Home services first", "Reno local")}
     <p class="small" style="margin-top: 8px;">1605 McKinley Drive, Reno, NV 89509 | https://smirkcalls.com</p>
   </div>
   <div style="text-align:right;">
-    <div class="label" style="color:#bdcabe;">Call</div>
-    <div class="phone-number" style="color:#00c875; font-size:34px;">${demoPhone}</div>
+    <div class="label" style="color:#bdcabe;">Live SMIRK demo</div>
+    <div class="phone-number" style="color:#00c875; font-size:30px;">${demoPhone}</div>
+    <p class="small" style="color:#f4f7f4; margin-top: 8px;">Cameron / Google Voice: ${ownerPhone}</p>
     <p class="tiny" style="color:#bdcabe; margin-top: 8px;">Built by Cameron Church. Reno local.</p>
   </div>
 </section>
@@ -550,7 +552,8 @@ Do not add:
 - SMS-first language.
 
 Dual-mode flyer notes:
-- The demo number is ${demoPhone}.
+- The live SMIRK demo number is ${demoPhone}.
+- Cameron's Google Voice number is ${ownerPhone}; it is labeled as owner contact, not as the demo line.
 - The only current public offer shown is Starter at $197/month.
 - The CTA is call-only until SMS guardrails are explicitly approved for this use.
 
