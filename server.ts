@@ -147,6 +147,9 @@ const EnvSchema = z.object({
   // This is intentionally separate from all operator, workspace, and telephony keys.
   VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
   VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
+  // SMIRK posts durable, completed-call outcomes back to Velvet with this narrow key.
+  VELVET_ALCHEMY_OUTCOME_KEY: z.string().optional(),
+  VELVET_ALCHEMY_BASE_URL: z.string().url().optional(),
 });
 
 // ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
