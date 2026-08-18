@@ -2,6 +2,8 @@
 
 Use this when logged into Stripe to create the one owner-approved live first-dollar checkout: Starter at $197/month. Pro and Agency/Enterprise are future offers only; keep their Stripe Payment Links inactive and their Railway URL/ID values empty until a separate post-first-dollar approval expands the launch.
 
+> **Recorded evidence, not launch authorization:** a separate Starter product, Payment Link, and $197/month subscription completed in Stripe Test mode. Stripe emitted checkout, subscription, invoice, invoice-payment, payment-intent, and charge success events. The test transaction did not and must not provision a production workspace. It does not satisfy the live customer-policy, Terms, webhook, or provider-proof gates below.
+
 These values must match the current live plan definitions in the app.
 
 ## Canonical plan values
@@ -60,7 +62,7 @@ Disable for V1:
 - trial periods
 - quantity edits
 
-Before activation, complete and approve `docs/launch/first-dollar-policy-decisions.md`. Configure the approved Terms, Privacy, cancellation/refund, tax, support, and billing-portal choices in Stripe and the public site; this runbook does not invent those business or legal terms.
+Before activation, complete and approve `docs/launch/first-dollar-policy-decisions.md`. The owner business choices recorded in `docs/launch/owner-policy-decisions-2026-08-15-v1.md` authorize implementation and sandbox validation only; qualified review and final publication remain pending. Configure the approved Terms, Privacy, cancellation/refund, tax, support, and billing-portal choices in Stripe and the public site; this runbook does not invent those business or legal terms.
 
 ## Authenticated Billing Portal (required before checkout)
 
@@ -186,6 +188,10 @@ Expected result:
 - partial, duplicate, or drifted Starter bindings fail closed
 - `FROM_EMAIL` is no longer placeholder
 - the signed webhook, database, and buyer-email activation path also pass the first-dollar readiness gates
+
+## Current Release Boundary
+
+The direct Railway deployment can remain healthy while source-driven release readiness is incomplete. The current GitHub Action for the monthly usage reset has an empty `PHONE_AGENT_PROVISIONING_SECRET` and returns `401`; its failed check can cause Railway to skip a GitHub-sourced deployment. Set the required value only in **GitHub Actions Secrets** to match Railway, then push the repository workflow repair that isolates maintenance failure from release eligibility. Do not place any secret value in this runbook, source code, or a commit.
 
 ## Why this matters
 

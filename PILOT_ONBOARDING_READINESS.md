@@ -1,14 +1,14 @@
 # SMIRK Pilot Onboarding Readiness
 
-Last checked: 2026-07-02
+Last reconciled: 2026-08-18 (repository/session evidence). Re-run live checks before making a customer-facing readiness claim.
 
 ## Verdict
 
-SMIRK is ready for an operator-assisted first paying pilot.
+SMIRK is ready for an **operator-assisted, policy-gated** first paying pilot. It is not ready to accept self-serve recurring customer charges without the remaining publication, review, and live-fulfillment evidence.
 
 The current production build includes the customer dashboard cleanup, contact status/DNC controls, live proof-loop evidence, public proof masking, guarded Stripe/provisioning checks, and a clean dependency audit.
 
-SMIRK is not yet a fully hands-off SaaS 10/10 because the final mutating checkout/provisioning smoke on the current live build still requires explicit approval.
+SMIRK is not yet a fully hands-off SaaS 10/10 because the final mutating checkout/provisioning smoke on the current live build still requires explicit approval, qualified customer-policy review/publication, signed live Stripe proof, and a reliable GitHub-to-Railway source release path.
 
 ## Definition-Of-Done Audit
 
@@ -22,6 +22,9 @@ SMIRK is not yet a fully hands-off SaaS 10/10 because the final mutating checkou
 | Signed Stripe webhook works without mutation | `npm run -s check:stripe-webhook-signature-live` returned `verified: true`. | Ready |
 | Full checkout/provisioning production write | `npm run -s check:stripe-webhook-handoff-live:preflight` and `check:stripe-webhook-smoke-approval-ready` passed, but the mutating smoke requires `ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1` and explicit approval. | Approval gated |
 | Smoke cleanup | Cleanup baseline currently reports `0` matched smoke workspaces and `0` matched smoke provisioning requests. Future apply cleanup requires separate approval. | Ready / approval gated |
+| Stripe sandbox subscription | A $197/month Starter Test-mode subscription emitted the expected checkout, subscription, invoice, and successful payment events. | Verified non-production; does not activate production fulfillment |
+| Customer-policy gate | Owner business choices are recorded, but qualified review and public versioned customer documents are incomplete. | Live charges blocked by design |
+| GitHub-to-Railway release path | The active direct Railway callback deployment is healthy. The scheduled monthly-reset Action has an empty Actions secret and creates a failing check that can block source releases. | Repair pending GitHub workflow/secrets permission |
 
 ## Verified Commands
 
@@ -96,6 +99,6 @@ npm run -s proof:real-call -- '<exact-approved-e164>'
 
 ## Final Readiness Statement
 
-Ready with manual operator steps.
+Ready for controlled operator-assisted pilot preparation, not for ungated self-serve billing.
 
-The product is strong enough for the first customer, but the final 10/10 claim should wait until the approved production checkout/provisioning write is completed and its evidence is recorded.
+The product is strong enough for a controlled first customer once the live policy, billing, and deployment gates are completed. The final 10/10 claim should wait until the approved production checkout/provisioning write is completed, the GitHub-source release path is repaired, and current evidence is recorded.

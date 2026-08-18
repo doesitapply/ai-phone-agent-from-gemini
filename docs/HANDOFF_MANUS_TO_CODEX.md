@@ -3,6 +3,14 @@
 **Date:** 2026-07-19 (PDT)
 **Author:** Manus (Cam's agent). I have been the one working on this repo and the live launch for the past two days. This document brings you fully up to speed so we do not step on each other.
 
+> ## Superseding Operations Update — 2026-08-18
+>
+> Treat this section as newer than the historical notes below. The most recent direct Railway callback deployment is healthy. A separate Stripe Test-mode Starter subscription at $197/month completed successfully and emitted the expected Stripe lifecycle events; it did not create a production workspace. Live recurring checkout remains intentionally disabled pending qualified policy review, six versioned public customer-policy documents, Terms acceptance, live Stripe webhook/provider proof, and an approved production fulfillment proof.
+>
+> The deployed Velvet → SMIRK inbound receiver was rotated and verified with a harmless synthetic receipt (`201`), identical-payload duplicate suppression (`200 DUPLICATE` with no duplicate queue work), and invalid-bearer rejection (`401`). No real contact, call, message, email, or paid action occurred. The inbound bearer is a masked Railway variable, remains distinct from the outcome callback credential, and must never be committed or copied into docs.
+>
+> **Release risk:** GitHub-to-Railway source deployments are currently degraded. The scheduled `Monthly Usage Reset` Action has an empty `PHONE_AGENT_PROVISIONING_SECRET`, returns `401`, and leaves a failed commit check that can cause Railway to skip a source deployment. A local workflow repair isolates maintenance failure from release eligibility and creates an explicit GitHub maintenance alert, but it has not been pushed because the active GitHub integration lacks permission to modify workflow files or Actions secrets. The repository source also lacks the deployed Velvet receiver contract; reconcile that source drift before relying on GitHub-driven releases for Velvet changes.
+
 ## Who did what
 
 Everything from commit `d3ed9b7` through `2c5af21` on `codex/market-validation-launch` is my work, done in a Manus sandbox with Cam directing. That includes the entire `outbound/` directory, live Stripe changes, a production webhook registration, and a recurring scheduled automation that runs daily in Manus (outside this repo — see "Live moving parts" below, because it will keep committing to this branch every day).

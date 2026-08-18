@@ -29,8 +29,12 @@ Source of truth is always the commands in this section. The snapshot below recor
 | Live Basic entitlement proof | Needs current deploy plus real/approved Basic token | `npm run -s check:live-workspace-entitlements` has proven the live Pro path. A real or approved temporary Starter/Basic token is still required for live Basic chaos proof after production runs the current commit. |
 | Stripe/provisioning proof | Guarded | Stripe webhook/provisioning smoke proof is approval-gated and must match the current live deploy artifact. |
 | Smoke cleanup | Guarded | `APP_URL=https://www.smirkcalls.com npm run cleanup:smoke-workspaces` should match 0 smoke workspaces before first customer. |
+| Stripe sandbox subscription | Verified non-production evidence | A separate $197/month Starter test product and Payment Link completed successfully in Stripe Test mode. Checkout collected full name, business name, and phone; Stripe emitted the expected checkout, subscription, invoice, payment-intent, and charge events. It did **not** provision a production workspace. |
+| Live recurring checkout | Intentionally blocked | The checked-in customer-policy manifest remains `not_approved`. Qualified review, versioned public customer-policy URLs, Terms acceptance, live webhook proof, live restricted verification credentials, and an approved production proof are still required before customer money may be accepted. |
+| Velvet → SMIRK inbound outcome receiver | Verified deployed integration | A rotated inbound-only bearer was installed as a masked Railway variable. A harmless authenticated synthetic handoff returned `201`, an identical replay returned `200 DUPLICATE` without extra queue work, and an invalid bearer returned `401`. No prospect, call, SMS, email, charge, or paid action occurred. |
+| GitHub → Railway release path | Repair pending permission | The active direct deployment is healthy, but a scheduled GitHub Action has an empty `PHONE_AGENT_PROVISIONING_SECRET`, returns `401`, and creates a failed check that can cause Railway to skip source deployments. The repository workflow repair must be pushed by credentials with GitHub workflow permission. |
 
-Blunt status: SMIRK is no longer just "close." The local final-mile implementation is proven, including No-DB demo mode, customer dashboard partitioning, and local Basic chaos isolation. The remaining launch blocker is live parity: production must run the current commit before the signed Stripe proof, dashboard proof, post-call proof, and live Basic chaos proof can honestly count.
+Blunt status: SMIRK has working phone-agent infrastructure, verified non-production recurring checkout, and a verified deployed inbound Velvet outcome receiver. It is **not** authorized for self-serve live recurring billing yet. The remaining first-dollar blockers are customer-policy publication/review, live Stripe webhook and verification proof, production provisioning evidence, and repair of the GitHub-sourced deployment path.
 
 The cleanest one-command status check is:
 
@@ -305,6 +309,8 @@ STRIPE_REVENUE_READ_KEY
 STRIPE_WEBHOOK_SECRET
 STRIPE_BILLING_PORTAL_KEY
 STRIPE_BILLING_PORTAL_CONFIGURATION_ID
+VELVET_ALCHEMY_HANDOFF_API_KEY
+VELVET_ALCHEMY_WORKSPACE_ID
 OPENCLAW_ENABLED
 OPENCLAW_GATEWAY_URL
 OPENROUTER_API_KEY
@@ -313,7 +319,9 @@ RESEND_API_KEY
 FROM_EMAIL
 ```
 
-The first-dollar money path is one verified hosted Starter Payment Link at $197/month. Native Checkout is code-disabled for this launch, so `STRIPE_SECRET_KEY` is not required to open checkout. The fulfillment allowlist must contain the current exact `plink_` ID and may retain only exact provider-inactive historical Starter IDs for already-paid Session recovery.
+The first-dollar money path is one verified hosted Starter Payment Link at $197/month. Native Checkout is code-disabled for this launch, so `STRIPE_SECRET_KEY` is not required to open checkout. The fulfillment allowlist must contain the current exact `plink_` ID and may retain only exact provider-inactive historical Starter IDs for already-paid Session recovery. Do not treat a configured URL, a Test-mode checkout, or an environment value as approval to charge customers; the customer-policy gate remains authoritative.
+
+`VELVET_ALCHEMY_HANDOFF_API_KEY` is an inbound-only deployed receiver credential and must be distinct from any Velvet outcome callback credential. The current checked-out source does not yet contain the Velvet receiver implementation; reconcile the deployed receiver source into the repository before relying on source-driven releases for that integration.
 
 See `.env.example` for the full list.
 
@@ -519,6 +527,9 @@ OpenAPI route inventory is generated into `openapi.yaml`.
 - SMS/text response automation is intentionally not sold as live.
 - Autonomous outbound leak auditing is not productized. The included local auditor is draft-only and manual-review by design.
 - Some integrations exist before they are fully productized.
+- Stripe Test-mode checkout is proven, but live recurring checkout and automatic provisioning are intentionally blocked pending qualified policy review, public policy documents, Terms acceptance, live webhook delivery proof, and an approved production fulfillment proof.
+- The current direct Railway callback deployment includes verified Velvet receiver behavior, but the checked-out source lacks that receiver contract. This is deployment/source drift and must be reconciled before normal GitHub-driven releases can be trusted for Velvet changes.
+- The GitHub-sourced Railway release path is not reliable until the scheduled monthly-reset Action receives its required GitHub Actions secret and the workflow repair is pushed with a credential permitted to modify `.github/workflows/`.
 
 ## Docker
 

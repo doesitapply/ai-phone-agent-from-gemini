@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": "2026-08-15-v1",
+  "recordType": "owner_business_choices",
+  "recordedBusinessOwner": "Cameron Church",
+  "reviewStatus": "pending_qualified_review",
+  "liveRecurringCheckoutAuthorization": false,
+  "activationRule": "This record cannot change CUSTOMER_POLICY_APPROVAL_MANIFEST.approvalState or enable live recurring checkout.",
+  "billing": {
+    "taxMode": "stripe_automatic_tax",
+    "cancellationMode": "at_period_end",
+    "cancellationProrationBehavior": "none",
+    "billingManagementChoice": "stripe_hosted_customer_portal"
+  },
+  "starterUsage": {
+    "mode": "hard_cap",
+    "monthlyCallHardCap": 500,
+    "monthlyMinuteHardCap": 1000,
+    "hardStopSemantics": "deny_new_call_when_either_limit_is_reached"
+  },
+  "refunds": {
+    "proRataRefunds": false,
+    "reviewableCases": [
+      "duplicate_charge",
+      "billing_error",
+      "verified_service_failure"
+    ],
+    "reviewTargetBusinessDays": 2
+  },
+  "dataAndRecording": {
+    "defaultRetentionDays": 90,
+    "authorizedAccess": [
+      "customer_account_personnel",
+      "authorized_smirk_support_or_security_personnel"
+    ],
+    "deletionRequestPath": "support",
+    "recordingAuthorizationRule": "retention_does_not_authorize_recording; evaluate disclosure_or_consent_separately"
+  },
+  "publicProof": {
+    "permittedSource": "smirk_owned_demo_workspace_only",
+    "customerWorkspaceException": "express_customer_permission_required"
+  },
+  "unresolved": [
+    "qualified_reviewer_name_and_role",
+    "qualified_review_completed_at_utc",
+    "final_owner_approval_timestamp_for_reviewed_documents",
+    "support_identity",
+    "six_final_public_policy_documents",
+    "six_public_policy_urls_digests_and_markers",
+    "stripe_billing_portal_configuration_proof",
+    "stripe_payment_link_terms_and_buyer_collection_proof",
+    "signed_webhook_and_test_mode_fulfillment_proof"
+  ]
+}
