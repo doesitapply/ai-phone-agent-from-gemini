@@ -1,6 +1,6 @@
 # SMIRK First-Customer 10/10 Runbook
 
-Last checked: 2026-07-03 UTC
+Last reconciled: 2026-08-18 (repository/session evidence). Rerun the commands below before making a live-ready claim.
 
 ## Current Verdict
 
@@ -8,7 +8,7 @@ SMIRK is deploy-current when `npm run -s check:live-is-current` passes, but it i
 
 Use the live health endpoint through `npm run -s check:live-is-current` as the source of truth for the exact deployed commit. Do not hardcode the current commit in this runbook.
 
-Current stop condition, 2026-07-03 UTC: public/live runtime checks pass, but Railway CLI/GraphQL environment reads are rate-limited. Until Railway env reads recover, the live operator-auth, Stripe webhook preflight, failed-deploy scan, cleanup dry-run, and full 10/10 gate cannot be treated as proven-current.
+Current stop conditions: live recurring billing remains deliberately disabled until qualified customer-policy review/publication, live Stripe provider verification, signed webhook delivery proof, and an approved production fulfillment proof exist. Separately, the active direct Railway deployment is healthy but the GitHub-sourced release path is degraded because the scheduled monthly-reset Action has an empty GitHub Actions secret and leaves a failed check on main.
 
 It is not a fully proven hands-off SaaS 10/10 until one approved production checkout/provisioning smoke or real paid customer activation is completed end to end and cleaned up or retained as the first customer record.
 
@@ -22,11 +22,7 @@ npm run -s check:live-is-current
 
 Current expected result: passing, with the exact deployed commit reported by the command output.
 
-Expected branch:
-
-```text
-cleanup/stop-tracking-generated-deploy-output
-```
+Expected branch: use the actual branch and commit reported by `npm run -s check:live-is-current`; this runbook does not hardcode a branch because deployed/source drift is itself a stop condition.
 
 Non-mutating evidence to gather on the current deployed commit:
 
@@ -49,8 +45,9 @@ Non-mutating evidence to gather on the current deployed commit:
 
 Remaining incomplete, blocked, or approval-gated evidence:
 
-- `npm run -s check:first-customer-10of10`: fails until Railway/operator/Stripe gates are readable again and an approved production checkout/provisioning write proof exists.
-- Railway deployment list and environment reads must be available; a Railway rate-limit response is not proof of a failed app deploy, but it is also not acceptable completion evidence.
+- `npm run -s check:first-customer-10of10`: remains blocked until the policy/publication, live Stripe, signed webhook, and approved production checkout/provisioning proof requirements are complete.
+- A separate $197/month Stripe Test-mode subscription has completed successfully, but it is non-production evidence only and must not be counted as paid-customer provisioning proof.
+- GitHub-sourced Railway deployment must be repaired: set `PHONE_AGENT_PROVISIONING_SECRET` in GitHub Actions Secrets to match Railway and push the workflow repair that prevents a failed monthly-maintenance job from gating releases.
 - Starter/Basic live-token blocking is still static-contract-covered because current production has only a Pro workspace. It becomes live-proven when the approved provisioning smoke or a real Starter/Basic customer creates a live Starter/Basic workspace.
 
 The whole non-mutating readiness bundle is wrapped by:
@@ -94,6 +91,9 @@ SMIRK gets a realistic first-customer 10/10 only when every item below is true w
 | Checkout/provisioning mutating smoke is proven | Approved `check:stripe-webhook-handoff-live` or real paid buyer activation creates and verifies a workspace/provisioning record | Approval gated |
 | Smoke records are handled | Dry-run reviewed, then cleanup applied only after separate approval or retained as real customer evidence | Must be rerun when operator auth is available |
 | Proof call path is fresh | Existing live proof checks pass, or approved real proof call is pinned and verified | Public proof freshness can pass without operator auth; private proof checks must be rerun when operator auth is available |
+| Stripe sandbox path | Separate Test-mode Starter checkout completes and emits the required Stripe events | Verified non-production evidence; no production workspace was created |
+| Velvet inbound receiver | Authenticated synthetic receipt, duplicate suppression, and unauthorized rejection are demonstrated | Verified deployed integration; source reconciliation remains required |
+| GitHub release eligibility | No failed maintenance check should gate a valid source deploy | Repair prepared locally; push requires workflow permission and the missing GitHub Actions secret |
 | Runbook exists | This file plus approval artifacts document exact stop/go commands | Pass |
 
 ## Approval-Gated Commands
