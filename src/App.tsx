@@ -1729,7 +1729,7 @@ function PublicCancelPage() {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "review" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "launch" | "voice" | "leads" | "system_health"
+type Tab = "dashboard" | "review" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "launch" | "voice" | "leads" | "system_health" | "velvet"
   // legacy aliases kept for deep-links
   | "identity";
 
@@ -2258,6 +2258,7 @@ const OPERATOR_ONLY_TABS = new Set<Tab>([
   "mission_control",
   "prospecting",
   "launch",
+  "velvet",
 ]);
 
 const DASHBOARD_TAB_ALIASES: Record<string, Tab> = {
@@ -2286,6 +2287,8 @@ const DASHBOARD_TAB_ALIASES: Record<string, Tab> = {
   prospecting: "prospecting",
   launch: "launch",
   "launch-sprint": "launch",
+  velvet: "velvet",
+  "velvet-alchemy": "velvet",
   agent: "agent",
   identity: "agent",
   "agent-identity": "agent",
@@ -2316,6 +2319,7 @@ const DASHBOARD_TAB_PATHS: Partial<Record<Tab, string>> = {
   mission_control: "/dashboard/mission-control",
   prospecting: "/dashboard/prospecting",
   launch: "/dashboard/launch",
+  velvet: "/dashboard/velvet-alchemy",
   agent: "/dashboard/agent",
   voice: "/dashboard/voice-config",
   leads: "/dashboard/lead-hunter",
@@ -4992,6 +4996,12 @@ function TeamMemberModal({ member, onSave, onClose }: {
 function HandoffsPage() {
   const { dark } = useTheme();
   const [activeTab, setActiveTab] = useState<"escalations" | "team">("escalations");
+  const [queueFilter, setQueueFilter] = useState<"all" | "pending">(() => (
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("filter") === "pending"
+      ? "pending"
+      : "all"
+  ));
+  const queueRef = useRef<HTMLDivElement>(null);
   // Escalations state
   const [handoffs, setHandoffs] = useState<Handoff[]>([]);
   const [handoffsLoading, setHandoffsLoading] = useState(true);
@@ -5067,11 +5077,22 @@ function HandoffsPage() {
 
   const pending = handoffs.filter((h) => h.status === "pending");
   const acked = handoffs.filter((h) => h.status !== "pending");
+  const visibleHandoffs = queueFilter === "pending" ? pending : [...pending, ...acked];
   const onCallCount = team.filter((m) => m.is_on_call && m.is_active).length;
   const transferred = handoffs.filter((h) => h.status === "transferred").length;
   const routableTeam = team.filter((m) => m.is_active && !!m.phone && m.can_receive_handoffs !== false).length;
   const intakeTeam = team.filter((m) => m.is_active && !!m.phone && m.can_initiate_onboarding).length;
   const missingTransferNumbers = handoffs.filter((h) => h.assigned_to_name && !h.assigned_to_phone).length;
+  const openPendingQueue = () => {
+    setActiveTab("escalations");
+    setQueueFilter("pending");
+    if (typeof window !== "undefined") window.history.replaceState({}, "", "/dashboard/handoffs?filter=pending");
+    requestAnimationFrame(() => queueRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+  const clearQueueFilter = () => {
+    setQueueFilter("all");
+    if (typeof window !== "undefined") window.history.replaceState({}, "", "/dashboard/handoffs");
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -5083,10 +5104,11 @@ function HandoffsPage() {
         </div>
         <div className="flex items-center gap-2">
           {pending.length > 0 && (
-            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950 border border-red-900 text-red-400 text-xs font-semibold">
+            <button onClick={openPendingQueue} title="Open pending handoffs needing human attention"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950 border border-red-900 text-red-400 text-xs font-semibold hover:bg-red-900/70 transition-colors">
               <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-              {pending.length} pending
-            </span>
+              {pending.length} pending · open queue
+            </button>
           )}
           {onCallCount > 0 && (
             <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-950 border border-violet-900 text-violet-400 text-xs font-semibold">
@@ -5123,11 +5145,14 @@ function HandoffsPage() {
           ["Client intake", intakeTeam, "Can call in onboarding"],
           ["Missing number", missingTransferNumbers, "Assigned but no callback number"],
         ].map(([label, value, helper]) => (
-          <div key={label} className={`rounded-xl border p-3 ${card}`}>
+          <button key={label} type="button" disabled={label !== "Pending" || pending.length === 0}
+            onClick={() => { if (label === "Pending") openPendingQueue(); }}
+            className={`rounded-xl border p-3 text-left ${card} ${label === "Pending" && pending.length > 0 ? "hover:border-red-700 hover:bg-red-950/20 cursor-pointer" : "cursor-default"}`}>
             <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-gray-500">{label}</div>
             <div className="mt-1 text-2xl font-black text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>{value}</div>
             <div className="mt-1 text-xs text-gray-500">{helper}</div>
-          </div>
+            {label === "Pending" && pending.length > 0 && <div className="mt-2 text-[10px] font-bold uppercase tracking-wide text-red-400">Open human queue →</div>}
+          </button>
         ))}
       </div>
 
@@ -5142,8 +5167,16 @@ function HandoffsPage() {
             <p className="text-gray-700 text-xs mt-1">When SMIRK flags an urgent callback handoff, it appears here</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {[...pending, ...acked].map((h) => (
+          <div ref={queueRef} className="space-y-3">
+            {queueFilter === "pending" && (
+              <div className="flex items-center justify-between rounded-xl border border-red-900/50 bg-red-950/20 px-3 py-2">
+                <span className="text-xs font-semibold text-red-300">Showing {pending.length} pending handoff{pending.length === 1 ? "" : "s"} needing human attention.</span>
+                <button onClick={clearQueueFilter} className="text-xs font-semibold text-gray-400 hover:text-white">Show all</button>
+              </div>
+            )}
+            {visibleHandoffs.length === 0 && queueFilter === "pending" ? (
+              <div className="rounded-xl border border-dashed border-gray-800 py-10 text-center text-sm text-gray-500">No pending handoffs. The human-attention queue is clear.</div>
+            ) : visibleHandoffs.map((h) => (
               <div key={h.id} className={`p-4 rounded-xl border transition-all ${
                 h.status === "pending"
                   ? "bg-gray-900 border-red-900/40 hover:border-red-800/60"
@@ -5361,6 +5394,64 @@ function HandoffsPage() {
           onClose={() => setEditingMember(false)}
         />
       )}
+    </div>
+  );
+}
+
+type VelvetPortalData = {
+  receiverConfigured: boolean;
+  workspaceId: string | null;
+  portalUrl: string | null;
+  sourceAttributionAvailable: boolean;
+  pendingCount: number;
+  recentHandoffs: Handoff[];
+};
+
+function VelvetAlchemyPage() {
+  const { dark } = useTheme();
+  const [data, setData] = useState<VelvetPortalData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const load = useCallback(() => {
+    setLoading(true);
+    setError("");
+    api<VelvetPortalData>("/api/velvet/portal")
+      .then(setData)
+      .catch((err: any) => setError(err?.message || "Could not load the Velvet Alchemy portal."))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-[0.16em] text-fuchsia-400"><Sparkles size={13} /> Cross-system handoff bridge</div>
+          <h2 className="mt-1 text-xl font-black text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Velvet Alchemy Portal</h2>
+          <p className="mt-1 max-w-2xl text-sm text-gray-500">The SMIRK-side control room for inbound Velvet outcomes, human follow-up, and cross-system visibility.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={load} className="rounded-lg bg-gray-800 p-2 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white" title="Refresh Velvet status"><RefreshCw size={14} /></button>
+          {data?.portalUrl && <a href={data.portalUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg bg-fuchsia-600 px-3 py-2 text-xs font-bold text-white hover:bg-fuchsia-500">Open Velvet <ExternalLink size={13} /></a>}
+        </div>
+      </div>
+      {loading ? <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div> : error ? (
+        <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-4 text-sm text-red-300">{error}</div>
+      ) : data && <>
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Inbound receiver</div><div className={`mt-2 text-sm font-bold ${data.receiverConfigured ? "text-emerald-400" : "text-amber-400"}`}>{data.receiverConfigured ? "Configured" : "Not configured"}</div></div>
+          <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Workspace</div><div className="mt-2 text-sm font-bold text-white">{data.workspaceId || "Not set"}</div></div>
+          <a href="/dashboard/handoffs?filter=pending" className={`rounded-xl border p-4 text-left transition-colors hover:border-red-700 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Human attention</div><div className="mt-2 text-2xl font-black text-red-400">{data.pendingCount}</div><div className="mt-1 text-xs text-gray-500">Open pending handoffs →</div></a>
+          <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Attribution</div><div className={`mt-2 text-sm font-bold ${data.sourceAttributionAvailable ? "text-emerald-400" : "text-amber-400"}`}>{data.sourceAttributionAvailable ? "Available" : "Pending source sync"}</div></div>
+        </div>
+        <div className={`rounded-xl border p-5 ${card}`}>
+          <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-white">Operational handoff queue</h3><p className="mt-1 text-xs text-gray-500">This is the SMIRK operator view of shared human-follow-up work. Velvet-specific filtering will activate only after source attribution is persisted with each handoff.</p></div><a href="/dashboard/handoffs" className="text-xs font-bold text-fuchsia-400 hover:text-fuchsia-300">Open Handoffs →</a></div>
+          <div className="mt-4 space-y-2">
+            {data.recentHandoffs.length === 0 ? <div className="py-8 text-center text-sm text-gray-500">No handoffs are currently available in this workspace.</div> : data.recentHandoffs.map((handoff) => <div key={handoff.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-3"><div><div className="flex items-center gap-2"><span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${handoff.status === "pending" ? "border-red-900 bg-red-950 text-red-400" : "border-gray-700 bg-gray-800 text-gray-400"}`}>{handoff.status}</span><span className="text-sm font-semibold text-white">{handoff.reason || "Handoff"}</span></div><div className="mt-1 text-xs text-gray-500">{handoff.contact_name || handoff.phone_number || "Unknown contact"} · {handoff.urgency || "normal"} urgency</div></div><div className="text-xs text-gray-600">{new Date(handoff.created_at).toLocaleString()}</div></div>)}
+          </div>
+        </div>
+      </>}
     </div>
   );
 }
@@ -12831,6 +12922,7 @@ export default function App() {
     { id: "mission_control", label: "Mission Control", icon: <BarChart3 size={14} /> },
     { id: "prospecting",    label: "Prospecting",    icon: <Target size={14} /> },
     { id: "launch",         label: "Launch",         icon: <Target size={14} /> },
+    { id: "velvet",         label: "Velvet Alchemy", icon: <Sparkles size={14} /> },
     { id: "agent",          label: "Agent",          icon: <Bot size={14} /> },
     { id: "voice",          label: "Voice Config",   icon: <SlidersHorizontal size={14} /> },
     { id: "leads",          label: "Lead Hunter",    icon: <Crosshair size={14} /> },
@@ -13493,6 +13585,7 @@ export default function App() {
             {activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
             {activeTab === 'prospecting' && visibleForSession('prospecting') && <ProspectingPage />}
             {activeTab === 'launch' && visibleForSession('launch') && <LaunchSprintPage />}
+            {activeTab === 'velvet' && visibleForSession('velvet') && <VelvetAlchemyPage />}
             {activeTab === 'leads' && visibleForSession('leads') && <LeadHunterPage />}
             {activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}
             {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
