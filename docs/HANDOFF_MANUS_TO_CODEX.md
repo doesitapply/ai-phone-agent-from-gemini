@@ -1,5 +1,14 @@
 # Handoff Brief: Manus → Codex
 
+> **Historical document, superseded for prospect execution.** The batch
+> `outbound/campaign.py draft` and `send` paths described below are disabled.
+> Do not follow any instruction in this document that sends a batch, reuses the
+> transactional Resend key, or treats a past template approval as continuing
+> contact authority. Historical ledgers remain append-only evidence. All new
+> prospect contact must use the recipient-specific SMIRK QC, human approval,
+> and separate execution flow in
+> `docs/PROSPECT_QC_AND_DELIVERABILITY_RUNBOOK.md`.
+
 **Date:** 2026-07-19 (PDT)
 **Author:** Manus (Cam's agent). I have been the one working on this repo and the live launch for the past two days. This document brings you fully up to speed so we do not step on each other.
 

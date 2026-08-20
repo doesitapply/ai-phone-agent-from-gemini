@@ -9,10 +9,15 @@ import {
   validateNoDeployApprovalTokens,
   validateDeployApprovalOneDecisionCard,
 } from './lib/deploy-approval-one-decision-card.mjs';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const commit = 'c5a7e50a89de567f08ad9a2e546739525f121809';
 const branch = 'codex/market-validation-launch';
-const deployCommand = `SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} CONFIRM_SMIRK_DEPLOY_COMMIT=${commit} npm run deploy:post-call-fix`;
+const deployCommand = buildExactDeployCommand({
+  branch,
+  commit,
+  bootstrapMode: 'deploy-fail-closed-checkout',
+});
 const readyBundle = {
   ok: true,
   generatedAt: '2026-07-18T19:04:08.001Z',
@@ -34,6 +39,19 @@ const readyBundle = {
   liveFirstDollarEnvReady: false,
   firstDollarBootstrapDeployRequired: true,
   firstDollarBootstrapDeployMode: 'SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout',
+  productionBackupReady: true,
+  productionBackupEvidence: {
+    databaseBindingVerified: true,
+    providerListedBackupReady: true,
+    database: {
+      volumeName: 'postgres-volume-fixture',
+    },
+    selectedBackup: {
+      id: 'backup-fixture',
+      createdAt: '2026-07-18T18:30:00.000Z',
+    },
+    restoreTested: false,
+  },
   deployApprovalToken: DEPLOY_APPROVAL_ONE_DECISION_TOKEN,
   deployCommand,
 };
@@ -59,8 +77,13 @@ for (const expected of [
   '- Live health: 200 (readiness 1)',
   '- Local deploy clean: yes',
   '- Reviewed deploy-relevant files: 235',
+  '- Bound database volume: postgres-volume-fixture',
+  '- Provider backup: backup-fixture (2026-07-18T18:30:00.000Z)',
+  '- Restore operation tested: no; this gate verifies a fresh provider-listed backup on the exact bound volume',
   deployCommand,
-  'It does not authorize a Git push, live environment changes, checkout activation, charges, Stripe smoke, proof calls, outreach, paid spend, cleanup, or production-data deletion.',
+  'Startup runs reviewed additive prospect-schema DDL.',
+  'it does not claim a restore drill was performed.',
+  'It does not authorize a Git push, other live environment changes, checkout activation, charges, Stripe smoke, proof calls, outreach, paid spend, cleanup, or production-data deletion.',
 ]) {
   assert.ok(card.includes(expected), `ready card must include ${expected}`);
 }
@@ -86,6 +109,8 @@ for (const unsafeBundle of [
   { ...readyBundle, localDeployClean: false, deployRelevantDirtyFiles: ['server.ts'] },
   { ...readyBundle, branchReconcileRequired: true },
   { ...readyBundle, pendingFirstDollarEnvStaged: true },
+  { ...readyBundle, productionBackupReady: false },
+  { ...readyBundle, productionBackupEvidence: { ...readyBundle.productionBackupEvidence, selectedBackup: null } },
   { ...readyBundle, deployCommand: deployCommand.replace(commit, 'wrong-commit') },
   { ...readyBundle, deployCommand: `${deployCommand} && APPROVE_SMIRK_OUTREACH_BATCH=1` },
   { ...readyBundle, deployCommand: `ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 ${deployCommand}` },
@@ -104,7 +129,7 @@ assert.match(handoffVerifierSource, /if \(expectedFiles\.length === 0\) \{[\s\S]
 
 console.log(JSON.stringify({
   ok: true,
-  fixtureCount: 11,
+  fixtureCount: 13,
   approvalTokenCount: validation.approvalTokens.length,
   failures: [],
 }, null, 2));

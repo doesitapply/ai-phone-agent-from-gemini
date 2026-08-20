@@ -12,6 +12,7 @@ const requireText = (file, needle, label) => {
 
 const app = read("src/App.tsx");
 const contacts = read("src/routes/contact-routes.ts");
+const complianceRoutes = read("src/routes/compliance-routes.ts");
 const compliance = read("src/compliance.ts");
 const db = read("src/db.ts");
 
@@ -52,6 +53,8 @@ for (const needle of [
   "Remove from DNC",
   "Contact removed from DNC",
   "Add a consent or correction note before removing DNC.",
+  "if (reason === null) return;",
+  "normalizedReason.length < 8",
   "Full operator access is required to change DNC.",
   "CONTACT_STATUS_OPTIONS",
   "statusFilter",
@@ -60,6 +63,13 @@ for (const needle of [
   "audit.audit || audit.events",
 ]) {
   if (!app.includes(needle)) fail(`contacts UI missing contract marker: ${needle}`);
+}
+
+for (const needle of [
+  "reason.length < 8",
+  "A consent or correction note is required to remove DNC.",
+]) {
+  if (!complianceRoutes.includes(needle)) fail(`global DNC route missing contract marker: ${needle}`);
 }
 
 requireText("scripts/check-auth-regression.mjs", 'route: "/api/contacts/:id/dnc", markers: ["dashboardAuth", "requireOperator"]', "auth regression route guard");

@@ -268,7 +268,7 @@ ${brand}
     <div class="label">Built for</div>
     <div class="checks">
       <div class="check"><span class="dot"></span><span>Plumbing, HVAC, electrical, roofing, remodeling, and handyman crews.</span></div>
-      <div class="check"><span class="dot"></span><span>Dedicated recovery number with smart voicemail and callback-ready capture.</span></div>
+      <div class="check"><span class="dot"></span><span>Dedicated recovery number with caller details and callback-ready capture.</span></div>
       <div class="check"><span class="dot"></span><span>Owners who want callback-ready details without replacing their team.</span></div>
     </div>
   </div>
@@ -349,14 +349,15 @@ ${brand}
 </section>
 `, "email");
 
-const demoPhone = "(775) 420-4485";
+const demoPhone = "(775) 420-3005";
+const ownerPhone = "(775) 420-4485";
 
 const dualModeFrontBody = `
 ${brand.replace("Home services first", "Reno trades launch")}
 <section class="industrial-hero">
   <div>
     <div class="stripe-label">For plumbers, HVAC, electricians, and busy trades</div>
-    <h1>The $500 phone call you might have missed.</h1>
+    <h1>The urgent phone call you might have missed.</h1>
     <p>When a homeowner has water on the floor, no heat, or a job that cannot wait, they usually call until somebody answers. If you are under a sink, driving, or already on a job, the next shop on Google may get that call.</p>
   </div>
   <p><strong>Introducing SMIRK:</strong> a 24/7 frontline call-recovery layer for independent trade businesses in Reno.</p>
@@ -428,8 +429,8 @@ ${brand.replace("Home services first", "Reno local")}
     <tbody>
       <tr>
         <td>Monthly cost</td>
-        <td class="win">Founders local launch: $99/mo</td>
-        <td>Often $300-$600+/mo</td>
+        <td class="win">$197/month</td>
+        <td>Varies by provider and usage</td>
         <td>$0</td>
       </tr>
       <tr>
@@ -478,13 +479,13 @@ ${brand.replace("Home services first", "Reno local")}
 <section class="grid grid-3">
   <div class="panel">
     <div class="label">Price</div>
-    <div class="big">$99/mo</div>
-    <p class="small muted" style="margin-top: 6px;">Founders local launch rate for the first batch of Reno shops.</p>
+    <div class="big">$197/mo</div>
+    <p class="small muted" style="margin-top: 6px;">One current public Starter offer.</p>
   </div>
   <div class="panel">
-    <div class="label">Terms</div>
-    <div class="big">Cancel anytime</div>
-    <p class="small muted" style="margin-top: 6px;">No long contract. Keep it if it earns its place.</p>
+    <div class="label">Billing</div>
+    <div class="big">Monthly subscription</div>
+    <p class="small muted" style="margin-top: 6px;">Final cancellation and refund terms are published before checkout opens.</p>
   </div>
   <div class="panel">
     <div class="label">Setup</div>
@@ -499,8 +500,9 @@ ${brand.replace("Home services first", "Reno local")}
     <p class="small" style="margin-top: 8px;">1605 McKinley Drive, Reno, NV 89509 | https://smirkcalls.com</p>
   </div>
   <div style="text-align:right;">
-    <div class="label" style="color:#bdcabe;">Call</div>
-    <div class="phone-number" style="color:#00c875; font-size:34px;">${demoPhone}</div>
+    <div class="label" style="color:#bdcabe;">Live SMIRK demo</div>
+    <div class="phone-number" style="color:#00c875; font-size:30px;">${demoPhone}</div>
+    <p class="small" style="color:#f4f7f4; margin-top: 8px;">Cameron / Google Voice: ${ownerPhone}</p>
     <p class="tiny" style="color:#bdcabe; margin-top: 8px;">Built by Cameron Church. Reno local.</p>
   </div>
 </section>
@@ -515,12 +517,12 @@ const dualModeFront = shell("SMIRK dual mode flyer front", dualModeFrontBody, "s
 const dualModeBack = shell("SMIRK dual mode flyer back", dualModeBackBody, "sheet flyer-back");
 
 const assets = [
-  { id: "smirk-flyer-letter", html: flyer, width: 1275, height: 1650, pdf: true },
-  { id: "smirk-proof-loop-handout", html: leavebehind, width: 1275, height: 1650, pdf: true },
-  { id: "smirk-email-insert", html: emailInsert, width: 600, height: 560, pdf: false },
-  { id: "smirk-dual-mode-flyer", html: dualModeFlyer, width: 1275, height: 3300, pdf: true },
-  { id: "smirk-dual-mode-flyer-front", html: dualModeFront, width: 1275, height: 1650, pdf: false },
-  { id: "smirk-dual-mode-flyer-back", html: dualModeBack, width: 1275, height: 1650, pdf: false },
+  { id: "smirk-flyer-letter", html: flyer, width: 816, height: 1056, deviceScaleFactor: 1.5625, pdf: true },
+  { id: "smirk-proof-loop-handout", html: leavebehind, width: 816, height: 1056, deviceScaleFactor: 1.5625, pdf: true },
+  { id: "smirk-email-insert", html: emailInsert, width: 600, height: 560, deviceScaleFactor: 1, pdf: false },
+  { id: "smirk-dual-mode-flyer", html: dualModeFlyer, width: 816, height: 2112, deviceScaleFactor: 1.5625, pdf: true },
+  { id: "smirk-dual-mode-flyer-front", html: dualModeFront, width: 816, height: 1056, deviceScaleFactor: 1.5625, pdf: false },
+  { id: "smirk-dual-mode-flyer-back", html: dualModeBack, width: 816, height: 1056, deviceScaleFactor: 1.5625, pdf: false },
 ];
 
 const usage = `# SMIRK Collateral Kit
@@ -550,8 +552,9 @@ Do not add:
 - SMS-first language.
 
 Dual-mode flyer notes:
-- The demo number is ${demoPhone}.
-- The local founders rate is framed as a launch offer, not the public Starter price.
+- The live SMIRK demo number is ${demoPhone}.
+- Cameron's Google Voice number is ${ownerPhone}; it is labeled as owner contact, not as the demo line.
+- The only current public offer shown is Starter at $197/month.
 - The CTA is call-only until SMS guardrails are explicitly approved for this use.
 
 Live-send guardrail:
@@ -566,7 +569,10 @@ fs.writeFileSync(path.join(outDir, "README.md"), usage);
 const browser = await chromium.launch();
 try {
   for (const asset of assets) {
-    const page = await browser.newPage({ viewport: { width: asset.width, height: asset.height }, deviceScaleFactor: 1 });
+    const page = await browser.newPage({
+      viewport: { width: asset.width, height: asset.height },
+      deviceScaleFactor: asset.deviceScaleFactor,
+    });
     await page.setContent(asset.html, { waitUntil: "load" });
     await page.screenshot({ path: path.join(outDir, `${asset.id}.png`), fullPage: true });
     if (asset.pdf) {

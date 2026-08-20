@@ -29,7 +29,8 @@ expect(
   "owner control overview must require authenticated full operator access and disable caching"
 );
 expect(
-  route.includes('const cleanConfigInventory = (config: any[]) => config.map((item) => ({')
+  route.includes('export const buildOwnerCredentialInventory = (')
+    && route.includes('configured: Boolean(String(env[definition.key] || "").trim()) || Boolean(monitorItem?.set)')
     && route.includes('exposure: "write_only_secret"')
     && !route.includes('value: item?.value')
     && !route.includes('res.json({ env'),
@@ -61,8 +62,34 @@ expect(
   "frontend must route owner control through the full operator dashboard surface"
 );
 expect(
-  pkg.scripts?.["check:owner-control"] === "node scripts/check-owner-control-contract.mjs",
+  app.includes('window.location.replace("/dashboard?admin=1")')
+    && app.includes("Admin sign-in")
+    && app.includes("navigateToTab('owner_control')"),
+  "frontend must expose a direct full-admin sign-in and Admin Settings entry point"
+);
+expect(
+  pkg.scripts?.["check:owner-control"] === "node scripts/check-owner-control-contract.mjs && node --import tsx --test tests/owner_control_prospect_acquisition.test.ts tests/prospect_acquisition_configuration_stage.test.ts",
   "package must expose the owner control contract check"
+);
+expect(
+  pkg.scripts?.["check:owner-control-ui"] === "npm run -s build:frontend && node scripts/check-owner-control-ui.mjs",
+  "package must expose the synthetic desktop and mobile owner-control UI proof"
+);
+expect(
+  route.includes("buildOwnerProspectAcquisitionOverview")
+    && route.includes("buildProspectAcquisitionConnectionReadiness")
+    && route.includes("contactAuthorized: false as const")
+    && route.includes("spendAuthorized: false as const")
+    && route.includes('externalAction: "none" as const'),
+  "owner control must expose redacted prospect acquisition readiness without execution authority"
+);
+expect(
+  app.includes("Prospect acquisition control plane")
+    && app.includes("Revenue-loop connections")
+    && app.includes("Execution switches")
+    && app.includes("Credential separation")
+    && app.includes("External evidence unproven"),
+  "owner control must render the prospect acquisition connections, switches, caps, and evidence boundary"
 );
 
 if (failures.length > 0) {

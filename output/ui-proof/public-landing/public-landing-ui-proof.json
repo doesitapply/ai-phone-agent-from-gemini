@@ -1,0 +1,47 @@
+{
+  "ok": true,
+  "generatedAt": "2026-08-07T12:09:47.570Z",
+  "syntheticApiOnly": true,
+  "productionRequests": 0,
+  "externalActions": 0,
+  "proofs": [
+    {
+      "screenshot": "output/ui-proof/public-landing/public-landing-desktop.png",
+      "fullScreenshot": "output/ui-proof/public-landing/public-landing-desktop-full.png",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "overflow": {
+        "body": 0,
+        "document": 0
+      },
+      "heroAsset": {
+        "width": 1672,
+        "height": 941
+      },
+      "heroPixelVariance": 1526.2224995177485,
+      "nextSectionTop": 954,
+      "viewportHeight": 1000
+    },
+    {
+      "screenshot": "output/ui-proof/public-landing/public-landing-mobile.png",
+      "fullScreenshot": "output/ui-proof/public-landing/public-landing-mobile-full.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "overflow": {
+        "body": 0,
+        "document": 0
+      },
+      "heroAsset": {
+        "width": 1672,
+        "height": 941
+      },
+      "heroPixelVariance": 1526.2224995177485,
+      "nextSectionTop": 796,
+      "viewportHeight": 844
+    }
+  ]
+}

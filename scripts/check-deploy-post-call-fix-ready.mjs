@@ -44,6 +44,7 @@ function checkDeployGuidanceSafety() {
 }
 
 const railway = run('npm', ['run', '-s', 'check:railway']);
+const productionBackup = run('npm', ['run', '-s', 'check:production-backup']);
 const proofDocs = run('npm', ['run', '-s', 'check:real-call-docs']);
 const targetSafety = run('npm', ['run', '-s', 'check:real-call-target-safety']);
 const allowlistSafety = run('npm', ['run', '-s', 'check:test-call-allowlist-safety']);
@@ -154,6 +155,18 @@ const gitRemoteSyncDetail = gitRemoteDiverged
     : null);
 const railwayAuthMissing = !railway.ok && /Railway auth missing/i.test(railway.output || '');
 const railwayAuthInvalid = !railway.ok && !railwayAuthMissing;
+let productionBackupParsed = null;
+try {
+  productionBackupParsed = productionBackup.output
+    ? JSON.parse(productionBackup.output)
+    : null;
+} catch {
+  productionBackupParsed = null;
+}
+const productionBackupReady = productionBackup.ok
+  && productionBackupParsed?.ok === true
+  && productionBackupParsed?.databaseBindingVerified === true
+  && productionBackupParsed?.providerListedBackupReady === true;
 const needsDeploy = pendingFirstDollarEnvStaged || hasDeployRelevantDirtyFiles || !live.ok;
 const liveProofInspectionBlockedByDeploy = needsDeploy && !gitRemoteNeedsSync;
 const stripeWebhookApprovalReadyStatus = liveProofInspectionBlockedByDeploy
@@ -195,14 +208,18 @@ const blockerChecks = [
   [!webhookBuffer.ok, 'webhook-buffer-contract-drift'],
   [!postCallDurability.ok, 'post-call-durability-drift'],
   [!deployGuidanceSafety.ok, 'deploy-guidance-safety-drift'],
-  [!handoffSafety.ok, 'deploy-approval-handoff-drift'],
   [!pendingFirstDollarEnvInspectionOk, 'pending-first-dollar-env-inspection-failed'],
   [railwayAuthMissing, 'railway-auth-missing'],
   [railwayAuthInvalid, 'railway-auth-invalid'],
+  [!productionBackupReady, 'production-backup-not-ready'],
+  [productionBackupReady && !handoffSafety.ok, 'deploy-approval-handoff-drift'],
 ];
 const blocker = blockerChecks.find(([failed]) => failed)?.[1]
   || (pendingFirstDollarEnvStaged ? 'pending-first-dollar-env-activation-deploy' : (needsDeploy ? 'stale-production-deploy' : 'live-already-current'));
-const blockerDetail = gitRemoteNeedsSync
+const blockerDetail = !productionBackupReady
+  ? (productionBackupParsed?.nextAction
+    || 'A fresh provider-listed backup for the exact bound production database is required before deploy approval.')
+  : (gitRemoteNeedsSync
   ? gitRemoteSyncDetail
   : (pendingFirstDollarEnvStaged
     ? 'A digest-bound first-dollar environment manifest is staged with --skip-deploys; the separately approved exact activation deploy is required even though the source commit is already live.'
@@ -210,7 +227,7 @@ const blockerDetail = gitRemoteNeedsSync
     ? 'Live fingerprint matches local HEAD, but deploy-relevant working-tree changes still need explicit approval and shipping before Stripe smoke or proof-call approval.'
     : (!liveFingerprintCurrent
       ? 'Live Railway fingerprint does not match local HEAD yet.'
-      : 'Live fingerprint is current and deploy-relevant working tree is clean.')));
+      : 'Live fingerprint is current and deploy-relevant working tree is clean.'))));
 const out = {
   ok: proofDocs.ok &&
     targetSafety.ok &&
@@ -237,9 +254,10 @@ const out = {
     webhookBuffer.ok &&
     postCallDurability.ok &&
     deployGuidanceSafety.ok &&
-    handoffSafety.ok &&
+    (handoffSafety.ok || !productionBackupReady) &&
     pendingFirstDollarEnvInspectionOk &&
     railway.ok &&
+    productionBackupReady &&
     needsDeploy &&
     !gitRemoteNeedsSync,
   blocker,
@@ -268,18 +286,22 @@ const out = {
   webhookBuffer: webhookBuffer.ok ? 'pass' : 'fail',
   postCallDurability: postCallDurability.ok ? 'pass' : 'fail',
   deployGuidanceSafety: deployGuidanceSafety.ok ? 'pass' : 'fail',
-  handoffSafety: handoffSafety.ok ? 'pass' : 'fail',
+  handoffSafety: !productionBackupReady
+    ? 'blocked-until-backup'
+    : (handoffSafety.ok ? 'pass' : 'fail'),
   pendingFirstDollarEnvInspection: pendingFirstDollarEnvInspectionOk ? 'pass' : 'fail',
   pendingFirstDollarEnvStaged,
   pendingFirstDollarEnvManifest: pendingFirstDollarEnvStaged ? pendingFirstDollarEnvParsed.manifest : null,
   railwayAccess: railway.ok ? 'pass' : 'fail',
+  productionBackup: productionBackupReady ? 'pass' : 'fail',
+  productionBackupEvidence: productionBackupParsed,
   liveCurrent: live.ok && !hasDeployRelevantDirtyFiles && !pendingFirstDollarEnvStaged ? 'pass' : (pendingFirstDollarEnvStaged ? 'pending-env-activation' : 'stale'),
   deployState,
   blockerDetail,
   liveFingerprintCurrent,
   localDeployClean: !hasDeployRelevantDirtyFiles,
   deployRelevantDirtyFiles,
-  requiresApproval: railway.ok,
+  requiresApproval: railway.ok && productionBackupReady,
   localBranch: localBranchName || null,
   localCommit: localCommit.ok ? localCommit.output : null,
   remoteBranch: remoteRef,
@@ -342,11 +364,13 @@ const out = {
     ? 'Run npm run -s bootstrap:railway-auth-open-page-watch-clipboard-and-deploy, then copy a real Railway token when the page opens; the helper will run auth checks, generate the approval bundle, and deploy.'
     : (railwayAuthInvalid
       ? 'Replace the invalid Railway token, then rerun deploy readiness, generate the approval bundle, and deploy.'
-      : (gitRemoteNeedsSync
+      : (!productionBackupReady
+        ? (productionBackupParsed?.nextAction || 'Create and verify a fresh provider backup for the exact bound production database, then rerun deploy readiness.')
+        : (gitRemoteNeedsSync
         ? `Synchronize local branch with ${remoteRef} before deploy.`
-        : (railway.ok && needsDeploy ? `Generate the approval bundle, get approval, then run ${deployCommand}` : null))),
-  approvalBundleCommand: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && needsDeploy)) ? 'npm run write:deploy-approval-bundle' : null,
-  approvalBundlePath: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && needsDeploy)) ? 'output/deploy-approval-bundle.json' : null,
+        : (railway.ok && needsDeploy ? `Generate the approval bundle, get approval, then run ${deployCommand}` : null)))),
+  approvalBundleCommand: (railwayAuthMissing || railwayAuthInvalid || !productionBackupReady || (railway.ok && needsDeploy)) ? 'npm run write:deploy-approval-bundle' : null,
+  approvalBundlePath: (railwayAuthMissing || railwayAuthInvalid || !productionBackupReady || (railway.ok && needsDeploy)) ? 'output/deploy-approval-bundle.json' : null,
   proofDocsDetail: proofDocs.output || null,
   targetSafetyDetail: targetSafety.output || null,
   allowlistSafetyDetail: allowlistSafety.output || null,
@@ -374,6 +398,7 @@ const out = {
   handoffSafetyDetail: handoffSafety.output || null,
   pendingFirstDollarEnvInspectionDetail: pendingFirstDollarEnvParsed || pendingFirstDollarEnvInspection.output || null,
   railwayDetail: railway.output || null,
+  productionBackupDetail: productionBackupParsed || productionBackup.output || null,
   liveDetail: liveParsed || live.output || null,
   gitFetchDetail: [gitFetch.output, gitFetchTarget.output].filter(Boolean).join('\n') || null,
 };

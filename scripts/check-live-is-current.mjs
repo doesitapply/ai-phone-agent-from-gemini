@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const expectedVersion = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const expectedBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
-const deployCommand = buildExactDeployCommand({ branch: expectedBranch, commit: expectedVersion });
 const env = { ...process.env, SMIRK_EXPECT_VERSION: expectedVersion, SMIRK_EXPECT_BRANCH: expectedBranch };
 
 try {
@@ -35,13 +33,13 @@ try {
       appUrl: detail.url || null,
       liveReadinessHeader: detail.readinessHeader || null,
       liveStatus: detail.status ?? null,
-      nextAction: `Generate the approval bundle, get approval, then run ${deployCommand}`,
+      nextAction: 'Run npm run -s check:deploy-post-call-fix-ready. Do not request or run a deploy unless that full gate reports requiresApproval=true and the regenerated one-decision card contains the exact current approval token.',
       approvalBundleCommand: 'npm run write:deploy-approval-bundle',
       approvalBundlePath: 'output/deploy-approval-bundle.json',
       nextChecks: [
-        'npm run write:deploy-approval-bundle',
+        'npm run -s check:deploy-post-call-fix-ready',
         'npm run -s check:latest-failed-deploy',
-        deployCommand
+        'npm run write:deploy-approval-bundle'
       ],
       detail,
     }, null, 2));

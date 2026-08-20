@@ -35,6 +35,15 @@ RAILWAY_CLI_RETRY_DELAY="${SMIRK_RAILWAY_CLI_RETRY_DELAY_SECONDS:-3}"
 is_retryable_railway_output() {
   printf '%s' "$1" | grep -Eqi 'rate[ -]?limit|ratelimit|ratelimited|too many requests|ECONNRESET|ETIMEDOUT|timeout'
 }
+is_unlinked_railway_output() {
+  printf '%s' "$1" | grep -Eqi 'No linked project found|Run railway link to connect to a project'
+}
+verify_expected_target_with_graphql() {
+  EXPECTED_PROJECT="$EXPECTED_PROJECT" \
+    EXPECTED_ENVIRONMENT="$EXPECTED_ENVIRONMENT" \
+    EXPECTED_SERVICE="$EXPECTED_SERVICE" \
+    node scripts/check-railway-graphql-access.mjs
+}
 run_railway_with_retry() {
   local __out_var="$1"
   shift
@@ -303,15 +312,25 @@ status_json_output=""
 run_railway_with_retry status_json_output status --json || status_code=$?
 
 if [ "$status_code" -ne 0 ]; then
+  if is_unlinked_railway_output "$status_json_output"; then
+    echo "WARN Railway CLI auth is valid, but this worktree is not linked; verifying the exact pinned production target through read-only GraphQL access instead." >&2
+    verify_expected_target_with_graphql
+    exit $?
+  fi
   if printf '%s' "$status_json_output" | grep -qi 'Invalid RAILWAY_TOKEN\|Unauthorized\|token\|login\|error decoding response body'; then
     emit_auth_failure "$status_json_output"
   fi
   status_output=""
   run_railway_with_retry status_output status || status_code=$?
   if [ "$status_code" -ne 0 ]; then
+    if is_unlinked_railway_output "$status_output"; then
+      echo "WARN Railway CLI auth is valid, but this worktree is not linked; verifying the exact pinned production target through read-only GraphQL access instead." >&2
+      verify_expected_target_with_graphql
+      exit $?
+    fi
     if is_retryable_railway_output "$status_output$status_json_output"; then
       echo "WARN railway status failed with retryable Railway CLI output; trying Railway GraphQL access check" >&2
-      EXPECTED_PROJECT="$EXPECTED_PROJECT" EXPECTED_ENVIRONMENT="$EXPECTED_ENVIRONMENT" EXPECTED_SERVICE="$EXPECTED_SERVICE" node scripts/check-railway-graphql-access.mjs
+      verify_expected_target_with_graphql
       exit $?
     fi
     if printf '%s' "$status_output" | grep -qi 'Invalid RAILWAY_TOKEN\|Unauthorized\|token\|login\|error decoding response body'; then

@@ -26,6 +26,7 @@ export const REQUIRED_BOOTSTRAP_PREFLIGHT_PASSES = Object.freeze([
   'deployGuidanceSafety',
   'handoffSafety',
   'railwayAccess',
+  'productionBackup',
 ]);
 
 export const REQUIRED_BOOTSTRAP_PREFLIGHT_BLOCKED_UNTIL_DEPLOY = Object.freeze([

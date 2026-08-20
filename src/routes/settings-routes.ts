@@ -14,7 +14,7 @@ import {
 
 type SettingsRouteDeps = {
   dashboardAuth: RequestHandler;
-  requireOperator: (req: Request, res: Response, next: NextFunction) => void;
+  requireFullOperator: (req: Request, res: Response, next: NextFunction) => void;
   sql: any;
   dbEnabled: boolean;
   env: Record<string, string | undefined>;
@@ -42,7 +42,7 @@ const IDENTITY_KEYS = [
 export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): void {
   const {
     dashboardAuth,
-    requireOperator,
+    requireFullOperator,
     sql,
     dbEnabled,
     env,
@@ -52,7 +52,7 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
     log,
   } = deps;
 
-  app.get("/api/settings/groups", dashboardAuth, requireOperator, (_req: Request, res: Response) => {
+  app.get("/api/settings/groups", dashboardAuth, requireFullOperator, (_req: Request, res: Response) => {
     res.json({ groups: SETTINGS_GROUPS });
   });
 
@@ -61,7 +61,7 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
     res.json({ incomingUrl: `${appUrl}/api/twilio/incoming`, statusUrl: `${appUrl}/api/twilio/status` });
   });
 
-  app.get("/api/logs", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
+  app.get("/api/logs", dashboardAuth, requireFullOperator, async (_req: Request, res: Response) => {
     if (!dbEnabled) {
       return res.json({ logs: [] });
     }
@@ -69,7 +69,7 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
     res.json({ logs });
   });
 
-  app.get("/api/settings", dashboardAuth, requireOperator, (_req: Request, res: Response) => {
+  app.get("/api/settings", dashboardAuth, requireFullOperator, (_req: Request, res: Response) => {
     res.json({
       groups: SETTINGS_GROUPS,
       values: getMaskedSettings(),
@@ -77,7 +77,7 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
     });
   });
 
-  app.get("/api/agent/identity", dashboardAuth, requireOperator, (_req: Request, res: Response) => {
+  app.get("/api/agent/identity", dashboardAuth, requireFullOperator, (_req: Request, res: Response) => {
     const raw: Record<string, string> = {};
     for (const k of IDENTITY_KEYS) {
       raw[k] = process.env[k] || "";
@@ -85,7 +85,7 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
     res.json(raw);
   });
 
-  app.post("/api/agent/identity", dashboardAuth, requireOperator, (req: Request, res: Response) => {
+  app.post("/api/agent/identity", dashboardAuth, requireFullOperator, (req: Request, res: Response) => {
     const body = req.body as Record<string, string>;
     const updates: Record<string, string> = {};
     for (const k of IDENTITY_KEYS) {
@@ -101,7 +101,7 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
     }
   });
 
-  app.post("/api/settings", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  app.post("/api/settings", dashboardAuth, requireFullOperator, async (req: Request, res: Response) => {
     const updates = req.body as Record<string, string>;
     if (!updates || typeof updates !== "object") {
       return res.status(400).json({ error: "Body must be a JSON object of key-value pairs." });
@@ -129,7 +129,7 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
     }
   });
 
-  app.post("/api/settings/test/:service", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  app.post("/api/settings/test/:service", dashboardAuth, requireFullOperator, async (req: Request, res: Response) => {
     const { service } = req.params;
     const body = (req.body || {}) as Record<string, string>;
 
@@ -282,7 +282,7 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
     }
   });
 
-  app.get("/api/config-status", dashboardAuth, requireOperator, (_req: Request, res: Response) => {
+  app.get("/api/config-status", dashboardAuth, requireFullOperator, (_req: Request, res: Response) => {
     res.json(getConfigStatus());
   });
 }

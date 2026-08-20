@@ -1,0 +1,79 @@
+{
+  "ok": true,
+  "generatedAt": "2026-08-08T18:36:05.542Z",
+  "syntheticApiOnly": true,
+  "productionRequests": 0,
+  "externalActions": 0,
+  "proofs": [
+    {
+      "screenshot": "output/ui-proof/owner-control/owner-control-prospect-desktop.png",
+      "usageScreenshot": "output/ui-proof/owner-control/owner-control-prospect-desktop-usage.png",
+      "connectionScreenshot": "output/ui-proof/owner-control/owner-control-prospect-desktop-connections.png",
+      "recoveryScreenshot": "output/ui-proof/owner-control/owner-control-prospect-desktop-webhook-recovery.png",
+      "recoveryApprovalScreenshot": null,
+      "settingsScreenshot": "output/ui-proof/owner-control/admin-settings-desktop.png",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "controlPlaneDimensions": {
+        "width": 832,
+        "height": 2573
+      },
+      "usageDimensions": {
+        "width": 830,
+        "height": 250
+      },
+      "copiedTemplateKeys": [
+        "VELVET_LEAD_SOURCE_API_KEY"
+      ],
+      "copiedBackupCommand": "npm run -s create:production-backup",
+      "webhookReplayPreviewed": true,
+      "webhookReplayApplyRequests": 0,
+      "copiedWebhookReplayApprovalMatched": true,
+      "overflow": {
+        "body": 0,
+        "document": 0
+      },
+      "settingsOverflow": {
+        "body": 0,
+        "document": 0
+      }
+    },
+    {
+      "screenshot": "output/ui-proof/owner-control/owner-control-prospect-mobile.png",
+      "usageScreenshot": "output/ui-proof/owner-control/owner-control-prospect-mobile-usage.png",
+      "connectionScreenshot": "output/ui-proof/owner-control/owner-control-prospect-mobile-connections.png",
+      "recoveryScreenshot": "output/ui-proof/owner-control/owner-control-prospect-mobile-webhook-recovery.png",
+      "recoveryApprovalScreenshot": "output/ui-proof/owner-control/owner-control-prospect-mobile-webhook-recovery-approval.png",
+      "settingsScreenshot": "output/ui-proof/owner-control/admin-settings-mobile.png",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "controlPlaneDimensions": {
+        "width": 310,
+        "height": 6546
+      },
+      "usageDimensions": {
+        "width": 308,
+        "height": 710
+      },
+      "copiedTemplateKeys": [
+        "VELVET_LEAD_SOURCE_API_KEY"
+      ],
+      "copiedBackupCommand": "npm run -s create:production-backup",
+      "webhookReplayPreviewed": true,
+      "webhookReplayApplyRequests": 0,
+      "copiedWebhookReplayApprovalMatched": true,
+      "overflow": {
+        "body": 0,
+        "document": 0
+      },
+      "settingsOverflow": {
+        "body": 0,
+        "document": 0
+      }
+    }
+  ]
+}

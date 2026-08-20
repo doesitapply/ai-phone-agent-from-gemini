@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "fs";
 import path from "path";
+import ts from "typescript";
 
 const root = path.resolve(process.argv[2] || ".");
 const serverPath = path.join(root, "server.ts");
@@ -35,6 +36,7 @@ const saas = fs.readFileSync(path.join(root, "src", "saas.ts"), "utf8");
 const bossModePath = path.join(root, "src", "boss-mode.ts");
 const bossMode = fs.readFileSync(bossModePath, "utf8");
 const smirkChat = fs.readFileSync(path.join(root, "src", "smirk-chat.ts"), "utf8");
+const smirkChatPolicy = fs.readFileSync(path.join(root, "src", "smirk-chat-policy.ts"), "utf8");
 const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
 const readScript = (file) => fs.readFileSync(path.join(scriptsPath, file), "utf8");
 
@@ -242,6 +244,7 @@ const publicRouteAllowlist = [
   { method: "POST", pattern: /^\/api\/invite\/:token\/accept$/ },
   { method: "GET", pattern: /^\/api\/pricing$/ },
   { method: "POST", pattern: /^\/api\/stripe\/webhook$/ },
+  { method: "POST", pattern: /^\/api\/prospecting\/resend\/webhook$/ },
 ];
 
 for (const entry of publicRouteAllowlist) {
@@ -330,6 +333,8 @@ const authMarkers = [
   'launchEventRateLimit',
   'velvetHandoffRateLimit',
   'createVelvetHandoffHandler',
+  'velvetResearchRateLimit',
+  'createVelvetResearchHandler',
   'express.raw',
 ];
 
@@ -351,35 +356,73 @@ for (const guard of globallyGuardedRoutePrefixes) {
 const hasGlobalRouteGuard = (route) =>
   globallyGuardedRoutePrefixes.some((guard) => route === guard.prefix || route.startsWith(`${guard.prefix}/`));
 
-const routeRegex = /app\.(get|post|put|patch|delete)\(\"([^\"]+)\"([^\n]*)/g;
-const routeCallRegex = /app\.(get|post|put|patch|delete)\s*\(/g;
 const routeDeclarations = [];
 for (const source of routeSources) {
-  const parsedRouteIndexes = new Set();
-  for (const match of source.text.matchAll(routeRegex)) {
-    parsedRouteIndexes.add(match.index);
-    const method = match[1].toUpperCase();
-    const route = match[2];
-    const tail = match[3] || '';
-    routeDeclarations.push({ method, route, tail, source: source.name });
-    if (!route.startsWith('/api/')) continue;
-    if (isAllowedPublicRoute(method, route)) continue;
-    if (!hasGlobalRouteGuard(route) && !authMarkers.some((marker) => tail.includes(marker))) {
-      fail(`${source.name}: route ${method} ${route} is missing an auth/guard marker on its declaration line`);
+  const sourceFile = ts.createSourceFile(
+    source.name,
+    source.text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "app" &&
+      ["get", "post", "put", "patch", "delete"].includes(
+        node.expression.name.text,
+      )
+    ) {
+      const method = node.expression.name.text.toUpperCase();
+      const routeArg = node.arguments[0];
+      const routes = ts.isStringLiteralLike(routeArg)
+        ? [routeArg.text]
+        : ts.isArrayLiteralExpression(routeArg) &&
+            routeArg.elements.every(ts.isStringLiteralLike)
+          ? routeArg.elements.map((element) => element.text)
+          : [];
+      const lineNumber =
+        sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
+          .line + 1;
+      if (routes.length === 0) {
+        fail(
+          `${source.name}:${lineNumber}: route declaration must use a literal path or literal path array`,
+        );
+      }
+      const tail = node.arguments
+        .slice(1)
+        .filter(
+          (argument) =>
+            !ts.isArrowFunction(argument) &&
+            !ts.isFunctionExpression(argument),
+        )
+        .map((argument) => argument.getText(sourceFile))
+        .join(" ");
+      for (const route of routes) {
+        routeDeclarations.push({
+          method,
+          route,
+          tail,
+          source: source.name,
+          lineNumber,
+        });
+        if (!route.startsWith("/api/")) continue;
+        if (isAllowedPublicRoute(method, route)) continue;
+        if (
+          !hasGlobalRouteGuard(route) &&
+          !authMarkers.some((marker) => tail.includes(marker))
+        ) {
+          fail(
+            `${source.name}:${lineNumber}: route ${method} ${route} is missing an explicit auth/guard middleware argument`,
+          );
+        }
+      }
     }
-  }
-
-  for (const match of source.text.matchAll(routeCallRegex)) {
-    if (parsedRouteIndexes.has(match.index)) continue;
-    const lineNumber = source.text.slice(0, match.index).split("\n").length;
-    const declarationLine = source.text.slice(match.index, source.text.indexOf("\n", match.index));
-    const isProtectedMissionControlArrayRoute = declarationLine.includes(
-      'app.get(["/mission-control", "/mission-control/*"], dashboardAuth, requireOperator',
-    );
-    if (!isProtectedMissionControlArrayRoute) {
-      fail(`${source.name}:${lineNumber}: route declaration is not covered by the auth scanner: ${declarationLine.trim()}`);
-    }
-  }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
 }
 
 for (const entry of publicRouteAllowlist) {
@@ -459,13 +502,13 @@ const requireRouteGuard = ({ method, route, markers }) => {
 
 [
   { method: "GET", route: "/api/operator/session", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "GET", route: "/api/settings/groups", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "GET", route: "/api/settings", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "POST", route: "/api/settings", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "GET", route: "/api/agent/identity", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "POST", route: "/api/agent/identity", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "POST", route: "/api/settings/test/:service", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "GET", route: "/api/config-status", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "GET", route: "/api/settings/groups", markers: ["dashboardAuth", "requireFullOperator"] },
+  { method: "GET", route: "/api/settings", markers: ["dashboardAuth", "requireFullOperator"] },
+  { method: "POST", route: "/api/settings", markers: ["dashboardAuth", "requireFullOperator"] },
+  { method: "GET", route: "/api/agent/identity", markers: ["dashboardAuth", "requireFullOperator"] },
+  { method: "POST", route: "/api/agent/identity", markers: ["dashboardAuth", "requireFullOperator"] },
+  { method: "POST", route: "/api/settings/test/:service", markers: ["dashboardAuth", "requireFullOperator"] },
+  { method: "GET", route: "/api/config-status", markers: ["dashboardAuth", "requireFullOperator"] },
   { method: "GET", route: "/api/system-health", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/owner-control/overview", markers: ["dashboardAuth", "requireFullOperator"] },
   { method: "POST", route: "/api/debug/tts", markers: ["dashboardAuth", "requireOperator"] },
@@ -490,7 +533,9 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "POST", route: "/api/provision/workspace", markers: ["requireProvisioningSecret"] },
   { method: "POST", route: "/api/scheduled/monthly-usage-reset", markers: ["requireProvisioningSecret"] },
   { method: "POST", route: "/api/admin/run-migrations", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "GET", route: "/api/admin/webhook-buffer-lag", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "GET", route: "/api/admin/webhook-buffer-lag", markers: ["dashboardAuth", "requireFullOperator"] },
+  { method: "GET", route: "/api/admin/webhook-buffer-replay/audit", markers: ["dashboardAuth", "requireFullOperator"] },
+  { method: "POST", route: "/api/admin/webhook-buffer-replay", markers: ["dashboardAuth", "requireFullOperator"] },
   { method: "GET", route: "/api/calls", markers: ["dashboardAuth"] },
   { method: "POST", route: "/api/calls/fix-stale", markers: ["dashboardAuth", "requireOperator"] },
   { method: "PATCH", route: "/api/calls/fix-stale", markers: ["dashboardAuth", "requireOperator"] },
@@ -580,15 +625,46 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "POST", route: "/api/invite/:token/accept", markers: ["publicInviteRateLimit"] },
   { method: "POST", route: "/api/launch/events", markers: ["launchEventRateLimit"] },
   { method: "POST", route: "/api/integrations/velvet/handoffs", markers: ["velvetHandoffRateLimit", "createVelvetHandoffHandler"] },
+  { method: "POST", route: "/api/integrations/velvet/prospects", markers: ["velvetResearchRateLimit", "createVelvetResearchHandler"] },
   { method: "GET", route: "/api/launch/summary", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/launch/ledger", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/launch/ledger", markers: ["dashboardAuth", "requireOperator"] },
   { method: "PATCH", route: "/api/launch/ledger/:id", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/stripe/webhook", markers: ["express.raw"] },
+  { method: "POST", route: "/api/prospecting/resend/webhook", markers: ["express.raw"] },
   { method: "POST", route: "/api/recovery/direct-dial", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/twilio/test-webhook", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/twilio/test-call", markers: ["dashboardAuth", "requireOperator"] },
 ].forEach(requireRouteGuard);
+
+const prospectOutreachRoutes =
+  routeSources.find(
+    (source) =>
+      source.name ===
+      path.join("src", "routes", "prospect-outreach-routes.ts"),
+  )?.text || "";
+for (const snippet of [
+  '"/api/prospecting/resend/webhook"',
+  "verifyProspectEmailWebhook({",
+  "rawBody: req.body",
+  'code: "PROSPECT_EMAIL_WEBHOOK_SIGNATURE_INVALID"',
+]) {
+  if (!prospectOutreachRoutes.includes(snippet)) {
+    fail(
+      `public Resend prospect webhook must preserve signed raw-body verification: ${snippet}`,
+    );
+  }
+}
+if (
+  prospectOutreachRoutes.indexOf("verifyProspectEmailWebhook({") >
+  prospectOutreachRoutes.indexOf(
+    "const result = await sql.begin(async (tx: SqlClient) => {",
+  )
+) {
+  fail(
+    "public Resend prospect webhook must verify its signature before opening a storage transaction",
+  );
+}
 
 for (const removedRoute of [
   "/api/twilio/test-sms",
@@ -611,34 +687,36 @@ if (!server.includes("registerBossModeRoutes(app, dashboardAuth, requireOperator
 for (const snippet of [
   'export type ChatAccessMode = "operator" | "workspace" | "demo_operator";',
 ]) {
-  if (!smirkChat.includes(snippet)) {
+  if (!smirkChatPolicy.includes(snippet)) {
     fail(`workspace SMIRK chat must preserve the constrained tool access contract: ${snippet}`);
   }
 }
-if (!smirkChat.includes("const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([")) {
+if (!smirkChatPolicy.includes("const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([")) {
   fail("demo operator SMIRK chat must preserve the read-only tool access contract: const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([");
 }
-if (!smirkChat.includes("const WORKSPACE_ALLOWED_TOOLS = new Set([")) {
+if (!smirkChatPolicy.includes("const WORKSPACE_ALLOWED_TOOLS = new Set([")) {
   fail("workspace SMIRK chat must preserve the constrained tool access contract: const WORKSPACE_ALLOWED_TOOLS = new Set([");
 }
-if (!smirkChat.includes("const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode)")) {
-  fail("workspace SMIRK chat must preserve the constrained tool access contract: const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode)");
+if (!smirkChatPolicy.includes("chatToolDeclarationsForAccessMode")) {
+  fail("workspace SMIRK chat must preserve declaration filtering through the shared tool policy");
 }
-if (!smirkChat.includes('const allowedForMode = accessMode === "operator"') || !smirkChat.includes("WORKSPACE_ALLOWED_TOOLS.has(name)")) {
+if (!smirkChat.includes("isChatToolAllowed(input.accessMode, input.name)")) {
   fail("workspace SMIRK chat must deny tools outside the workspace allowlist");
 }
 for (const forbiddenWorkspaceTool of [
-  '"start_call"',
-  '"update_settings"',
+  '"make_call"',
+  '"update_setting"',
   '"update_agent_prompt"',
-  '"set_team_oncall"',
-  '"inject_live_briefing"',
-  '"create_calendar_event"',
+  '"inject_briefing"',
+  '"book_appointment"',
 ]) {
-  const allowlistBlock = smirkChat.match(/const WORKSPACE_ALLOWED_TOOLS = new Set\(\[[\s\S]*?\]\);/)?.[0] || "";
+  const allowlistBlock = smirkChatPolicy.match(/const WORKSPACE_ALLOWED_TOOLS = new Set\(\[[\s\S]*?\]\);/)?.[0] || "";
   if (allowlistBlock.includes(forbiddenWorkspaceTool)) {
     fail(`workspace SMIRK chat allowlist must not include operator-only tool ${forbiddenWorkspaceTool}`);
   }
+}
+if (!smirkChatPolicy.includes("CHAT_GUARDED_WORKFLOW_TOOLS")) {
+  fail("operator SMIRK chat must preserve the separate guarded-workflow tool list");
 }
 for (const forbiddenDemoTool of [
   '"make_call"',
@@ -1443,7 +1521,7 @@ if (!server.includes("!hasWorkspaceBillingEntitlement(workspace.plan, workspace.
 }
 
 const requiredScripts = {
-  "check:auth": "node scripts/check-auth-regression.mjs . && tsx scripts/check-chat-route-security.ts && tsx scripts/check-google-auth-safety.ts && node scripts/check-call-usage-accounting.mjs",
+  "check:auth": "node scripts/check-auth-regression.mjs . && tsx scripts/check-chat-route-security.ts && tsx scripts/check-google-auth-safety.ts && node scripts/check-call-usage-accounting.mjs && node --import tsx --test tests/call_delete_tenant_isolation.test.ts",
   "smoke:buyer-auth": "bash scripts/buyer-funnel-auth-smoke.sh",
   "openclaw:automate": "node scripts/fix-openclaw.mjs",
   "openclaw:check": "node scripts/fix-openclaw.mjs --dry-run",
@@ -1481,6 +1559,17 @@ for (const phrase of [
 const railwayJsonBody = readScript("railway-json.mjs");
 if (!railwayJsonBody.includes('if (options.skipDeploys === true) args.push("--skip-deploys")')) {
   fail("railwaySetVariable must pass --skip-deploys through the CLI path when requested");
+}
+const railwayAccessBody = readScript("check-railway-access.sh");
+for (const phrase of [
+  "is_unlinked_railway_output()",
+  "No linked project found|Run railway link to connect to a project",
+  "verify_expected_target_with_graphql()",
+  "verifying the exact pinned production target through read-only GraphQL access instead",
+]) {
+  if (!railwayAccessBody.includes(phrase)) {
+    fail(`check-railway-access.sh must distinguish a valid unlinked CLI session from invalid auth: ${phrase}`);
+  }
 }
 
 if (!process.exitCode) {

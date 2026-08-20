@@ -1,0 +1,24 @@
+{
+  "proof_type": "local_signed_synthetic_paid_checkout",
+  "real_charge_created": false,
+  "external_messages_sent": false,
+  "signed_webhook_http": [
+    200,
+    200
+  ],
+  "exact_counts": {
+    "workspace": 1,
+    "activation_task": 1,
+    "fulfillment_receipt": 1,
+    "manual_telephony_event": 1
+  },
+  "purchased_plan": "starter",
+  "purchased_mode": "missed_call_recovery",
+  "fulfillment_status": "complete",
+  "activation_status": "PENDING_MANUAL_TELEPHONY",
+  "workspace_id": 2,
+  "provisioning_request_id": 1,
+  "replay_idempotent": true,
+  "activation_complete_claimed": false,
+  "telephony_reason": "No workspace Twilio line exists; activation remains incomplete until telephony is provisioned."
+}

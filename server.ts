@@ -57,6 +57,15 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
   DEMO_OPERATOR_API_KEY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_PREPARER_ENABLED: z.enum(["true", "false"]).optional(),
+  PROSPECT_REVENUE_LOOP_PREPARER_API_KEY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_ID: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_DISCOVERY_LIMIT: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_DISCOVERY_CATEGORY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_DISCOVERY_CITY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_DISCOVERY_STATE: z.string().optional(),
   ALLOW_NO_DB_PUBLIC_DEMO: z.enum(["true", "false"]).optional(),
   PUBLIC_PROOF_WORKSPACE_ID: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
@@ -95,10 +104,31 @@ const EnvSchema = z.object({
   GOOGLE_TTS_SPEED: z.string().optional(),
   GOOGLE_TTS_PITCH: z.string().optional(),
   GOOGLE_TTS_ENABLED: z.enum(["true", "false"]).optional(),
+  // Cartesia streaming TTS
+  CARTESIA_VOICE_ID: z.string().optional(),
+  CARTESIA_MODEL_ID: z.string().optional(),
   // Google Calendar sync
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_CALENDAR_ID: z.string().optional(),
   GOOGLE_CALENDAR_TZ: z.string().optional(),
+  GOOGLE_PLACES_API_KEY: z.string().optional(),
+  GOOGLE_MAPS_API_KEY: z.string().optional(),
+  APOLLO_API_KEY: z.string().optional(),
+  BRAVE_API_KEY: z.string().optional(),
+  SERPER_API_KEY: z.string().optional(),
+  HUBSPOT_ACCESS_TOKEN: z.string().optional(),
+  SALESFORCE_INSTANCE_URL: z.string().optional(),
+  SALESFORCE_ACCESS_TOKEN: z.string().optional(),
+  SALESFORCE_CLIENT_ID: z.string().optional(),
+  SALESFORCE_CLIENT_SECRET: z.string().optional(),
+  SALESFORCE_REFRESH_TOKEN: z.string().optional(),
+  AIRTABLE_API_KEY: z.string().optional(),
+  AIRTABLE_BASE_ID: z.string().optional(),
+  AIRTABLE_CONTACTS_TABLE: z.string().optional(),
+  AIRTABLE_CALLS_TABLE: z.string().optional(),
+  NOTION_API_KEY: z.string().optional(),
+  NOTION_DATABASE_ID: z.string().optional(),
+  SETTINGS_PATH: z.string().optional(),
   // Business timezone for date/time injection
   BUSINESS_TIMEZONE: z.string().optional(),
   // Business identity fields — injected into every call's system prompt
@@ -121,6 +151,7 @@ const EnvSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   FROM_EMAIL: z.string().optional(),
   FROM_NAME: z.string().optional(),
+  PROSPECT_INBOX_SEED_ALLOWLIST: z.string().optional(),
   // Legacy owner phone field; SMS alerts stay disabled for the callback-first MVP.
   OWNER_PHONE: z.string().optional(),
   // Owner email — used for post-call notifications (overrides workspace.owner_email placeholder)
@@ -148,10 +179,14 @@ const EnvSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().optional(),
-  // Velvet Alchemy can create a callback handoff only when both values are set.
-  // This is intentionally separate from all operator, workspace, and telephony keys.
+  // The call-shaped Velvet receiver accepts only the reserved synthetic fixture.
+  // Real business prospects use the separate research-only intake below.
   VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
+  VELVET_ALCHEMY_HANDOFF_MODE: z.string().optional(),
   VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
+  // Research intake is a separate, no-contact capability and never reuses the handoff key.
+  VELVET_ALCHEMY_RESEARCH_API_KEY: z.string().optional(),
+  VELVET_ALCHEMY_RESEARCH_WORKSPACE_ID: z.string().optional(),
 });
 
 // ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
@@ -295,7 +330,7 @@ async function getWorkspaceMode(workspaceId: number): Promise<"general" | "misse
   }
 }
 import { initProspectorSchema } from "./src/prospector.js";
-import { initSequenceSchema, executeDueSequenceSteps } from "./src/sequence-engine.js";
+import { initSequenceSchema } from "./src/sequence-engine.js";
 import { initComplianceSchema, checkOutboundCompliance, isOnDNC, detectOptOut } from "./src/compliance.js";
 import { registerTeamRoutes } from "./src/team-routes.js";
 import { registerBossModeRoutes, getActiveTemporaryContext } from "./src/boss-mode.js";
@@ -315,6 +350,9 @@ import { registerDebugRoutes } from "./src/routes/debug-routes.js";
 import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
 import { createPostgresVelvetHandoffStore, registerVelvetHandoffRoutes } from "./src/routes/velvet-handoff-routes.js";
+import { createPostgresVelvetResearchStore, registerVelvetResearchRoutes } from "./src/routes/velvet-research-routes.js";
+import { registerVelvetLeadSourceRoutes } from "./src/routes/velvet-lead-source-routes.js";
+import { registerVelvetDiscoveryRoutes } from "./src/routes/velvet-discovery-routes.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
@@ -324,6 +362,11 @@ import { registerOutboundCallRoutes } from "./src/routes/outbound-call-routes.js
 import { registerProofRoutes } from "./src/routes/proof-routes.js";
 import { registerProvisioningRoutes } from "./src/routes/provisioning-routes.js";
 import { registerProspectingRoutes } from "./src/routes/prospecting-routes.js";
+import { registerProspectOutreachRoutes } from "./src/routes/prospect-outreach-routes.js";
+import { registerProspectInboxPlacementRoutes } from "./src/routes/prospect-inbox-placement-routes.js";
+import { registerProspectRevenueLoopRoutes } from "./src/routes/prospect-revenue-loop-routes.js";
+import { authenticateProspectRevenueLoopObserver } from "./src/prospect-revenue-loop-observer.js";
+import { authenticateProspectRevenueLoopPreparer } from "./src/prospect-revenue-loop-preparer.js";
 import { registerRecoveryRoutes } from "./src/routes/recovery-routes.js";
 import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
 import { registerSmsRoutes } from "./src/routes/sms-routes.js";
@@ -393,14 +436,18 @@ app.use((req, res, next) => {
 });
 // Serve pre-recorded audio assets (voicemail drops, hold music, etc.) without auth
 app.use("/public", express.static(path.resolve(__dirname, "../public")));
-// Skip JSON body parsing for Stripe webhook — it needs the raw Buffer for signature verification
+// Signed provider webhooks require the exact raw bytes for verification.
+const rawWebhookPaths = new Set([
+  "/api/stripe/webhook",
+  "/api/prospecting/resend/webhook",
+]);
 app.use((req, res, next) => {
-  if (req.path === '/api/stripe/webhook') return next();
+  if (rawWebhookPaths.has(req.path)) return next();
   const limit = req.path === '/api/workspace/knowledge/import' ? '256kb' : '10kb';
   express.json({ limit })(req, res, next);
 });
 app.use((req, res, next) => {
-  if (req.path === '/api/stripe/webhook') return next();
+  if (rawWebhookPaths.has(req.path)) return next();
   express.urlencoded({ extended: true, limit: '10kb' })(req, res, next);
 });
 // CORS
@@ -415,7 +462,7 @@ const corsAllowedOrigins = Array.from(new Set([
   "https://smirkcalls.com",
   "https://www.smirkcalls.com",
 ].map((origin) => String(origin || "").trim().replace(/\/$/, "")).filter(Boolean)));
-const shouldRestrictCors = IS_PROD || corsAllowedOrigins.length > 0;
+const shouldRestrictCors = IS_PROD;
 app.use(cors(shouldRestrictCors ? {
   origin: (origin, cb) => {
     // allow server-to-server or curl (no Origin)
@@ -751,12 +798,83 @@ const requireOperator = (req: Request, res: Response, next: NextFunction) => {
   return res.status(403).json({ error: "Forbidden. Operator access required." });
 };
 
+const prospectRevenueLoopObserverAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const workspaceId = authenticateProspectRevenueLoopObserver({
+    method: req.method,
+    path: dashboardRequestPath(req),
+    providedApiKey: String(req.headers["x-api-key"] || ""),
+    env,
+  });
+  if (workspaceId !== null) {
+    (req as any).authMode = "prospect_revenue_loop_observer";
+    (req.headers as any)["x-workspace-id"] = String(workspaceId);
+    return next();
+  }
+  return dashboardAuth(req, res, next);
+};
+
+const requireProspectRevenueLoopObserver = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if ((req as any).authMode === "prospect_revenue_loop_observer") {
+    return next();
+  }
+  return requireOperator(req, res, next);
+};
+
 const requireFullOperator = (req: Request, res: Response, next: NextFunction) => {
   if ((req as any).authMode === "operator") return next();
   return res.status(403).json({
     error: "Forbidden. Full operator access required.",
     code: "FULL_OPERATOR_REQUIRED",
   });
+};
+
+const prospectRevenueLoopPreparerAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const workspaceId = authenticateProspectRevenueLoopPreparer({
+    method: req.method,
+    path: dashboardRequestPath(req),
+    providedApiKey: String(req.headers["x-api-key"] || ""),
+    env,
+  });
+  if (workspaceId !== null) {
+    (req as any).authMode = "prospect_revenue_loop_preparer";
+    (req.headers as any)["x-workspace-id"] = String(workspaceId);
+    return next();
+  }
+  return dashboardAuth(req, res, next);
+};
+
+const requireVelvetDiscoveryOperator = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if ((req as any).authMode === "prospect_revenue_loop_preparer") {
+    return next();
+  }
+  return requireOperator(req, res, next);
+};
+
+const requireVelvetDiscoveryFullOperator = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if ((req as any).authMode === "prospect_revenue_loop_preparer") {
+    return next();
+  }
+  return requireFullOperator(req, res, next);
 };
 
 const hasProSuitePlan = (plan: unknown): boolean => {
@@ -2113,19 +2231,6 @@ setInterval(() => {
     log("warn", "Appointment confirmation interval error", { error: err.message });
   });
 }, 5 * 60_000); // every 5 minutes
-
-// ── Sequence Engine: execute due follow-up steps every 60 seconds ─────────────
-setInterval(() => {
-  if (!DB_ENABLED) return;
-  const twilioClient = getTwilioClient();
-  const fromNumber = env.TWILIO_PHONE_NUMBER;
-  if (!twilioClient || !fromNumber) return;
-  executeDueSequenceSteps(twilioClient, fromNumber, getAppUrl()).catch((err: any) => {
-    log("warn", "Sequence engine interval error", { error: err.message });
-  });
-}, 60_000); // every 60 seconds
-
-
 
 registerTwimlRoutes(app, {
   sql,
@@ -3800,7 +3905,7 @@ registerCalendarRoutes(app, {
 
 registerSettingsRoutes(app, {
   dashboardAuth,
-  requireOperator,
+  requireFullOperator,
   sql,
   dbEnabled: DB_ENABLED,
   env,
@@ -3813,9 +3918,11 @@ registerSettingsRoutes(app, {
 registerAdminMaintenanceRoutes(app, {
   dashboardAuth,
   requireOperator,
+  requireFullOperator,
   requireProvisioningSecret,
   sql,
   dbEnabled: DB_ENABLED,
+  deployVersion: DEPLOY_VERSION,
   resetMonthlyUsage,
   log,
 });
@@ -3995,6 +4102,13 @@ registerVelvetHandoffRoutes(app, {
   log,
 });
 
+registerVelvetResearchRoutes(app, {
+  dbEnabled: DB_ENABLED,
+  env,
+  store: createPostgresVelvetResearchStore(sql),
+  log,
+});
+
 registerProvisioningRoutes(app, {
   publicProvisioningRequestRateLimit,
   publicCheckoutStatusRateLimit,
@@ -4026,10 +4140,60 @@ registerProspectingRoutes(app, {
   requireOperator,
   sql,
   dbEnabled: DB_ENABLED,
-  env,
-  log,
-  getTwilioClient,
-  getAppUrl,
+  getWorkspaceId,
+});
+
+registerVelvetLeadSourceRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  requireFullOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
+  store: createPostgresVelvetResearchStore(sql),
+  env: process.env,
+  fetchImpl: fetch,
+});
+
+registerVelvetDiscoveryRoutes(app, {
+  dashboardAuth: prospectRevenueLoopPreparerAuth,
+  requireOperator: requireVelvetDiscoveryOperator,
+  requireFullOperator: requireVelvetDiscoveryFullOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
+  env: process.env,
+  fetchImpl: fetch,
+});
+
+registerProspectOutreachRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  requireFullOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
+  env: process.env,
+  fetchImpl: fetch,
+});
+
+registerProspectRevenueLoopRoutes(app, {
+  dashboardAuth: prospectRevenueLoopObserverAuth,
+  requireOperator: requireProspectRevenueLoopObserver,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
+  env: process.env,
+});
+
+registerProspectInboxPlacementRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  requireFullOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
+  env: process.env,
 });
 
 registerComplianceRoutes(app, {
@@ -4080,7 +4244,7 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
     elevenlabs: !!env.ELEVENLABS_API_KEY,
     googleTts: !!env.GOOGLE_TTS_API_KEY,
     googleCalendar: !!(env.GOOGLE_SERVICE_ACCOUNT_JSON && env.GOOGLE_CALENDAR_ID),
-    googlePlaces: !!process.env.GOOGLE_PLACES_API_KEY,
+    googlePlaces: !!env.GOOGLE_PLACES_API_KEY,
     resend: !!env.RESEND_API_KEY,
     stripe: /^rk_live_[A-Za-z0-9_]+$/.test(String(env.STRIPE_REVENUE_READ_KEY || "").trim())
       && evaluatePaymentLinkConfiguration(env).ready,
@@ -4098,9 +4262,11 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
         if (!client) throw new Error("Twilio client unavailable");
         const account: any = await withOpsTimeout("Twilio account fetch", 3500, () => (client.api.accounts(env.TWILIO_ACCOUNT_SID!) as any).fetch());
         let balanceValue: string | undefined;
+        let balanceAmount: number | null = null;
         try {
           const bal: any = await withOpsTimeout("Twilio balance fetch", 3500, () => (client.api.v2010.account.balance as any).fetch());
           const amount = Number(bal.balance);
+          balanceAmount = Number.isFinite(amount) ? amount : null;
           balanceValue = Number.isFinite(amount) ? `${formatOpsMoney(amount, String(bal.currency || "USD").toUpperCase())}` : undefined;
         } catch {
           balanceValue = undefined;
@@ -4109,9 +4275,9 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
           id: "twilio",
           label: "Twilio Voice",
           category: "core",
-          status: account?.status === "active" ? "online" : "warn",
+          status: account?.status !== "active" || (balanceAmount !== null && balanceAmount <= 10) ? "warn" : "online",
           configured: true,
-          detail: `Account ${account?.friendlyName || env.TWILIO_ACCOUNT_SID} is ${account?.status || "reachable"}; number ${env.TWILIO_PHONE_NUMBER}.`,
+          detail: `Account ${account?.friendlyName || env.TWILIO_ACCOUNT_SID} is ${account?.status || "reachable"}; number ${env.TWILIO_PHONE_NUMBER}.${balanceAmount !== null && balanceAmount <= 10 ? " Balance needs attention." : ""}`,
           balanceLabel: "Balance",
           balanceValue,
           latencyMs: Date.now() - started,
@@ -4130,13 +4296,14 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
         if (!resp.ok) throw new Error(`OpenRouter returned ${resp.status}`);
         const data = await resp.json() as any;
         const remaining = Number(data?.data?.total_credits) - Number(data?.data?.total_usage || 0);
+        const creditStatus = !Number.isFinite(remaining) ? "warn" : remaining <= 0 ? "offline" : remaining <= 5 ? "warn" : "online";
         return service({
           id: "openrouter",
           label: "OpenRouter",
           category: "ai",
-          status: "online",
+          status: creditStatus,
           configured: true,
-          detail: `Model ${openRouterConfig?.model || env.OPENROUTER_MODEL || "default"} reachable.`,
+          detail: `Model ${openRouterConfig?.model || env.OPENROUTER_MODEL || "default"} credential accepted.${creditStatus === "online" ? "" : " Credit balance needs attention."}`,
           balanceLabel: "Credits left",
           balanceValue: Number.isFinite(remaining) ? formatOpsMoney(remaining) : undefined,
           latencyMs: Date.now() - started,
@@ -4224,9 +4391,9 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
 
   const staticServices: OpsServiceStatus[] = [
     service({ id: "database_ops", label: "Postgres", category: "infra", status: configured.database ? "online" : "offline", configured: configured.database, detail: configured.database ? "Database URL configured; core DB check runs above." : "DATABASE_URL missing." }),
-    service({ id: "gemini", label: "Gemini Fallback", category: "ai", status: configured.gemini ? "online" : "warn", configured: configured.gemini, detail: configured.gemini ? `Configured with ${env.GEMINI_MODEL || "default model"}.` : "GEMINI_API_KEY missing; OpenRouter must carry AI traffic." }),
-    service({ id: "google_calendar", label: "Google Calendar", category: "calendar", status: configured.googleCalendar ? "online" : "warn", configured: configured.googleCalendar, detail: configured.googleCalendar ? `Calendar ${env.GOOGLE_CALENDAR_ID} configured.` : "Calendar service account or calendar ID missing; booking tools may not create events." }),
-    service({ id: "google_places", label: "Google Places", category: "leads", status: configured.googlePlaces ? "online" : "warn", configured: configured.googlePlaces, detail: configured.googlePlaces ? "Lead search key configured." : "GOOGLE_PLACES_API_KEY missing; prospect discovery is limited." }),
+    service({ id: "gemini", label: "Gemini Fallback", category: "ai", status: configured.gemini ? "unknown" : "warn", configured: configured.gemini, detail: configured.gemini ? `Configured with ${env.GEMINI_MODEL || "default model"}; provider access is not probed here.` : "GEMINI_API_KEY missing; OpenRouter must carry AI traffic." }),
+    service({ id: "google_calendar", label: "Google Calendar", category: "calendar", status: configured.googleCalendar ? "unknown" : "warn", configured: configured.googleCalendar, detail: configured.googleCalendar ? `Calendar ${env.GOOGLE_CALENDAR_ID} is configured; provider access is not probed here.` : "Calendar service account or calendar ID missing; booking tools may not create events." }),
+    service({ id: "google_places", label: "Google Places", category: "leads", status: "unknown", configured: configured.googlePlaces, detail: configured.googlePlaces ? "Lead-search key is configured; provider access is not probed here." : "GOOGLE_PLACES_API_KEY missing; prospect discovery is limited." }),
   ];
 
   let spend = {
@@ -4329,7 +4496,7 @@ registerOwnerControlRoutes(app, {
   requireFullOperator,
   sql,
   dbEnabled: DB_ENABLED,
-  env,
+  env: process.env,
   getWorkspaceId,
   getAdminAllowlistCount: () => googleAdminEmails().length,
   buildOpsMonitor,
@@ -4343,9 +4510,6 @@ registerLeadRoutes(app, {
   sql,
   dbEnabled: DB_ENABLED,
   getWorkspaceId,
-  getTwilioClient,
-  getActiveAgent,
-  getAppUrl,
   log,
 });
 

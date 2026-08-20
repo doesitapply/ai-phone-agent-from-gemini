@@ -3,6 +3,7 @@
  * Industrial dark design system, 9-agent roster, full UX overhaul
  */
 import React, { useState, useCallback, useEffect, createContext, useContext, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   Phone, PhoneIncoming, PhoneOutgoing, Activity, BarChart3, Bot,
   Settings, Clock, Zap, Users, ListTodo,
@@ -16,7 +17,7 @@ import {
   Headphones, Radio, Send, PhoneMissed, PhoneCall,
   ShieldOff, Filter, Download, ExternalLink, Link, ToggleLeft, ToggleRight,
   FileText, Cpu, Server, Webhook, CreditCard, Package, MapPin,
-  UserPlus, UserCheck, Mail, PhoneForwarded, BellRing, BadgeCheck, RotateCcw,
+  UserPlus, UserCheck, Mail, MailOpen, PhoneForwarded, BellRing, BadgeCheck, RotateCcw,
   Target, Crosshair, ShieldCheck, Network, Cpu as CpuIcon,
   Gauge, SlidersHorizontal, Microscope, Search,
 } from "lucide-react";
@@ -24,6 +25,15 @@ import {
 import { SetupWizard } from "./components/SetupWizard";
 import { normalizeStrictMailbox } from "./email-safety";
 import { normalizePublicHttpsUrl, normalizeTrustedProductionAppUrl } from "./public-url-safety";
+import {
+  buildProspectMessageContext,
+  getDefaultProspectMessageVariantKey,
+  getPreferredProspectMessageChallengerKey,
+  getProspectMessageVariantDefinition,
+  getProspectMessageVariantDefinitions,
+  renderProspectMessageVariant,
+} from "./prospect-message-variants";
+import { getProspectManualDialAvailability } from "./prospect-manual-dial";
 
 declare global {
   interface Window {
@@ -257,6 +267,7 @@ const SMIRK24_PROMO_CODE = "SMIRK24";
 
 function formatPublicActivationStatus(status: string) {
   const labels: Record<string, string> = {
+    PENDING_MANUAL_TELEPHONY: "Workspace ready; phone line setup remains manual",
     workspace_and_line_created: "Workspace and phone line ready",
     workspace_created: "Workspace ready",
     manual_fallback_required: "Setup needs operator follow-up",
@@ -470,9 +481,9 @@ function PublicPolicyLinks({ links }: { links: PublicPolicyLink[] }) {
 
 function PublicDashboardPreview() {
   const rows = [
-    { name: "Marcus Vance", issue: "Main-line backup", value: "$1,850", tone: "Emergency", score: "94%" },
-    { name: "Elena Rostova", issue: "No AC / elderly parent home", value: "$350", tone: "Urgent", score: "90%" },
-    { name: "Dave Miller", issue: "Commercial panel estimate", value: "$4,500", tone: "Quote", score: "88%" },
+    { name: "Jordan Test", issue: "No heat · Reno · call back now", tone: "Urgent", status: "Open" },
+    { name: "Morgan Demo", issue: "Water heater leak · Sparks · 30 min", tone: "Priority", status: "Assigned" },
+    { name: "Taylor Sample", issue: "Panel estimate · next weekday", tone: "Quote", status: "Queued" },
   ];
 
   return (
@@ -480,7 +491,7 @@ function PublicDashboardPreview() {
       <div className="mb-4 flex items-center justify-between gap-3 border-b border-[#173321] pb-3">
         <div>
           <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-[#00e479]">Basic dash</div>
-          <div className="mt-1 text-sm font-semibold text-white">Missed calls that need action</div>
+          <div className="mt-1 text-sm font-semibold text-white">Calls that need a callback</div>
         </div>
         <div className="border border-[#31533e] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-gray-300">Illustrative example</div>
       </div>
@@ -495,8 +506,8 @@ function PublicDashboardPreview() {
               <div className="mt-1 truncate text-xs text-gray-400">{row.issue}</div>
             </div>
             <div className="text-right">
-              <div className="font-mono text-sm font-black text-[#00ff88]">{row.score}</div>
-              <div className="mt-1 text-[10px] text-gray-500">{row.value}</div>
+              <div className="font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#00ff88]">{row.status}</div>
+              <div className="mt-1 text-[10px] text-gray-500">Callback task</div>
             </div>
           </div>
         ))}
@@ -506,7 +517,7 @@ function PublicDashboardPreview() {
           <div key={item} className="border border-[#173321] bg-[#0d160f] px-3 py-2 text-xs font-semibold text-gray-200">{item}</div>
         ))}
       </div>
-      <p className="mt-3 text-[10px] leading-4 text-gray-500">Fictional example data. Names, confidence percentages, and dollar amounts are illustrative—not customer results or a live feed.</p>
+      <p className="mt-3 text-[10px] leading-4 text-gray-500">Fictional example data. This is a product-flow illustration, not a customer result or live feed.</p>
     </div>
   );
 }
@@ -746,68 +757,170 @@ function PublicLandingPage() {
 
   return (
     <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <header className="border-b border-[#173321] px-5 py-4">
+      <header className="sticky top-0 z-50 border-b border-[#24362a] bg-[#0a0a0a]/95 px-5 py-4 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
-            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Proof</a>
-            <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
-            <a href="/pricing" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
-            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
+            <a href="#how-it-works" className="hidden px-3 py-2 text-sm font-semibold text-gray-300 hover:text-white lg:inline-flex">How it works</a>
+            <a href="#modes" className="hidden px-3 py-2 text-sm font-semibold text-gray-300 hover:text-white lg:inline-flex">Two modes</a>
+            <a href="#faq" className="hidden px-3 py-2 text-sm font-semibold text-gray-300 hover:text-white lg:inline-flex">FAQ</a>
+            <a href="/pricing" className="hidden border border-[#3b4b3d] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
+            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Sign in</a>
           </div>
         </div>
       </header>
 
-      <main className="relative overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: 'linear-gradient(#00e479 1px, transparent 1px), linear-gradient(90deg, #00e479 1px, transparent 1px)', backgroundSize: '34px 34px' }} />
-        <div className="relative mx-auto grid max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[1.02fr_0.98fr] lg:py-16">
-        <section className="flex flex-col justify-center">
-          <div className="mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
-            <PhoneMissed size={14} /> Missed-call recovery for local service businesses
-          </div>
-          <h1 className="max-w-3xl text-5xl font-black leading-[0.94] tracking-tight sm:text-6xl lg:text-7xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-            Catch the job calls you miss while you are already working.
-          </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-gray-300">
-            SMIRK answers missed calls, captures the problem and urgency, then leaves your team with the only things that matter: who called, what they need, how urgent it is, who calls back, and whether it got handled.
-          </p>
-          <div className="mt-7 flex flex-wrap gap-3">
-            <a href="#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
-              <PhoneForwarded size={16} /> Protect missed calls
-            </a>
-            <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
-              See $197 plans
-            </a>
-          </div>
-          <div className="mt-9 grid gap-3 sm:grid-cols-3">
-            {[
-              ['Live', 'answers the call'],
-              ['5', 'questions owners need'],
-              ['Task', 'callback work queued'],
-            ].map(([value, label]) => (
-              <div key={label} className="border border-[#173321] bg-black/40 p-4">
-                <div className="font-mono text-2xl font-bold text-white">{value}</div>
-                <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.12em] text-gray-400">{label}</div>
+      <main>
+        <section
+          className="relative min-h-[calc(100svh-118px)] overflow-hidden border-b border-[#24362a] bg-cover bg-[center_right]"
+          style={{ backgroundImage: "url('/assets/smirk-missed-call-hero.jpg')" }}
+        >
+          <div className="absolute inset-0 bg-black/65" aria-hidden="true" />
+          <div className="absolute inset-y-0 left-0 w-full bg-[#080a08]/55 lg:w-[62%]" aria-hidden="true" />
+          <div className="relative mx-auto flex min-h-[calc(100svh-118px)] max-w-7xl items-center px-5 py-12">
+            <div className="max-w-3xl">
+              <div className="mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/50 bg-black/65 px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
+                <PhoneMissed size={14} /> Missed-call recovery for home-service teams
               </div>
-            ))}
-          </div>
-          <div className="mt-8 border-l-2 border-[#00e479] pl-4 text-sm leading-6 text-gray-400">
-            Built for {INDUSTRY_SLUGS.map((slug, idx) => (
-              <React.Fragment key={slug}>
-                {idx > 0 ? ", " : ""}
-                <a href={`/industries/${slug}`} className="font-semibold text-gray-200 underline decoration-[#00e479]/50 underline-offset-4 hover:text-[#00e479]">
-                  {INDUSTRY_PAGES[slug].name}
+              <h1 className="max-w-3xl text-[44px] font-black leading-[0.94] text-white" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>
+                Catch the calls your crew cannot answer.
+              </h1>
+              <p className="mt-6 max-w-2xl text-lg leading-8 text-gray-200">
+                SMIRK answers missed and overflow calls, uses your approved business knowledge, captures the caller's issue and urgency, then creates a callback-ready owner summary and task.
+              </p>
+              <div className="mt-7 flex flex-wrap gap-3">
+                <a href="#how-it-works" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                  <PhoneForwarded size={16} /> See the recovery flow
                 </a>
-              </React.Fragment>
-            ))}, cleaners, contractors, and mobile service businesses that lose jobs while working.
+                <a href="#request-activation" className="inline-flex items-center justify-center gap-2 border border-white/35 bg-black/55 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                  Start with Starter <ArrowUpRight size={15} />
+                </a>
+              </div>
+              <div className="mt-9 hidden max-w-2xl grid-cols-4 border-y border-white/20 sm:grid">
+                {[
+                  ["01", "Call answered"],
+                  ["02", "Need captured"],
+                  ["03", "Owner alerted"],
+                  ["04", "Callback tracked"],
+                ].map(([value, label]) => (
+                  <div key={label} className="min-h-[82px] border-white/20 px-3 py-3 sm:border-r sm:last:border-r-0">
+                    <div className="font-mono text-xs font-black text-[#00ff88]">{value}</div>
+                    <div className="mt-2 text-xs font-semibold text-gray-100">{label}</div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-6 hidden max-w-2xl text-sm leading-6 text-gray-300 sm:block">
+                Works as a backup to your existing line or as the first answer for a dedicated SMIRK number. It supports your staff; it does not pretend to replace them.
+              </p>
+            </div>
           </div>
         </section>
 
-        <section id="request-activation" className="border border-[#2f4637] bg-[#101510]/95 p-5 shadow-2xl shadow-black/30">
-          <PublicDashboardPreview />
+        <section id="how-it-works" className="border-b border-[#24362a] bg-[#0c100d] px-5 pb-14">
+          <div className="-mx-5 border-b border-[#24362a] bg-[#101510] px-5 py-3">
+            <div className="mx-auto max-w-7xl font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[#00e479]">Next: follow one missed call from answer to callback</div>
+          </div>
+          <div className="mx-auto max-w-7xl pt-14">
+            <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-end">
+              <div>
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">One call, one observable trail</div>
+                <h2 className="mt-3 text-3xl font-black uppercase leading-tight" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>What happens on the next missed call</h2>
+              </div>
+              <p className="max-w-3xl text-base leading-7 text-gray-300">The caller gets an immediate answer. The owner gets structured facts, the conversation record, and a clear next action. Unsupported questions get an honest fallback instead of an invented answer.</p>
+            </div>
+
+            <div className="mt-8 grid border border-[#2f4637] bg-[#2f4637] sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                { icon: <PhoneIncoming size={18} />, title: "Answer", body: "Your existing line forwards after no answer, or SMIRK answers a dedicated line first." },
+                { icon: <Database size={18} />, title: "Ground", body: "The agent uses approved services, hours, areas, FAQs, and escalation rules from the workspace." },
+                { icon: <MessageSquare size={18} />, title: "Capture", body: "Name, contact details, issue, urgency, service area, and preferred callback window are recorded." },
+                { icon: <ListTodo size={18} />, title: "Recover", body: "SMIRK persists the transcript, owner summary, lead, callback task, status, and audit trail." },
+              ].map((step, index) => (
+                <div key={step.title} className="min-h-[190px] bg-[#101510] p-5">
+                  <div className="flex items-center justify-between text-[#00e479]">
+                    {step.icon}
+                    <span className="font-mono text-[10px] font-bold">0{index + 1}</span>
+                  </div>
+                  <h3 className="mt-5 text-base font-bold text-white">{step.title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-gray-400">{step.body}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-10 grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+              <PublicDashboardPreview />
+              <div className="border-y border-[#2f4637] py-2">
+                {[
+                  ["Workspace-grounded answers", "Supported questions are answered from the approved business profile and saved workspace knowledge instead of a generic sales script."],
+                  ["Honest fallback", "When the workspace does not support an answer, SMIRK says so and captures the question for a human callback."],
+                  ["Owner-ready handoff", "Urgency, service area, caller details, callback timing, summary, and disposition remain connected to the same call."],
+                  ["Hard-refresh proof", "Records live in the workspace database so calls and tasks do not disappear when the dashboard reloads."],
+                ].map(([title, body]) => (
+                  <div key={title} className="grid gap-2 border-b border-[#2f4637] py-4 last:border-b-0 sm:grid-cols-[180px_1fr]">
+                    <div className="text-sm font-bold text-white">{title}</div>
+                    <p className="text-sm leading-6 text-gray-400">{body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="modes" className="border-b border-[#24362a] bg-[#111111] px-5 py-14">
+          <div className="mx-auto max-w-7xl">
+            <div className="max-w-3xl">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#ffba20]">Choose the amount of coverage</div>
+              <h2 className="mt-3 text-3xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>Two modes. The same proof trail.</h2>
+              <p className="mt-4 text-base leading-7 text-gray-400">Start with the smallest call path your team needs. Both modes produce the same owner summary, callback task, transcript, and dashboard record.</p>
+            </div>
+            <div className="mt-8 grid border-y border-[#3b4b3d] lg:grid-cols-2 lg:divide-x lg:divide-[#3b4b3d]">
+              <div className="px-0 py-7 lg:pr-8">
+                <div className="flex items-center gap-3 text-[#00e479]"><PhoneMissed size={20} /><span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em]">Mode A</span></div>
+                <h3 className="mt-4 text-xl font-bold text-white">Missed-call backup</h3>
+                <p className="mt-3 text-sm leading-6 text-gray-300">Your team answers normally. If nobody picks up within the forwarding window, SMIRK takes over, captures the details, and queues the callback.</p>
+                <div className="mt-5 grid gap-2 text-sm text-gray-400 sm:grid-cols-2">
+                  <span className="border-l-2 border-[#00e479] pl-3">Keeps your current workflow</span>
+                  <span className="border-l-2 border-[#00e479] pl-3">Best low-risk starting point</span>
+                </div>
+              </div>
+              <div className="border-t border-[#3b4b3d] px-0 py-7 lg:border-t-0 lg:pl-8">
+                <div className="flex items-center gap-3 text-[#ffba20]"><PhoneIncoming size={20} /><span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em]">Mode B</span></div>
+                <h3 className="mt-4 text-xl font-bold text-white">Frontline receptionist</h3>
+                <p className="mt-3 text-sm leading-6 text-gray-300">SMIRK answers first, handles supported questions, collects job details, and follows your configured rules for callback work or a verified live handoff.</p>
+                <div className="mt-5 grid gap-2 text-sm text-gray-400 sm:grid-cols-2">
+                  <span className="border-l-2 border-[#ffba20] pl-3">Consistent first response</span>
+                  <span className="border-l-2 border-[#ffba20] pl-3">Operator-controlled transfer rules</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="request-activation" className="border-b border-[#24362a] bg-[#0a0a0a] px-5 py-14">
+          <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.75fr_1.25fr] lg:items-start">
+            <div className="lg:sticky lg:top-28">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start with one line</div>
+              <h2 className="mt-3 text-3xl font-black uppercase leading-tight" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>Set up missed-call recovery</h2>
+              <p className="mt-4 text-base leading-7 text-gray-300">Choose a plan, identify the business line and owner email, then complete checkout or use the explicit setup-help fallback.</p>
+              <div className="mt-7 border-y border-[#2f4637]">
+                {[
+                  ["1", "Workspace", "Business profile, knowledge, hours, service area, and escalation rules."],
+                  ["2", "Phone path", "Dedicated number or forwarding from the existing business line."],
+                  ["3", "Proof call", "Verify transcript, summary, alert, task, lead, and owner access before relying on it."],
+                ].map(([number, title, body]) => (
+                  <div key={number} className="grid grid-cols-[30px_1fr] gap-3 border-b border-[#2f4637] py-4 last:border-b-0">
+                    <span className="font-mono text-sm font-black text-[#00e479]">{number}</span>
+                    <div><div className="text-sm font-bold text-white">{title}</div><p className="mt-1 text-sm leading-6 text-gray-400">{body}</p></div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-5 text-xs leading-5 text-gray-500">No cold SMS, no automated prospect dialing, and no claim that a configured provider proves customer delivery or revenue.</p>
+            </div>
+
+            <div className="border border-[#2f4637] bg-[#101510] p-5 shadow-2xl shadow-black/30">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
-              <div className="mt-5 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start recovery setup</div>
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Activation details</div>
               <div className="mt-1 text-sm text-gray-300">Pick a plan, tell us where missed-call alerts go, and get routed into the correct setup step.</div>
             </div>
             {selected ? <div className="bg-[#00ff88] px-3 py-2 font-mono text-xs font-black text-black">${selected.price}/{selected.interval}</div> : null}
@@ -924,16 +1037,17 @@ function PublicLandingPage() {
               </div>
             )}
           </div>
+            </div>
+          </div>
         </section>
-        </div>
 
-        <section className="relative border-t border-[#173321] bg-[#0d100d] px-5 py-10">
+        <section className="border-b border-[#24362a] bg-[#0d100d] px-5 py-14">
           <div className="mx-auto max-w-7xl">
             <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
               <div>
-                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Why it competes</div>
-                <h2 className="mt-2 text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-                  Built for owners who miss jobs while working.
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Why SMIRK starts narrower</div>
+                <h2 className="mt-2 text-3xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>
+                  Built for calls that arrive while the work is happening.
                 </h2>
               </div>
               <a href="/compare" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
@@ -949,9 +1063,9 @@ function PublicLandingPage() {
             </div>
             <div className="grid gap-3 md:grid-cols-3">
               {[
-                ['Focused recovery', 'General AI receptionists try to replace the whole front office. SMIRK starts with the job that pays first: answer missed calls and make callback work obvious.'],
-                ['Flat buyer path', 'Voice-agent platforms can become provider-cost math. SMIRK sells simple monthly plans with the call record, summary, task, and dashboard already wired.'],
-                ['Proof over promise', 'Every proof call should leave a call record, summary, owner alert, callback task, and dashboard evidence the owner can inspect.'],
+                ['Focused recovery', 'SMIRK starts with one operational problem: answer missed or overflow calls and make the required callback obvious.'],
+                ['Human support', 'The agent handles capture and routine, source-backed questions so owners and staff can focus on judgment, scheduling, and customer care.'],
+                ['Proof over promise', 'Every proof call should leave a call record, transcript, summary, owner alert, callback task, and dashboard evidence the owner can inspect.'],
               ].map(([title, body]) => (
                 <div key={title} className="border border-[#173321] bg-black/35 p-4">
                   <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">{title}</div>
@@ -961,7 +1075,47 @@ function PublicLandingPage() {
             </div>
           </div>
         </section>
+
+        <section id="faq" className="bg-[#0a0a0a] px-5 py-14">
+          <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.7fr_1.3fr]">
+            <div>
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#ffba20]">Before you connect a line</div>
+              <h2 className="mt-3 text-3xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: 0 }}>Common questions</h2>
+              <p className="mt-4 text-sm leading-6 text-gray-400">The exact forwarding, transfer, and recording setup depends on your carrier, state, and chosen mode. SMIRK keeps those choices visible during setup.</p>
+            </div>
+            <div className="border-t border-[#2f4637]">
+              {[
+                ["Does SMIRK replace my receptionist?", "No. SMIRK is a call-capture and recovery layer. It handles approved routine information and prepares the handoff; your people keep control of judgment, dispatch, and customer relationships."],
+                ["Can I keep my existing business number?", "Usually. Missed-call backup commonly uses carrier forwarding after no answer. A dedicated SMIRK number is also available. The proof call confirms the exact route before setup is marked complete."],
+                ["What does the owner receive after a call?", "A persisted call record, transcript, captured fields, urgency and disposition, owner summary, lead, callback task, and status history in the correct workspace."],
+                ["What if the caller asks something SMIRK does not know?", "The agent should say that it does not have a supported answer, capture the question, and create a human follow-up instead of inventing a policy or price."],
+                ["Can it transfer urgent callers?", "Yes, when a full operator configures and verifies the transfer target and rules. Live handoff is not assumed merely because a phone number is present."],
+                ["Does setup enable cold SMS or automated sales calls?", "No. Cold SMS and automated prospect dialing remain prohibited. Any future customer messaging must use separate consent, allowlists, caps, spend limits, and explicit activation."],
+              ].map(([question, answer]) => (
+                <details key={question} className="group border-b border-[#2f4637] py-1">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-4 text-sm font-bold text-white">
+                    <span>{question}</span><ChevronDown size={16} className="shrink-0 text-[#00e479] transition-transform group-open:rotate-180" />
+                  </summary>
+                  <p className="max-w-3xl pb-5 pr-8 text-sm leading-6 text-gray-400">{answer}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
+
+      <footer className="border-t border-[#24362a] bg-[#080808] px-5 py-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div><PublicLogo /><p className="mt-3 text-xs text-gray-500">Smart missed-call recovery and reception for home-service teams.</p></div>
+          <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-gray-400">
+            <a href="/launch" className="hover:text-white">Proof</a>
+            <a href="/compare" className="hover:text-white">Compare</a>
+            <a href="/pricing" className="hover:text-white">Pricing</a>
+            <a href="/book" className="hover:text-white">Setup help</a>
+            <a href="/dashboard" className="hover:text-white">Sign in</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -1063,11 +1217,11 @@ function PublicComparePage() {
                 ))}
               </div>
               <div className="mt-5 flex flex-wrap gap-3">
-                <a href="/#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                <a href="/pricing" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
                   Start recovery
                 </a>
-                <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
-                  See plans
+                <a href="/book" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                  Request setup help
                 </a>
               </div>
             </div>
@@ -1161,7 +1315,7 @@ function PublicLaunchPage() {
               </p>
               <div className="mt-7 flex flex-wrap gap-3">
                 <a
-                  href="/#request-activation"
+                  href="/pricing"
                   onClick={() => trackLaunchEvent("cta_clicked", { cta: "proof_start_recovery", channel: "proof_page" })}
                   className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black"
                 >
@@ -1172,7 +1326,7 @@ function PublicLaunchPage() {
                   onClick={() => trackLaunchEvent("cta_clicked", { cta: "proof_see_plans", channel: "proof_page" })}
                   className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]"
                 >
-                  See plans
+                  See the offer
                 </a>
               </div>
             </div>
@@ -1308,11 +1462,11 @@ function PublicIndustryPage({ slug }: { slug: string }) {
               </h1>
               <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">{page.description}</p>
               <div className="mt-7 flex flex-wrap gap-3">
-                <a href="/#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                <a href="/pricing" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
                   <PhoneForwarded size={16} /> Start recovery
                 </a>
-                <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
-                  See plans
+                <a href="/book" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                  Request setup help
                 </a>
               </div>
             </div>
@@ -1472,8 +1626,8 @@ function PublicPricingPage() {
           <div className="mb-4 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
             <PhoneMissed size={14} /> Missed-call recovery
           </div>
-          <h1 className="max-w-3xl text-4xl font-black leading-[0.96] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Simple plans for protecting missed job calls.</h1>
-          <p className="mt-4 max-w-2xl text-lg leading-8 text-gray-300">Starter keeps owners focused on Calls, Contacts, and Tasks. Pro opens the full suite when the business is ready for deeper operations.</p>
+          <h1 className="max-w-3xl text-4xl font-black leading-[0.96] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>One plan for protecting missed job calls.</h1>
+          <p className="mt-4 max-w-2xl text-lg leading-8 text-gray-300">Starter is $197 per month. It keeps the owner focused on the call record, callback task, and next action.</p>
           </div>
           <PublicDashboardPreview />
         </div>
@@ -1506,7 +1660,7 @@ function PublicPricingPage() {
           </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid max-w-3xl gap-6">
           {plans.map((plan) => (
             <div key={plan.id} className="border border-[#2f4637] bg-[#101510]/90 p-6">
               <div className="mb-4">
@@ -2632,7 +2786,13 @@ function ToastContainer({ toasts, remove }: { toasts: Toast[]; remove: (id: stri
            t.type === "warning" ? <AlertTriangle size={16} className="mt-0.5 shrink-0" /> :
                                   <Info size={16} className="mt-0.5 shrink-0" />}
           <span className="text-sm font-medium flex-1">{t.message}</span>
-          <button onClick={() => remove(t.id)} className="shrink-0 opacity-60 hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={() => remove(t.id)}
+            aria-label="Dismiss notification"
+            title="Dismiss notification"
+            className="shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+          >
             <X size={14} />
           </button>
         </div>
@@ -4799,7 +4959,9 @@ type TeamMember = {
   role: string;
   department?: string;
   phone?: string;
+  phone_contact_mode?: "operator_review_only";
   email?: string;
+  email_verification?: "verified_owner_email";
   avatar_initials: string;
   avatar_color: string;
   is_active: boolean;
@@ -7569,6 +7731,15 @@ function BusinessDataPage() {
   );
 }
 
+type SettingsSectionTab = "core" | "voice" | "behavior" | "advanced";
+
+const settingsTabForConnection = (groupId: string | null): SettingsSectionTab => {
+  if (["google_tts", "cartesia", "openai_tts", "elevenlabs", "deepgram"].includes(String(groupId || ""))) return "voice";
+  if (["openclaw", "google_calendar", "google_places", "lead_providers", "crm"].includes(String(groupId || ""))) return "advanced";
+  if (["behavior", "agent_behavior", "prompts"].includes(String(groupId || ""))) return "behavior";
+  return "core";
+};
+
 function SettingsPage({
   workspaceSession,
   savedProfiles,
@@ -7585,6 +7756,9 @@ function SettingsPage({
   onOpenSetup: () => void;
 }) {
   const operatorOnlyView = !!workspaceSession;
+  const requestedSettingsGroup = typeof window === "undefined"
+    ? null
+    : new URLSearchParams(window.location.search).get("connection");
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
   // Per-workspace business profile (DB-backed, multi-tenant)
   const [wsProfile, setWsProfile] = useState<WorkspaceProfileData | null>(null);
@@ -7611,7 +7785,7 @@ function SettingsPage({
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [savedGroup, setSavedGroup] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"core" | "voice" | "behavior" | "advanced">("core");
+  const [activeTab, setActiveTab] = useState<SettingsSectionTab>(() => settingsTabForConnection(requestedSettingsGroup));
   const [health, setHealth] = useState<Record<string, "ok" | "error" | "untested" | "optional">>({});
   const { addToast } = useToast();
 
@@ -7629,8 +7803,8 @@ function SettingsPage({
   };
   const testableGroups = new Set(Object.keys(testServiceByGroup));
   const behaviorKeys = new Set(["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","INTAKE_FIRST_QUESTION","OBJECTION_STYLE","AGENT_PERSONA","AGENT_NAME","BUSINESS_NAME"]);
-  const advancedGroupIds = new Set(["openclaw", "openai_tts", "elevenlabs", "google_calendar"]);
-  const voiceGroupIds = new Set(["openai_tts", "elevenlabs", "deepgram"]);
+  const advancedGroupIds = new Set(["openclaw", "google_calendar", "google_places", "lead_providers", "crm"]);
+  const voiceGroupIds = new Set(["google_tts", "cartesia", "openai_tts", "elevenlabs", "deepgram"]);
   const behaviorGroupIds = new Set(["behavior", "agent_behavior", "prompts"]);
 
   const tabGroups = {
@@ -7669,6 +7843,15 @@ function SettingsPage({
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!requestedSettingsGroup || groups.length === 0) return;
+    setActiveTab(settingsTabForConnection(requestedSettingsGroup));
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`settings-group-${requestedSettingsGroup}`)?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [groups.length, requestedSettingsGroup]);
 
   const loadKnowledgeSources = async () => {
     setKnowledgeLoading(true);
@@ -7957,7 +8140,7 @@ function SettingsPage({
     </div>
   );
 
-  const tabs: { id: "core" | "voice" | "behavior" | "advanced"; label: string; icon: React.ReactNode }[] = [
+  const tabs: { id: SettingsSectionTab; label: string; icon: React.ReactNode }[] = [
     { id: "core", label: "Connections", icon: <Key size={13} /> },
     { id: "voice", label: "Voice", icon: <Headphones size={13} /> },
     { id: "behavior", label: "Behavior", icon: <MessageSquare size={13} /> },
@@ -7987,6 +8170,10 @@ function SettingsPage({
             </button>
           )}
         </div>
+      </div>
+
+      <div className="border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs leading-5 text-amber-100">
+        <span className="font-semibold">Production secret rule:</span> saving here updates the current SMIRK runtime. Unless Admin Settings reports a mounted persistent path, store the same value in Railway before the next restart or deploy. Secret values remain write-only and are never shown in the admin inventory.
       </div>
 
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
@@ -8530,7 +8717,7 @@ function SettingsPage({
           </div>
         )}
         {visibleGroups.map((group) => (
-          <div key={group.id} className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+          <div id={`settings-group-${group.id}`} key={group.id} className="scroll-mt-6 rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
             {/* Section header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
               <div className="flex items-center gap-3 min-w-0">
@@ -9855,7 +10042,8 @@ interface ProspectLead {
   id: number;
   campaign_id: number;
   business_name: string;
-  phone: string;
+  phone?: string;
+  email?: string;
   website?: string;
   industry?: string;
   address?: string;
@@ -9863,10 +10051,920 @@ interface ProspectLead {
   state?: string;
   contact_name?: string;
   source: string;
-  status: "pending" | "calling" | "interested" | "not_interested" | "voicemail" | "dnc" | "no_answer" | "callback";
+  status: "pending" | "calling" | "interested" | "not_interested" | "voicemail" | "dnc" | "no_answer" | "callback" | "contacted" | "converted";
+  review_state?: "pending_review" | "qualified" | "rejected";
+  email_verification?: "verified_owner_email" | string;
+  phone_contact_mode?: "operator_review_only" | string;
+  research_evidence?: Array<{
+    url: string;
+    observation: string;
+    observedAt: string;
+    kind: string;
+    basis: "observed" | "measured" | "inferred";
+    confidence: "high" | "medium" | "low";
+  }>;
+  external_id?: string;
   notes?: string;
   called_at?: string;
   created_at: string;
+}
+
+interface ProspectOutreachJob {
+  approval_id: string;
+  channel: "email" | "call";
+  state: "PREPARED" | "APPROVED" | "SENDING" | "SENT" | "FAILED" | "REJECTED" | "EXPIRED" | "CANCELLED";
+  recipient: string;
+  subject?: string;
+  content: string;
+  variant_key: string;
+  experiment_assignment?: ProspectMessageExperimentAssignment;
+  qc_receipt?: {
+    contractVersion: string;
+    ruleVersion: string;
+    receiptId: string;
+    deterministicPassed: boolean;
+    verdict:
+      | "ELIGIBLE_FOR_HUMAN_APPROVAL"
+      | "REVISION_REQUIRED";
+    reviewPriority: "standard" | "elevated";
+    failureReasons: string[];
+    ruleResults: Array<{
+      code: string;
+      passed: boolean;
+      detail: string;
+    }>;
+    modelReview: {
+      status: "NOT_RUN" | "PASSED" | "FLAGGED" | "ERROR";
+      authority: "advisory-only";
+      failureReasons: string[];
+    };
+    humanApprovalRequired: true;
+    contactAuthorized: false;
+    executionAuthorized: false;
+  };
+  payload_hash: string;
+  evidence_hash: string;
+  qc_model_review_id?: string | null;
+  qc_model_review_receipt_hash?: string | null;
+  max_cost_cents: number;
+  expires_at: string;
+  approved_at?: string;
+  sent_at?: string;
+  provider_name?: string;
+  provider_idempotency_key?: string;
+  provider_message_id?: string;
+  provider_cost_cents?: number;
+  provider_requested_at?: string;
+  provider_response_at?: string;
+  provider_attempts?: number;
+  execution_proof_reference?: string;
+  failure_code?: string;
+  approval_attestations?: {
+    callComplianceReceiptHash?: string;
+    callComplianceReceipt?: {
+      recipient: string;
+      recipientTimezone: string;
+      checkedAt: string;
+      validUntil: string;
+      dncChecks: Array<{
+        scope: "federal" | "state" | "internal";
+        status: "clear";
+        source: string;
+        reference: string;
+      }>;
+      callingWindow: {
+        start: "09:00";
+        end: "17:00";
+      };
+      manualDialOnly: true;
+      contactAuthorizedByReceipt: false;
+      automatedDialingAuthorized: false;
+    };
+  };
+  created_at: string;
+}
+
+interface ProspectQcRevisionItem {
+  revision_id: string;
+  state: "REVISION_REQUIRED" | "REJECTED" | "SUPERSEDED";
+  channel: "email" | "call";
+  recipient: string;
+  subject?: string;
+  content: string;
+  variant_key: string;
+  evidence_hash: string;
+  email_compliance?: {
+    senderIdentity: string;
+    advertisementDisclosure: string;
+    physicalPostalAddress: string;
+    optOutInstructions: string;
+  };
+  max_cost_cents: number;
+  expires_in_hours: number;
+  experiment_assignment?: ProspectMessageExperimentAssignment;
+  qc_receipt: NonNullable<ProspectOutreachJob["qc_receipt"]>;
+  payload_hash: string;
+  prepared_by: string;
+  prepared_at: string;
+  rejected_by?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
+  superseded_by_approval_id?: string | null;
+  superseded_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  approvalAuthorized: false;
+  contactAuthorized: false;
+  executionAuthorized: false;
+  providerRequestAuthorized: false;
+}
+
+interface ProspectCallComplianceDraft {
+  recipientTimezone: string;
+  checkedAt: string;
+  federalSource: string;
+  federalReference: string;
+  stateSource: string;
+  stateReference: string;
+  internalSource: string;
+  internalReference: string;
+}
+
+type ProspectQcModelReviewValue = NonNullable<
+  ProspectOutreachJob["qc_receipt"]
+>["modelReview"];
+
+interface ProspectQcModelReviewRecord {
+  review_id: string;
+  outreach_job_id: number;
+  approval_id: string;
+  state:
+    | "SENDING"
+    | "COMPLETED"
+    | "DEFINITIVE_FAILURE"
+    | "OUTCOME_UNKNOWN";
+  payload_hash: string;
+  draft_hash: string;
+  evidence_hash: string;
+  provider: "openrouter";
+  model: string;
+  reserved_cost_cents: number;
+  provider_request_id?: string | null;
+  provider_response_hash?: string | null;
+  provider_reported_cost_usd?: number | string | null;
+  total_tokens?: number | null;
+  receipt?: {
+    reviewId: string;
+    review: ProspectQcModelReviewValue;
+    humanApprovalRequired: true;
+    contactAuthorized: false;
+    executionAuthorized: false;
+  } | null;
+  receipt_hash?: string | null;
+  failure_code?: string | null;
+  requested_at: string;
+  completed_at?: string | null;
+}
+
+interface ProspectQcModelProviderStatus {
+  enabled: boolean;
+  configured: boolean;
+  requiredForApproval: boolean;
+  availableForWorkspace: boolean;
+  model?: string | null;
+  dailyReviewCap?: number | null;
+  dailySpendCapCents?: number | null;
+  reservedCostCents?: number | null;
+  missing: string[];
+  contactAuthorized: false;
+  executionAuthorized: false;
+}
+
+interface ProspectMessageExperimentAssignment {
+  contractVersion: string;
+  experimentId: string;
+  experimentDefinitionHash: string;
+  workspaceId: number;
+  campaignId: number;
+  prospectId: number;
+  channel: "email" | "call";
+  arm: "control" | "challenger";
+  assignedVariantKey: string;
+  allocationBucket: number;
+  allocationBasisPoints: 5000;
+  assignmentHash: string;
+  actualVariantKey: string;
+  protocolCompliant: boolean;
+}
+
+interface ProspectMessageExperiment {
+  id: number;
+  experiment_id: string;
+  workspace_id: number;
+  campaign_id: number;
+  channel: "email" | "call";
+  state: "PREPARED" | "ACTIVE" | "CLOSED" | "CANCELLED";
+  control_variant_key: string;
+  challenger_variant_key: string;
+  allocation_basis_points: 5000;
+  definition: {
+    contractVersion: string;
+    studyDesign?:
+      | "deterministic-assignment-v1"
+      | "deterministic-eligible-cohort-v1";
+    eligiblePopulationSize?: number;
+    eligiblePopulationHash?: string;
+    cohortSize?: number;
+    selectedProspectIdsHash?: string;
+    cohort?: Array<{
+      prospectId: number;
+      arm: "control" | "challenger";
+      assignedVariantKey: string;
+    }>;
+  };
+  definition_hash: string;
+  prepared_by: string;
+  activated_by?: string;
+  activated_at?: string;
+  closed_by?: string;
+  closed_at?: string;
+  inbox_placement_test_id?: string | null;
+  inbox_placement_receipt_hash?: string | null;
+  enrolled_count?: number | string;
+  prepared_count?: number | string;
+  terminal_count?: number | string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ProspectEmailProviderStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  mode?: string;
+  missing: string[];
+  dailyRecipientCap?: number;
+  dailySpendCapCents?: number;
+  reservedCostPerEmailCents?: number;
+  provider: "resend";
+  sendsSms: false;
+  placesCalls: false;
+}
+
+interface ProspectManualCallStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  missing: string[];
+  mode?: "operator-tel-link-v1" | null;
+  workspaceId?: number | null;
+  dailyApprovalCap?: number | null;
+  manualDialOnly: true;
+  providerExecutionAllowed: false;
+  automatedDialingAllowed: false;
+}
+
+type ProspectInboxProvider =
+  | "google_workspace"
+  | "microsoft_365"
+  | "yahoo_aol";
+type ProspectInboxFolder =
+  | "primary"
+  | "promotions"
+  | "spam"
+  | "junk"
+  | "other"
+  | "missing";
+type ProspectInboxAuthenticationResult =
+  | "PASS"
+  | "FAIL"
+  | "NOT_CHECKED";
+
+interface ProspectInboxPlacementInspection {
+  providerMessageId: string;
+  inspectedAt: string;
+  folder: ProspectInboxFolder;
+  smtpAccepted: boolean;
+  spf: ProspectInboxAuthenticationResult;
+  dkim: ProspectInboxAuthenticationResult;
+  dmarc: ProspectInboxAuthenticationResult;
+  fromAligned: boolean;
+  plainTextOnly: boolean;
+  trackingPixelAbsent: boolean;
+  unexpectedLinksAbsent: boolean;
+  complianceFooterRendered: boolean;
+  notes?: string;
+}
+
+interface ProspectInboxPlacementItem {
+  slot: number;
+  mailboxLabel: string;
+  provider: ProspectInboxProvider;
+  assignedVariantKey: string;
+  approvalId: string;
+  recipientMasked: string;
+  subject?: string | null;
+  content: string;
+  qcReceipt?: ProspectOutreachJob["qc_receipt"];
+  payloadHash: string;
+  maxCostCents: number;
+  state: ProspectOutreachJob["state"];
+  providerMessageId?: string | null;
+  inspection?: ProspectInboxPlacementInspection | null;
+  inspectionHash?: string | null;
+  inspectedBy?: string | null;
+  inspectedAt?: string | null;
+}
+
+interface ProspectInboxPlacementReceipt {
+  verdict: "PASS" | "FAIL";
+  validUntil: string;
+  failureReasons: string[];
+  itemReceipts: Array<{
+    slot: number;
+    passed: boolean;
+  }>;
+  authorizesExperimentActivation: boolean;
+  authorizesContact: false;
+  authorizesSpend: false;
+  authorizesAutomaticSending: false;
+}
+
+interface ProspectInboxPlacementTest {
+  testId: string;
+  campaignId: number;
+  state:
+    | "PREPARED"
+    | "PASSED"
+    | "FAILED"
+    | "CANCELLED"
+    | "EXPIRED";
+  effectiveState:
+    | "PREPARED"
+    | "PASSED"
+    | "FAILED"
+    | "CANCELLED"
+    | "EXPIRED";
+  controlVariantKey: string;
+  challengerVariantKey: string;
+  definitionHash: string;
+  receiptHash?: string | null;
+  receipt?: ProspectInboxPlacementReceipt | null;
+  validUntil?: string | null;
+  expiresAt: string;
+  cancelReason?: string | null;
+  createdAt: string;
+  items: ProspectInboxPlacementItem[];
+}
+
+interface ProspectInboxPlacementStatus {
+  tests: ProspectInboxPlacementTest[];
+  configuration: {
+    configured: boolean;
+    missing: string[];
+  };
+  emailProvider: ProspectEmailProviderStatus | null;
+}
+
+type ProspectInboxInspectionDraft = Omit<
+  ProspectInboxPlacementInspection,
+  "providerMessageId" | "inspectedAt"
+>;
+
+type ProspectOutcomeValue =
+  | "delivered"
+  | "bounced"
+  | "replied"
+  | "qualified"
+  | "demo_booked"
+  | "converted"
+  | "not_interested"
+  | "dnc"
+  | "call_connected"
+  | "voicemail"
+  | "no_answer"
+  | "failed";
+
+interface ProspectOutcomeRecord {
+  approval_id: string;
+  external_event_id: string;
+  outcome: ProspectOutcomeValue;
+  occurred_at: string;
+  notes?: string;
+  created_at: string;
+}
+
+const prospectOutcomesByChannel = {
+  email: [
+    "delivered",
+    "bounced",
+    "replied",
+    "qualified",
+    "demo_booked",
+    "converted",
+    "not_interested",
+    "dnc",
+    "failed",
+  ],
+  call: [
+    "call_connected",
+    "voicemail",
+    "no_answer",
+    "qualified",
+    "demo_booked",
+    "converted",
+    "not_interested",
+    "dnc",
+    "failed",
+  ],
+} as const satisfies Record<"email" | "call", readonly ProspectOutcomeValue[]>;
+
+const executionProofReferencePattern =
+  /^(manual|provider):[A-Za-z0-9][A-Za-z0-9:._/-]{6,480}$/;
+
+interface ProspectLearningVariant {
+  channel: "email" | "call";
+  variantKey: string;
+  sampleSize: number;
+  eventCount: number;
+  positive: number;
+  positiveRate: number;
+}
+
+interface ProspectLearningCandidate {
+  id: number;
+  candidate_key: string;
+  version: number;
+  state: "CANDIDATE" | "APPROVED" | "REJECTED";
+  recommendation_eligible?: boolean;
+  proposal_hash: string;
+  proposal: {
+    channel: "email" | "call";
+    promoteVariant: string;
+    replaceVariant: string;
+    registryVersion?: string;
+    promoteLabel?: string;
+    replaceLabel?: string;
+    promoteHypothesis?: string;
+    studyDesign?:
+      | "deterministic-assignment-v1"
+      | "deterministic-eligible-cohort-v1";
+    experimentId?: string;
+    runtimePolicyChange?: false;
+  };
+  evidence: {
+    current: ProspectLearningVariant;
+    challenger: ProspectLearningVariant;
+    absoluteLift: number;
+    statisticalTest?: "fisher-exact-one-sided-v1";
+    oneSidedFisherPValue?: number;
+    maximumOneSidedFisherPValue?: number;
+    studyDesign?:
+      | "deterministic-assignment-v1"
+      | "deterministic-eligible-cohort-v1";
+    experimentId?: string;
+    assignedProspects?: number;
+    executedProspects?: number;
+    measuredProspects?: number;
+    outcomeEventCount?: number;
+    executedProtocolDeviationCount?: number;
+  };
+  sample_size: number;
+  generated_at: string;
+  decided_by?: string;
+  decided_at?: string;
+}
+
+interface ProspectMessagePolicyItem {
+  releaseHash: string;
+  release: {
+    contractVersion: "smirk.prospect-message-policy.v1";
+    releaseId: string;
+    workspaceId: number;
+    campaignId: number;
+    channel: "email" | "call";
+    version: number;
+    action: "PROMOTE" | "ROLLBACK";
+    championVariantKey: string;
+    previousChampionVariantKey: string;
+    sourceCandidate: {
+      id: number;
+      candidateKey: string;
+      version: number;
+      experimentId: string;
+      experimentDefinitionHash: string;
+      proposalHash: string;
+      sampleSize: number;
+    } | null;
+    rollbackOfReleaseId: string | null;
+    reason: string | null;
+    appliedBy: string;
+    appliedAt: string;
+  };
+}
+
+type ProspectLearningRecommendations = Partial<
+  Record<"email" | "call", ProspectLearningCandidate>
+>;
+
+interface VelvetOutcomeOutboxItem {
+  id: number;
+  lead_id: number;
+  external_event_id: string;
+  external_prospect_id: string;
+  payload_hash: string;
+  state: "PREPARED" | "SENDING" | "DISPATCHED" | "FAILED" | "CANCELLED";
+  attempts: number;
+  last_error?: string;
+  dispatch_response_at?: string;
+  remote_event_id?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+type ProspectPositiveOutcomeResolution =
+  | "continue_guarded_loop"
+  | "handled_outside_smirk"
+  | "escalated_to_owner"
+  | "not_actionable";
+
+interface ProspectPositiveOutcomeReview {
+  reviewId: string;
+  state: "PENDING" | "ACKNOWLEDGED";
+  payloadHash: string;
+  payload: {
+    businessName: string;
+    channel: "email" | "call";
+    outcome: "replied" | "qualified" | "demo_booked" | "converted";
+    occurredAt: string;
+    notes: string | null;
+    outreachApprovalId: string;
+    externalEventId: string;
+  };
+  acknowledgmentReceipt?: {
+    resolution: ProspectPositiveOutcomeResolution;
+    notes: string | null;
+    acknowledgedBy: string;
+    acknowledgedAt: string;
+  } | null;
+  createdAt: string;
+}
+
+type ProspectInboundReplyResolution =
+  | "reply"
+  | "opt_out"
+  | "not_actionable";
+
+interface ProspectInboundReplyReview {
+  reviewId: string;
+  state: "PENDING" | "RESOLVED";
+  businessName: string;
+  payloadHash: string;
+  payload: {
+    sender: string;
+    occurredAt: string;
+    inboundMessageId: string;
+    matchState: "no_match" | "unique" | "ambiguous";
+    candidates: Array<{
+      outreachJobId: number;
+      outreachApprovalId: string;
+      prospectId: number;
+      businessName: string;
+      sentAt: string;
+    }>;
+  };
+  contentReceipt?: {
+    subject: string;
+    plainText: string;
+    contentHash: string;
+    contentBytes: number;
+    retrievedBy: string;
+    retrievedAt: string;
+    providerReadPerformed: true;
+    contactAuthorized: false;
+    sendAuthorized: false;
+    htmlStored: false;
+    attachmentsFetched: false;
+  } | null;
+  contentReceiptHash?: string | null;
+  resolutionReceipt?: {
+    resolution: ProspectInboundReplyResolution;
+    notes: string;
+    suppressionRecorded: boolean;
+    resolvedBy: string;
+    resolvedAt: string;
+  } | null;
+  receivedAt: string;
+}
+
+interface VelvetOutcomeDispatchStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  missing: string[];
+}
+
+interface VelvetLeadSourceStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  workspaceId: number;
+  missing: string[];
+  maximumBatchSize: number;
+  contactActionAllowed: false;
+  spendAuthorized: false;
+}
+
+interface VelvetLeadSourceRequestItem {
+  id: number;
+  request_id: string;
+  state:
+    | "PREPARED"
+    | "APPROVED"
+    | "SENDING"
+    | "PARTIAL"
+    | "COMPLETED"
+    | "EMPTY"
+    | "FAILED"
+    | "CANCELLED"
+    | "EXPIRED";
+  criteria: {
+    limit: number;
+    category?: string;
+    city?: string;
+    state?: string;
+    learningMode:
+      | "none"
+      | "latest_released"
+      | "latest_approved";
+  };
+  request_payload_hash: string;
+  attempts: number;
+  remote_batch_id?: number;
+  applied_learning_candidate?: {
+    id: number;
+    candidateKey: string;
+    version: number;
+    policyReleaseId: string;
+    policyReleaseReceiptHash: string;
+    proposal: {
+      dimension: "category" | "metro";
+      value: string;
+    };
+  };
+  imported_count: number;
+  failed_count: number;
+  last_error?: string;
+  expires_at: string;
+  created_at: string;
+}
+
+interface VelvetDiscoveryStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  workspaceId: number;
+  missing: string[];
+  maximumLeads: number;
+  maximumQuotedSpendCents: number;
+  contactActionAllowed: false;
+  spendAuthorized: false;
+}
+
+interface VelvetAcquisitionExperimentStatus {
+  state: "ACTIVE" | "NONE";
+  workspaceId: number;
+  experiment: {
+    binding: {
+      contractVersion: "smirk-velvet.acquisition-sourcing-binding.v1";
+      experimentId: string;
+      definitionHash: string;
+    };
+    dimension: "category" | "metro";
+    arms: {
+      control: {
+        label: string;
+        criteria: { category: string; city: string; state: string };
+      };
+      challenger: {
+        label: string;
+        criteria: { category: string; city: string; state: string };
+      };
+    };
+    requestsPerArm: number;
+    leadsPerRequest: number;
+    totalRequestSlots: number;
+    assignedRequests: number;
+  } | null;
+  contactActionAllowed: false;
+  spendAuthorized: false;
+  policyChanged: false;
+  externalAction: "experiment_status_only";
+}
+
+interface VelvetDiscoveryRequestItem {
+  id: number;
+  request_id: string;
+  state:
+    | "PREPARED"
+    | "APPROVED"
+    | "SENDING"
+    | "SUBMITTED"
+    | "FAILED"
+    | "CANCELLED"
+    | "EXPIRED";
+  criteria: {
+    limit: number;
+    category?: string;
+    city?: string;
+    state?: string;
+    learningMode: "none" | "latest_released" | "latest_approved" | "experiment";
+  };
+  request_payload_hash: string;
+  attempts: number;
+  remote_discovery_id?: number;
+  remote_state?:
+    | "PREPARED"
+    | "APPROVED"
+    | "QUEUED"
+    | "RUNNING"
+    | "COMPLETED"
+    | "EMPTY"
+    | "PARTIAL"
+    | "FAILED"
+    | "REJECTED"
+    | "CANCELLED"
+    | "EXPIRED";
+  quote_payload?: {
+    plan: "maps-plus-owner-email-v1";
+    providers: {
+      maps: {
+        provider: "google_maps_proxy";
+        maximumRequests: number;
+        costCentsPerRequest: number;
+        maximumCostCents: number;
+      };
+      ownerEmailEnrichment: {
+        provider: "hunter_owner_email";
+        maximumRequests: number;
+        costCentsPerRequest: number;
+        maximumCostCents: number;
+      };
+    };
+    maximumRequests: number;
+    maximumCostCents: number;
+  };
+  effective_criteria?: {
+    limit: number;
+    category: string;
+    city: string;
+    state: string;
+  };
+  created_lead_count: number;
+  ready_lead_count: number;
+  skipped_lead_count: number;
+  failed_lead_count: number;
+  provider_requests: number;
+  approved_max_spend_cents?: number;
+  last_error?: string;
+  source_request_id?: number;
+  source_state?: string;
+  expires_at: string;
+  created_at: string;
+}
+
+interface ProspectRevenueLoopStatus {
+  contractVersion: "smirk.prospect-revenue-loop.v11";
+  mode: "guarded-human-approval";
+  counts: {
+    positiveOutcomeJobs: number;
+    unreviewedPositiveOutcomeJobs: number;
+  };
+  stages: Array<{
+    id:
+      | "source"
+      | "review"
+      | "experiment"
+      | "outreach"
+      | "feedback"
+      | "learning";
+    label: string;
+    state: "WAITING" | "ACTION_REQUIRED" | "READY" | "MEASURED";
+    count: number;
+  }>;
+  nextAction: {
+    code: string;
+    stage:
+      | "source"
+      | "review"
+      | "experiment"
+      | "outreach"
+      | "feedback"
+      | "learning"
+      | "configuration";
+    title: string;
+    detail: string;
+    target: string;
+    requiresHumanApproval: boolean;
+    requiresSeparateExecutionConfirmation: boolean;
+    executionEffect:
+      | "none"
+      | "one_velvet_request"
+      | "one_email"
+      | "one_controlled_seed_email"
+      | "one_manual_call"
+      | "one_velvet_callback";
+    focus?:
+      | {
+          kind: "prospect";
+          campaignId: number;
+          leadId: number;
+          approvalId?: string;
+          revisionId?: string;
+        }
+      | {
+          kind: "positive_outcome_review";
+          reviewId: string;
+        }
+      | {
+          kind: "learning_candidate";
+          candidateId: number;
+        }
+      | {
+          kind: "velvet_outcome";
+          outboxId: number;
+        }
+      | {
+          kind: "velvet_source_request";
+          requestId: number;
+        }
+      | {
+          kind: "velvet_discovery_request";
+          requestId: number;
+        }
+      | {
+          kind: "message_experiment";
+          experimentId: string;
+          campaignId: number;
+        }
+      | {
+          kind: "inbox_placement";
+          testId: string;
+          campaignId: number;
+          approvalId?: string;
+        };
+  };
+  guardrails: {
+    smsAllowed: false;
+    bulkExecutionAllowed: false;
+    automatedProspectDialingAllowed: false;
+    qcMayAuthorizeContact: false;
+    learningMayMutateRuntimePolicy: false;
+  };
+  externalAction: "none";
+}
+
+type ProspectRevenueLoopFocus = NonNullable<
+  ProspectRevenueLoopStatus["nextAction"]["focus"]
+>;
+
+function prioritizeRevenueLoopRecords<T>(
+  records: readonly T[],
+  focusedId: string | number | null,
+  readId: (record: T) => string | number,
+  limit: number
+): T[] {
+  if (focusedId === null) return records.slice(0, limit);
+  const focused = records.find(
+    record => String(readId(record)) === String(focusedId)
+  );
+  return [
+    ...(focused ? [focused] : []),
+    ...records.filter(record => record !== focused),
+  ].slice(0, limit);
+}
+
+function revenueLoopFocusElementId(
+  focus: Exclude<ProspectRevenueLoopFocus, { kind: "prospect" }>
+): string {
+  switch (focus.kind) {
+    case "positive_outcome_review":
+      return `revenue-loop-positive-review-${focus.reviewId}`;
+    case "learning_candidate":
+      return `revenue-loop-learning-candidate-${focus.candidateId}`;
+    case "velvet_outcome":
+      return `revenue-loop-velvet-outcome-${focus.outboxId}`;
+    case "velvet_source_request":
+      return `revenue-loop-velvet-source-${focus.requestId}`;
+    case "velvet_discovery_request":
+      return `revenue-loop-velvet-discovery-${focus.requestId}`;
+    case "message_experiment":
+      return `revenue-loop-experiment-${focus.experimentId}`;
+    case "inbox_placement":
+      return focus.approvalId
+        ? `revenue-loop-inbox-seed-${focus.approvalId}`
+        : `revenue-loop-inbox-test-${focus.testId}`;
+  }
 }
 
 // ── Recovery Desk (queue + callback follow-up) ──────────────────────────────
@@ -10414,11 +11512,6 @@ function CampaignsPage() {
   const [leads, setLeads] = useState<ProspectLead[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [funnel, setFunnel] = useState<any>(null);
-  const [dialing, setDialing] = useState(false);
-  const [autoDialActive, setAutoDialActive] = useState(false);
-  const [autoDialCalls, setAutoDialCalls] = useState(0);
-  const [autoDialLastCallAt, setAutoDialLastCallAt] = useState<string | null>(null);
-  const [lastPitch, setLastPitch] = useState<string | null>(null);
   const [showLeadImport, setShowLeadImport] = useState(false);
   const [csvText, setCsvText] = useState("");
   const [manualLeads, setManualLeads] = useState("");
@@ -10429,8 +11522,6 @@ function CampaignsPage() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [savingLeads, setSavingLeads] = useState<Set<number>>(new Set());
-  const [searchQuery, setSearchQuery] = useState(""); // campaign-scoped search
-  const [searchLoading, setSearchLoading] = useState(false);
 
   // ── View state
   const [view, setView] = useState<"table" | "pipeline">("table");
@@ -10478,62 +11569,6 @@ function CampaignsPage() {
     await api(`/api/prospecting/campaigns/${selectedCampaign.id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
     setSelectedCampaign({ ...selectedCampaign, status });
     loadCampaigns();
-  };
-
-  const dialNext = async () => {
-    if (!selectedCampaign) return;
-    setDialing(true);
-    try {
-      const r = await api<{ call_sid: string; lead: ProspectLead; pitch?: string }>(`/api/prospecting/campaigns/${selectedCampaign.id}/dial-next`, { method: "POST" });
-      if (r.pitch) setLastPitch(r.pitch);
-      addToast({ type: "success", message: `Dialing ${r.lead.business_name}…` });
-      loadLeads(selectedCampaign.id); loadCampaigns();
-    } catch (e: any) { addToast({ type: "error", message: e.message || "Dial failed" }); }
-    finally { setDialing(false); }
-  };
-
-  const launchAutoDial = async () => {
-    if (!selectedCampaign) return;
-    try {
-      await api(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/start`, { method: "POST" });
-      setAutoDialActive(true); setAutoDialCalls(0);
-      addToast({ type: "success", message: "Auto-dial running…" });
-      const poll = setInterval(async () => {
-        try {
-          const s = await api<{ active: boolean; callsThisSession: number; lastCallAt: string | null }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/status`);
-          setAutoDialActive(s.active); setAutoDialCalls(s.callsThisSession);
-          if (s.lastCallAt) setAutoDialLastCallAt(s.lastCallAt);
-          loadLeads(selectedCampaign.id);
-          if (!s.active) { clearInterval(poll); loadCampaigns(); }
-        } catch { clearInterval(poll); }
-      }, 8_000);
-    } catch (e: any) { addToast({ type: "error", message: e.message || "Failed to launch" }); }
-  };
-
-  const stopAutoDial = async () => {
-    if (!selectedCampaign) return;
-    try {
-      const r = await api<{ callsThisSession: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/stop`, { method: "POST" });
-      setAutoDialActive(false);
-      addToast({ type: "success", message: `Stopped. ${r.callsThisSession} calls placed.` });
-      loadLeads(selectedCampaign.id); loadCampaigns();
-    } catch (e: any) { addToast({ type: "error", message: e.message || "Failed to stop" }); }
-  };
-
-  // ── Lead search (campaign-scoped)
-  const searchCampaignLeads = async () => {
-    if (!selectedCampaign || !searchQuery.trim()) return;
-    setSearchLoading(true);
-    try {
-      const r = await api<{ found: number; added: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/search`, {
-        method: "POST", body: JSON.stringify({ query: searchQuery, maxResults: 20 }),
-      });
-      addToast({ type: "success", message: `Found ${r.found}, added ${r.added} new leads` });
-      loadLeads(selectedCampaign.id); loadCampaigns();
-    } catch (e: any) {
-      const raw = String(e?.message || "");
-      addToast({ type: "error", message: raw.toLowerCase().includes("google_places") ? "Add GOOGLE_PLACES_API_KEY in Settings." : raw || "Search failed" });
-    } finally { setSearchLoading(false); }
   };
 
   // ── Global lead search (find new leads, save to DB)
@@ -10670,7 +11705,7 @@ function CampaignsPage() {
               <div className="flex flex-col items-center justify-center h-full text-center p-8">
                 <Target size={40} className="text-gray-800 mb-4" />
                 <p className="text-sm font-medium text-gray-500">Select a campaign</p>
-                <p className="text-xs text-gray-700 mt-1">or create a new one to start dialing</p>
+                <p className="text-xs text-gray-700 mt-1">or create a new research batch</p>
               </div>
             ) : (
               <div className="p-5 space-y-4">
@@ -10712,68 +11747,17 @@ function CampaignsPage() {
                   ))}
                 </div>
 
-                {/* Auto-dial status */}
-                {autoDialActive && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#00ff88]/8 border border-[#00ff88]/20">
-                    <span className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse" />
-                    <span className="text-xs text-[#00ff88] font-semibold">LIVE — Auto-dialing</span>
-                    <span className="text-xs text-gray-600">{autoDialCalls} calls placed</span>
-                    {autoDialLastCallAt && <span className="text-xs text-gray-700 ml-auto">Last: {new Date(autoDialLastCallAt).toLocaleTimeString()}</span>}
-                  </div>
-                )}
-
                 {/* Actions */}
                 <div className="flex flex-wrap items-center gap-2">
-                  {autoDialActive ? (
-                    <button onClick={stopAutoDial}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-800 hover:bg-red-700 text-white text-xs font-semibold transition-colors">
-                      <span className="w-2 h-2 rounded-full bg-red-300" />Stop Auto-Dial
-                    </button>
-                  ) : (
-                    <>
-                      <button onClick={launchAutoDial} disabled={pendingCount === 0}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00ff88] text-black text-xs font-bold hover:bg-[#00e87a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                        <PhoneOutgoing size={13} /> Launch Auto-Dial
-                      </button>
-                      <button onClick={dialNext} disabled={dialing || pendingCount === 0}
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-700 text-gray-400 text-xs hover:text-white hover:border-gray-600 disabled:opacity-40 transition-colors">
-                        {dialing ? <Loader2 size={12} className="animate-spin" /> : <PhoneOutgoing size={12} />}
-                        {dialing ? "Dialing…" : "Dial One"}
-                      </button>
-                    </>
-                  )}
                   <button onClick={() => setShowLeadImport(true)}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-700 text-gray-400 text-xs hover:text-white hover:border-gray-600 transition-colors">
-                    <Plus size={12} /> Add Leads
+                    <Plus size={12} /> Add Prospects
                   </button>
                   <button onClick={() => { loadLeads(selectedCampaign.id); }}
                     className="p-2 rounded-lg border border-gray-800 text-gray-600 hover:text-gray-400 hover:bg-gray-800 transition-colors">
                     <RefreshCw size={12} />
                   </button>
                 </div>
-
-                {/* Google Places search for this campaign */}
-                <div className="flex items-center gap-2">
-                  <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && searchCampaignLeads()}
-                    placeholder='Find leads: "plumbers in Miami FL"'
-                    className="flex-1 px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white placeholder-gray-700 focus:border-gray-700 outline-none" />
-                  <button onClick={searchCampaignLeads} disabled={searchLoading || !searchQuery.trim()}
-                    className="px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 disabled:opacity-40 transition-colors">
-                    {searchLoading ? <Loader2 size={12} className="animate-spin" /> : "Find"}
-                  </button>
-                </div>
-
-                {/* AI Pitch preview */}
-                {lastPitch && (
-                  <div className="rounded-lg border border-[#00ff88]/20 bg-[#00ff88]/5 p-3">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-[#00ff88]">AI Personalized Hook (Last Dial)</p>
-                      <button onClick={() => setLastPitch(null)} className="text-gray-600 hover:text-gray-400 text-xs">×</button>
-                    </div>
-                    <p className="text-xs text-gray-300 leading-relaxed">{lastPitch}</p>
-                  </div>
-                )}
 
                 {/* Funnel visualization */}
                 {funnel && funnel.dialed > 0 && (
@@ -10958,7 +11942,7 @@ function CampaignsPage() {
         </div>
       )}
 
-      {/* New Campaign Modal */}
+      {/* New research batch modal */}
       {showNewCampaign && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-4">
@@ -11053,40 +12037,2793 @@ function CampaignsPage() {
   );
 }
 
+function ProspectReviewDrawer({
+  lead,
+  dark,
+  approvedVariants,
+  focusApprovalId,
+  focusRevisionId,
+  onClose,
+  onChanged,
+}: {
+  lead: ProspectLead;
+  dark: boolean;
+  approvedVariants: ProspectLearningRecommendations;
+  focusApprovalId?: string | null;
+  focusRevisionId?: string | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const { addToast } = useToast();
+  const messageContext = buildProspectMessageContext({
+    businessName: lead.business_name,
+    industry: lead.industry,
+    researchEvidence: lead.research_evidence,
+  });
+  const initialChannel = lead.email ? "email" : "call";
+  const initialVariantKey =
+    getDefaultProspectMessageVariantKey(initialChannel);
+  const initialRenderedVariant = renderProspectMessageVariant(
+    initialVariantKey,
+    messageContext
+  );
+  const [currentLead, setCurrentLead] = useState(lead);
+  const [jobs, setJobs] = useState<ProspectOutreachJob[]>([]);
+  const [qcRevisions, setQcRevisions] = useState<
+    ProspectQcRevisionItem[]
+  >([]);
+  const [revisionRejectReasons, setRevisionRejectReasons] = useState<
+    Record<string, string>
+  >({});
+  const focusedApprovalRef = useRef<string | null>(null);
+  const focusedRevisionRef = useRef<string | null>(null);
+  const [outcomes, setOutcomes] = useState<ProspectOutcomeRecord[]>([]);
+  const [experimentAssignments, setExperimentAssignments] = useState<
+    ProspectMessageExperimentAssignment[]
+  >([]);
+  const [emailProvider, setEmailProvider] =
+    useState<ProspectEmailProviderStatus | null>(null);
+  const [manualCall, setManualCall] =
+    useState<ProspectManualCallStatus | null>(null);
+  const [qcModelReviews, setQcModelReviews] = useState<
+    ProspectQcModelReviewRecord[]
+  >([]);
+  const [qcModelProvider, setQcModelProvider] =
+    useState<ProspectQcModelProviderStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [channel, setChannel] = useState<"email" | "call">(initialChannel);
+  const [variantKey, setVariantKey] = useState(initialVariantKey);
+  const [subject, setSubject] = useState(
+    initialRenderedVariant?.subject || ""
+  );
+  const [content, setContent] = useState(
+    initialRenderedVariant?.content || ""
+  );
+  const [senderIdentity, setSenderIdentity] = useState("SMIRK");
+  const [advertisementDisclosure, setAdvertisementDisclosure] = useState(
+    "This is a commercial message from SMIRK."
+  );
+  const [physicalPostalAddress, setPhysicalPostalAddress] = useState("");
+  const [optOutInstructions, setOptOutInstructions] = useState(
+    "If this isn't relevant, reply no and I won't follow up."
+  );
+  const [maxCostCents, setMaxCostCents] = useState(
+    channel === "email" ? 2 : 50
+  );
+  const approvedVariant = approvedVariants[channel];
+  const approvedVariantDefinition = approvedVariant
+    ? getProspectMessageVariantDefinition(
+        approvedVariant.proposal.promoteVariant
+      )
+    : null;
+  const availableMessageVariants =
+    getProspectMessageVariantDefinitions(channel);
+  const activeExperimentAssignment =
+    experimentAssignments.find(
+      (assignment) => assignment.channel === channel
+    ) || null;
+  const [executionProofs, setExecutionProofs] = useState<
+    Record<string, string>
+  >({});
+  const [providerSendChecks, setProviderSendChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [manualDialChecks, setManualDialChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [manualDialNow, setManualDialNow] = useState(() => new Date());
+  const [qcModelReviewChecks, setQcModelReviewChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [outcomeDrafts, setOutcomeDrafts] = useState<
+    Record<string, { outcome: ProspectOutcomeValue; notes: string }>
+  >({});
+  const [approvalChecks, setApprovalChecks] = useState<
+    Record<
+      string,
+      {
+        recipient: boolean;
+        suppression: boolean;
+        emailCompliance: boolean;
+        qcAdvisory: boolean;
+        dnc: boolean;
+        callingWindow: boolean;
+        manualDial: boolean;
+      }
+    >
+  >({});
+  const [callComplianceDrafts, setCallComplianceDrafts] = useState<
+    Record<string, ProspectCallComplianceDraft>
+  >({});
+
+  const emptyApprovalChecks = {
+    recipient: false,
+    suppression: false,
+    emailCompliance: false,
+    qcAdvisory: false,
+    dnc: false,
+    callingWindow: false,
+    manualDial: false,
+  };
+
+  const checksFor = (approvalId: string) =>
+    approvalChecks[approvalId] || emptyApprovalChecks;
+
+  const emptyCallComplianceDraft: ProspectCallComplianceDraft = {
+    recipientTimezone: "",
+    checkedAt: "",
+    federalSource: "",
+    federalReference: "",
+    stateSource: "",
+    stateReference: "",
+    internalSource: "",
+    internalReference: "",
+  };
+
+  const callComplianceFor = (approvalId: string) =>
+    callComplianceDrafts[approvalId] || emptyCallComplianceDraft;
+
+  const setCallComplianceField = (
+    approvalId: string,
+    key: keyof ProspectCallComplianceDraft,
+    value: string
+  ) => {
+    setCallComplianceDrafts(current => ({
+      ...current,
+      [approvalId]: {
+        ...(current[approvalId] || emptyCallComplianceDraft),
+        [key]: value,
+      },
+    }));
+  };
+
+  const setApprovalCheck = (
+    approvalId: string,
+    key:
+      | "recipient"
+      | "suppression"
+      | "emailCompliance"
+      | "qcAdvisory"
+      | "dnc"
+      | "callingWindow"
+      | "manualDial",
+    checked: boolean
+  ) => {
+    setApprovalChecks((current) => ({
+      ...current,
+      [approvalId]: {
+        ...(current[approvalId] || emptyApprovalChecks),
+        [key]: checked,
+      },
+    }));
+  };
+
+  const qcModelReviewFor = (job: ProspectOutreachJob) =>
+    qcModelReviews.find(
+      review => review.approval_id === job.approval_id
+    ) || null;
+
+  const completedQcModelReviewFor = (
+    job: ProspectOutreachJob
+  ) =>
+    qcModelReviews.find(
+      review =>
+        review.approval_id === job.approval_id &&
+        review.state === "COMPLETED" &&
+        Boolean(review.receipt) &&
+        (qcModelProvider?.requiredForApproval !== true ||
+          review.model === qcModelProvider.model)
+    ) || null;
+
+  const effectiveQcModelReview = (
+    job: ProspectOutreachJob
+  ): ProspectQcModelReviewValue | null =>
+    completedQcModelReviewFor(job)?.receipt?.review ||
+    job.qc_receipt?.modelReview ||
+    null;
+
+  const approvalReady = (job: ProspectOutreachJob) => {
+    const checks = checksFor(job.approval_id);
+    const callCompliance = callComplianceFor(job.approval_id);
+    const completedModelRecord =
+      completedQcModelReviewFor(job);
+    const modelReview = effectiveQcModelReview(job);
+    const requiredModelReviewReady =
+      qcModelProvider?.requiredForApproval !== true ||
+      Boolean(completedModelRecord?.receipt);
+    return (
+      job.qc_receipt?.deterministicPassed === true &&
+      job.qc_receipt.verdict ===
+        "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
+      requiredModelReviewReady &&
+      checks.recipient &&
+      checks.suppression &&
+      (!["FLAGGED", "ERROR"].includes(
+        modelReview?.status || ""
+      ) ||
+        checks.qcAdvisory) &&
+      (job.channel === "email"
+        ? checks.emailCompliance
+        : manualCall?.availableForWorkspace === true &&
+          checks.dnc &&
+          checks.callingWindow &&
+          checks.manualDial &&
+          callCompliance.checkedAt.length > 0 &&
+          callCompliance.recipientTimezone.trim().length >= 3 &&
+          callCompliance.federalSource.trim().length >= 2 &&
+          callCompliance.federalReference.trim().length >= 6 &&
+          callCompliance.stateSource.trim().length >= 2 &&
+          callCompliance.stateReference.trim().length >= 6 &&
+          callCompliance.internalSource.trim().length >= 2 &&
+          callCompliance.internalReference.trim().length >= 6)
+    );
+  };
+
+  const loadJobs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api<{
+        jobs: ProspectOutreachJob[];
+        qcRevisions: ProspectQcRevisionItem[];
+        outcomes: ProspectOutcomeRecord[];
+        qcModelReviews: ProspectQcModelReviewRecord[];
+        qcModelProvider: ProspectQcModelProviderStatus;
+        experimentAssignments: ProspectMessageExperimentAssignment[];
+        emailProvider: ProspectEmailProviderStatus;
+        manualCall: ProspectManualCallStatus;
+      }>(
+        `/api/prospecting/leads/${lead.id}/outreach`
+      );
+      setJobs(data.jobs || []);
+      setQcRevisions(data.qcRevisions || []);
+      setOutcomes(data.outcomes || []);
+      setQcModelReviews(data.qcModelReviews || []);
+      setQcModelProvider(data.qcModelProvider || null);
+      setExperimentAssignments(data.experimentAssignments || []);
+      setEmailProvider(data.emailProvider || null);
+      setManualCall(data.manualCall || null);
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to load outreach approvals."),
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast, lead.id]);
+
+  useEffect(() => {
+    loadJobs();
+  }, [loadJobs]);
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setManualDialNow(new Date()),
+      30_000
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!focusApprovalId) {
+      focusedApprovalRef.current = null;
+      return;
+    }
+    if (
+      loading ||
+      focusedApprovalRef.current === focusApprovalId
+    ) {
+      return;
+    }
+    focusedApprovalRef.current = focusApprovalId;
+    if (!jobs.some(job => job.approval_id === focusApprovalId)) {
+      addToast({
+        type: "warning",
+        message:
+          "The referenced outreach job changed after the controller snapshot. Review the current approval ledger before acting.",
+      });
+      document
+        .getElementById("prospect-approval-ledger")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .getElementById(`prospect-outreach-${focusApprovalId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [addToast, focusApprovalId, jobs, loading]);
+
+  useEffect(() => {
+    if (!focusRevisionId) {
+      focusedRevisionRef.current = null;
+      return;
+    }
+    if (
+      loading ||
+      focusedRevisionRef.current === focusRevisionId
+    ) {
+      return;
+    }
+    focusedRevisionRef.current = focusRevisionId;
+    if (
+      !qcRevisions.some(
+        revision => revision.revision_id === focusRevisionId
+      )
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "The referenced QC revision is no longer in this prospect ledger. Refresh the queue before acting.",
+      });
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(`prospect-qc-revision-${focusRevisionId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [addToast, focusRevisionId, loading, qcRevisions]);
+
+  const applyProspectMessageVariant = (
+    key: string,
+    expectedChannel: "email" | "call" = channel
+  ) => {
+    const rendered = renderProspectMessageVariant(key, messageContext);
+    if (!rendered || rendered.channel !== expectedChannel) {
+      addToast({
+        type: "error",
+        message:
+          "That measured strategy is not registered for this outreach channel.",
+      });
+      return false;
+    }
+    setVariantKey(rendered.key);
+    setSubject(rendered.subject || "");
+    setContent(rendered.content);
+    return true;
+  };
+
+  const switchOutreachChannel = (nextChannel: "email" | "call") => {
+    const nextKey = getDefaultProspectMessageVariantKey(nextChannel);
+    setChannel(nextChannel);
+    setMaxCostCents(nextChannel === "email" ? 2 : 50);
+    applyProspectMessageVariant(nextKey, nextChannel);
+  };
+
+  const markDraftAsCustom = () => {
+    setVariantKey("operator-custom");
+  };
+
+  const setReviewState = async (
+    decision: "qualified" | "rejected" | "pending_review"
+  ) => {
+    setBusy(true);
+    try {
+      await api(`/api/prospecting/leads/${lead.id}/review`, {
+        method: "PATCH",
+        body: JSON.stringify({ decision }),
+      });
+      setCurrentLead((current) => ({ ...current, review_state: decision }));
+      addToast({
+        type: "success",
+        message:
+          decision === "qualified"
+            ? "Prospect qualified for recipient-specific drafting."
+            : decision === "rejected"
+              ? "Prospect rejected. No contact action was created."
+              : "Prospect returned to review.",
+      });
+      onChanged();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to update prospect review."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const prepareDraft = async () => {
+    setBusy(true);
+    try {
+      const body =
+        channel === "email"
+          ? {
+              channel,
+              subject,
+              body: content,
+              emailCompliance: {
+                senderIdentity,
+                advertisementDisclosure,
+                physicalPostalAddress,
+                optOutInstructions,
+              },
+              variantKey,
+              maxCostCents,
+              expiresInHours: 24,
+            }
+          : {
+              channel,
+              callBrief: content,
+              variantKey,
+              maxCostCents,
+              expiresInHours: 8,
+            };
+      const prepared = await api<{
+        outcome:
+          | "created"
+          | "duplicate"
+          | "revision_required"
+          | "revision_duplicate";
+        variantKey?: string;
+        revisionId?: string;
+        qcReceipt?: ProspectQcRevisionItem["qc_receipt"];
+      }>(
+        `/api/prospecting/leads/${lead.id}/outreach`,
+        {
+        method: "POST",
+        body: JSON.stringify(body),
+        }
+      );
+      if (prepared.variantKey) setVariantKey(prepared.variantKey);
+      if (
+        prepared.outcome === "revision_required" ||
+        prepared.outcome === "revision_duplicate"
+      ) {
+        addToast({
+          type: "warning",
+          message:
+            prepared.outcome === "revision_duplicate"
+              ? "The same failed QC receipt is already in the revision queue. Nothing was approved or executed."
+              : `Draft held for revision: ${
+                  prepared.qcReceipt?.failureReasons.join(" | ") ||
+                  "deterministic QC failed"
+                }. Nothing was approved, sent, or dialed.`,
+        });
+        await loadJobs();
+        return;
+      }
+      addToast({
+        type: "success",
+        message: `${
+          channel === "email" ? "Email" : "Call"
+        } job prepared as ${
+          prepared.variantKey || variantKey
+        } for review. Nothing was sent or dialed.`,
+      });
+      await loadJobs();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to prepare outreach."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadQcRevisionIntoEditor = (
+    revision: ProspectQcRevisionItem
+  ) => {
+    setChannel(revision.channel);
+    setVariantKey(
+      getProspectMessageVariantDefinition(revision.variant_key)?.channel ===
+        revision.channel
+        ? revision.variant_key
+        : "operator-custom"
+    );
+    setSubject(revision.subject || "");
+    setContent(revision.content);
+    setMaxCostCents(revision.max_cost_cents);
+    if (revision.email_compliance) {
+      setSenderIdentity(revision.email_compliance.senderIdentity);
+      setAdvertisementDisclosure(
+        revision.email_compliance.advertisementDisclosure
+      );
+      setPhysicalPostalAddress(
+        revision.email_compliance.physicalPostalAddress
+      );
+      setOptOutInstructions(
+        revision.email_compliance.optOutInstructions
+      );
+    }
+    addToast({
+      type: "info",
+      message:
+        "Failed draft loaded into the editor. Change the flagged copy or compliance fields, then prepare a new receipt.",
+    });
+    document
+      .getElementById("prospect-outreach-editor")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const rejectQcRevision = async (
+    revision: ProspectQcRevisionItem
+  ) => {
+    const reason = String(
+      revisionRejectReasons[revision.revision_id] || ""
+    ).trim();
+    if (reason.length < 3) {
+      addToast({
+        type: "warning",
+        message: "Enter a short rejection reason first.",
+      });
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(
+        `/api/prospecting/qc-revisions/${revision.revision_id}/reject`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: revision.payload_hash,
+            reason,
+          }),
+        }
+      );
+      setRevisionRejectReasons(current => ({
+        ...current,
+        [revision.revision_id]: "",
+      }));
+      addToast({
+        type: "success",
+        message:
+          "QC revision rejected. No approval, provider request, email, or call occurred.",
+      });
+      await loadJobs();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to reject QC revision."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runQcModelReview = async (
+    job: ProspectOutreachJob
+  ) => {
+    if (
+      !qcModelProvider?.availableForWorkspace ||
+      !qcModelReviewChecks[job.approval_id]
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm the one-draft advisory review and its reserved cost before continuing.",
+      });
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api<{
+        outcome: "reviewed" | "duplicate";
+        receipt?: {
+          review: ProspectQcModelReviewValue;
+        };
+      }>(
+        `/api/prospecting/outreach/${job.approval_id}/qc-model-review`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: job.payload_hash,
+            confirmation:
+              "review-one-prospect-draft-with-advisory-model-v1",
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          result.outcome === "duplicate"
+            ? "Existing immutable advisory QC receipt verified. Nothing was sent or dialed."
+            : `Advisory QC recorded as ${
+                result.receipt?.review.status || "complete"
+              }. Human approval is still required; nothing was sent or dialed.`,
+      });
+      setQcModelReviewChecks(current => ({
+        ...current,
+        [job.approval_id]: false,
+      }));
+      await loadJobs();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Unable to complete the one-draft advisory QC review."
+        ),
+      });
+      await loadJobs();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decideJob = async (
+    job: ProspectOutreachJob,
+    action: "approve" | "reject" | "cancel"
+  ) => {
+    setBusy(true);
+    try {
+      const checks = checksFor(job.approval_id);
+      const callCompliance = callComplianceFor(job.approval_id);
+      await api(`/api/prospecting/outreach/${job.approval_id}/${action}`, {
+        method: "POST",
+        body: JSON.stringify(
+          action === "approve"
+            ? {
+                payloadHash: job.payload_hash,
+                attestations: {
+                  recipientReviewed: checks.recipient,
+                  suppressionChecked: checks.suppression,
+                  emailComplianceReviewed:
+                    job.channel === "email"
+                      ? checks.emailCompliance
+                      : undefined,
+                  qcAdvisoryFlagsReviewed:
+                    ["FLAGGED", "ERROR"].includes(
+                      effectiveQcModelReview(job)?.status ||
+                        ""
+                    )
+                      ? checks.qcAdvisory
+                      : undefined,
+                  doNotCallChecked:
+                    job.channel === "call" ? checks.dnc : undefined,
+                  callingWindowChecked:
+                    job.channel === "call"
+                      ? checks.callingWindow
+                      : undefined,
+                  manualDialOnly:
+                    job.channel === "call" ? checks.manualDial : undefined,
+                  callCompliance:
+                    job.channel === "call"
+                      ? {
+                          checkedAt: callCompliance.checkedAt,
+                          recipientTimezone:
+                            callCompliance.recipientTimezone.trim(),
+                          dncChecks: [
+                            {
+                              scope: "federal",
+                              status: "clear",
+                              source:
+                                callCompliance.federalSource.trim(),
+                              reference:
+                                callCompliance.federalReference.trim(),
+                            },
+                            {
+                              scope: "state",
+                              status: "clear",
+                              source:
+                                callCompliance.stateSource.trim(),
+                              reference:
+                                callCompliance.stateReference.trim(),
+                            },
+                            {
+                              scope: "internal",
+                              status: "clear",
+                              source:
+                                callCompliance.internalSource.trim(),
+                              reference:
+                                callCompliance.internalReference.trim(),
+                            },
+                          ],
+                        }
+                      : undefined,
+                },
+              }
+            : {
+                payloadHash: job.payload_hash,
+                reason:
+                  action === "cancel"
+                    ? "Cancelled during operator review"
+                    : "Rejected during operator review",
+              }
+        ),
+      });
+      addToast({
+        type: "success",
+        message:
+          action === "approve"
+            ? job.channel === "email" &&
+              emailProvider?.availableForWorkspace
+              ? "Exact draft approved. A separate one-email confirmation is still required."
+              : "Exact draft approved. No email was sent and no call was placed."
+            : `Draft ${action}ed. No external action occurred.`,
+      });
+      await loadJobs();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, `Unable to ${action} outreach.`),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const executeApprovedEmail = async (job: ProspectOutreachJob) => {
+    setBusy(true);
+    try {
+      const result = await api<{
+        providerAccepted: boolean;
+        delivered: boolean;
+      }>(`/api/prospecting/outreach/${job.approval_id}/execute`, {
+        method: "POST",
+        body: JSON.stringify({
+          payloadHash: job.payload_hash,
+          confirmation: "send-one-approved-email-v1",
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          result.providerAccepted && !result.delivered
+            ? "One email was accepted by Resend. Delivery is not confirmed yet."
+            : "The provider execution result was recorded.",
+      });
+      setProviderSendChecks((current) => ({
+        ...current,
+        [job.approval_id]: false,
+      }));
+      await loadJobs();
+      onChanged();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The email was not confirmed as accepted. Review the durable job state before retrying."
+        ),
+      });
+      await loadJobs();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const recordExternalExecution = async (job: ProspectOutreachJob) => {
+    const proofReference = String(
+      executionProofs[job.approval_id] || ""
+    ).trim();
+    setBusy(true);
+    try {
+      await api(
+        `/api/prospecting/outreach/${job.approval_id}/record-execution`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: job.payload_hash,
+            occurredAt: new Date().toISOString(),
+            confirmation: "record-one-manual-call-v1",
+            proofReference,
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          "External action fact recorded. SMIRK did not send or dial anything.",
+      });
+      await loadJobs();
+      onChanged();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Unable to record the external action."
+        ),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const outcomeDraftFor = (job: ProspectOutreachJob) =>
+    outcomeDrafts[job.approval_id] || {
+      outcome:
+        job.channel === "email"
+          ? ("delivered" as const)
+          : ("call_connected" as const),
+      notes: "",
+    };
+
+  const recordMeasuredOutcome = async (job: ProspectOutreachJob) => {
+    const draft = outcomeDraftFor(job);
+    setBusy(true);
+    try {
+      await api(`/api/prospecting/leads/${lead.id}/outcomes`, {
+        method: "POST",
+        body: JSON.stringify({
+          externalEventId: `smirk-operator-${crypto.randomUUID()}`,
+          outcome: draft.outcome,
+          occurredAt: new Date().toISOString(),
+          outreachApprovalId: job.approval_id,
+          notes: draft.notes.trim() || undefined,
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "Outcome recorded for evaluation. Runtime policy is unchanged.",
+      });
+      await loadJobs();
+      onChanged();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to record the outcome."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const evidence = Array.isArray(currentLead.research_evidence)
+    ? currentLead.research_evidence
+    : [];
+  const panel = dark
+    ? "bg-gray-950 border-gray-800"
+    : "bg-gray-50 border-gray-200";
+  const muted = dark ? "text-gray-500" : "text-gray-600";
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[70] bg-black/70"
+      onMouseDown={(event) => closeOnBackdropClick(event, onClose)}
+    >
+      <aside
+        className={`absolute right-0 top-0 h-full w-full max-w-2xl overflow-y-auto border-l ${
+          dark
+            ? "bg-gray-950 border-gray-800 text-white"
+            : "bg-white border-gray-200 text-gray-950"
+        }`}
+      >
+        <header
+          className={`sticky top-0 z-10 flex items-start justify-between gap-4 border-b p-5 ${
+            dark ? "bg-gray-950 border-gray-800" : "bg-white border-gray-200"
+          }`}
+        >
+          <div className="min-w-0">
+            <p className={`text-[10px] uppercase tracking-widest ${muted}`}>
+              Prospect review
+            </p>
+            <h3 className="truncate text-lg font-semibold">
+              {currentLead.business_name}
+            </h3>
+            <p className={`text-xs ${muted}`}>
+              {currentLead.industry || "Home services"}{" "}
+              {currentLead.city ? `· ${currentLead.city}` : ""}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className={`p-2 rounded-lg ${dark ? "hover:bg-gray-900" : "hover:bg-gray-100"}`}
+            title="Close prospect review"
+          >
+            <X size={17} />
+          </button>
+        </header>
+
+        <div className="space-y-6 p-5">
+          <section
+            id="prospect-outreach-editor"
+            className="space-y-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">Human qualification</p>
+                <p className={`text-xs ${muted}`}>
+                  Current state:{" "}
+                  {(currentLead.review_state || "pending_review").replace(
+                    /_/g,
+                    " "
+                  )}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setReviewState("rejected")}
+                  disabled={busy}
+                  className="px-3 py-2 rounded-lg border border-red-900/60 text-xs text-red-300 hover:bg-red-950/30 disabled:opacity-50"
+                >
+                  Reject
+                </button>
+                <button
+                  onClick={() => setReviewState("qualified")}
+                  disabled={busy}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-700 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                >
+                  <UserCheck size={14} /> Qualify
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <p className="text-sm font-semibold">Source evidence</p>
+              <p className={`text-xs ${muted}`}>
+                Observations and inferences remain visibly distinct.
+              </p>
+            </div>
+            {evidence.length === 0 ? (
+              <div className={`border rounded-lg p-4 text-xs ${panel} ${muted}`}>
+                No source-classified evidence is attached. Outreach preparation
+                will fail closed.
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-800 border border-gray-800 rounded-lg overflow-hidden">
+                {evidence.map((item, index) => (
+                  <div key={`${item.url}-${index}`} className="p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wider text-violet-300">
+                        {item.kind.replace(/_/g, " ")}
+                      </span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          item.basis === "inferred"
+                            ? "bg-amber-950 text-amber-300"
+                            : item.basis === "measured"
+                              ? "bg-blue-950 text-blue-300"
+                              : "bg-emerald-950 text-emerald-300"
+                        }`}
+                      >
+                        {item.basis}
+                      </span>
+                      <span className={`text-[10px] ${muted}`}>
+                        {item.confidence} confidence
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed">
+                      {item.observation}
+                    </p>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300"
+                    >
+                      Open source <ExternalLink size={10} />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <p className="text-sm font-semibold">Prepare one outreach job</p>
+              <p className={`text-xs ${muted}`}>
+                Approval is recipient-specific. Email requires a second
+                operator action; call briefs remain manual-dial-only.
+              </p>
+            </div>
+            <div className="flex gap-1">
+              {(["email", "call"] as const).map((value) => (
+                <button
+                  key={value}
+                  onClick={() => switchOutreachChannel(value)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${
+                    channel === value
+                      ? "bg-violet-700 text-white"
+                      : dark
+                        ? "bg-gray-900 text-gray-400"
+                        : "bg-gray-100 text-gray-600"
+                  }`}
+                >
+                  {value === "email" ? (
+                    <Mail size={13} />
+                  ) : (
+                    <PhoneCall size={13} />
+                  )}
+                  {value === "email" ? "Email" : "Call brief"}
+                </button>
+              ))}
+            </div>
+            {activeExperimentAssignment && (
+              <div
+                className={`rounded-lg border px-3 py-3 ${
+                  variantKey ===
+                  activeExperimentAssignment.assignedVariantKey
+                    ? dark
+                      ? "border-cyan-900/70 bg-cyan-950/20"
+                      : "border-cyan-200 bg-cyan-50"
+                    : dark
+                      ? "border-amber-900/70 bg-amber-950/20"
+                      : "border-amber-200 bg-amber-50"
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-cyan-400">
+                      Assigned experiment strategy
+                    </p>
+                    <p className={`mt-1 text-[11px] ${muted}`}>
+                      {activeExperimentAssignment.arm} arm ·{" "}
+                      {getProspectMessageVariantDefinition(
+                        activeExperimentAssignment.assignedVariantKey
+                      )?.label ||
+                        activeExperimentAssignment.assignedVariantKey}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      applyProspectMessageVariant(
+                        activeExperimentAssignment.assignedVariantKey,
+                        channel
+                      )
+                    }
+                    disabled={
+                      variantKey ===
+                      activeExperimentAssignment.assignedVariantKey
+                    }
+                    className="rounded-lg border border-cyan-800 px-3 py-2 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Use assigned strategy
+                  </button>
+                </div>
+                <p
+                  className={`mt-2 text-[10px] ${
+                    variantKey ===
+                    activeExperimentAssignment.assignedVariantKey
+                      ? "text-cyan-500"
+                      : "text-amber-400"
+                  }`}
+                >
+                  {variantKey ===
+                  activeExperimentAssignment.assignedVariantKey
+                    ? "This draft matches the assigned arm. Human approval and separate execution are still required."
+                    : "A different strategy is selected. The draft remains allowed for human judgment, but any execution will be recorded as off protocol and cannot support a learning candidate."}
+                </p>
+              </div>
+            )}
+            {approvedVariant && (
+              <div
+                className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
+                  dark
+                    ? "border-emerald-900/70 bg-emerald-950/20"
+                    : "border-emerald-200 bg-emerald-50"
+                }`}
+              >
+                <div>
+                  <p className="text-xs font-semibold text-emerald-400">
+                    Human-approved recommendation
+                  </p>
+                  <p className={`text-[11px] ${muted}`}>
+                    {approvedVariantDefinition?.label ||
+                      approvedVariant.proposal.promoteVariant}{" "}
+                    replaces{" "}
+                    {approvedVariant.proposal.replaceLabel ||
+                      approvedVariant.proposal.replaceVariant}{" "}
+                    for {channel}.
+                  </p>
+                  {approvedVariantDefinition && (
+                    <p className={`mt-1 max-w-lg text-[10px] ${muted}`}>
+                      {approvedVariantDefinition.hypothesis}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    applyProspectMessageVariant(
+                      approvedVariant.proposal.promoteVariant,
+                      channel
+                    )
+                  }
+                  disabled={
+                    !approvedVariantDefinition ||
+                    approvedVariantDefinition.channel !== channel ||
+                    variantKey === approvedVariant.proposal.promoteVariant
+                  }
+                  className="rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Use for this draft
+                </button>
+                <p className={`w-full text-[10px] ${muted}`}>
+                  This renders the registered subject and copy into this draft
+                  only. It does not send, dial, or change runtime outreach
+                  policy.
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="text-xs">
+                <span className={`block mb-1 ${muted}`}>
+                  Message strategy
+                </span>
+                <select
+                  value={
+                    getProspectMessageVariantDefinition(variantKey)?.channel ===
+                    channel
+                      ? variantKey
+                      : "operator-custom"
+                  }
+                  onChange={(event) =>
+                    applyProspectMessageVariant(event.target.value, channel)
+                  }
+                  className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                >
+                  {availableMessageVariants.map((variant) => (
+                    <option key={variant.key} value={variant.key}>
+                      {variant.label} ({variant.key})
+                    </option>
+                  ))}
+                  <option value="operator-custom" disabled>
+                    Custom reviewed copy
+                  </option>
+                </select>
+              </label>
+              <label className="text-xs">
+                <span className={`block mb-1 ${muted}`}>
+                  Maximum cost, cents
+                </span>
+                <input
+                  type="number"
+                  min={channel === "email" ? 0 : 1}
+                  max={channel === "email" ? 5 : 100}
+                  value={maxCostCents}
+                  onChange={(event) =>
+                    setMaxCostCents(Number(event.target.value))
+                  }
+                  className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                />
+              </label>
+            </div>
+            {channel === "email" && (
+              <>
+                <label className="text-xs">
+                  <span className={`block mb-1 ${muted}`}>Subject</span>
+                  <input
+                    value={subject}
+                    onChange={(event) => {
+                      setSubject(event.target.value);
+                      markDraftAsCustom();
+                    }}
+                    className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                  />
+                </label>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="text-xs">
+                    <span className={`block mb-1 ${muted}`}>
+                      Sender identity
+                    </span>
+                    <input
+                      value={senderIdentity}
+                      onChange={(event) =>
+                        setSenderIdentity(event.target.value)
+                      }
+                      className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                    />
+                  </label>
+                  <label className="text-xs">
+                    <span className={`block mb-1 ${muted}`}>
+                      Physical postal address
+                    </span>
+                    <input
+                      value={physicalPostalAddress}
+                      onChange={(event) =>
+                        setPhysicalPostalAddress(event.target.value)
+                      }
+                      placeholder="Required for commercial email"
+                      className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                    />
+                  </label>
+                </div>
+                <label className="text-xs">
+                  <span className={`block mb-1 ${muted}`}>
+                    Commercial-message disclosure
+                  </span>
+                  <input
+                    value={advertisementDisclosure}
+                    onChange={(event) =>
+                      setAdvertisementDisclosure(event.target.value)
+                    }
+                    className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                  />
+                </label>
+                <label className="text-xs">
+                  <span className={`block mb-1 ${muted}`}>
+                    Opt-out instructions
+                  </span>
+                  <input
+                    value={optOutInstructions}
+                    onChange={(event) =>
+                      setOptOutInstructions(event.target.value)
+                    }
+                    className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                  />
+                </label>
+              </>
+            )}
+            <label className="text-xs">
+              <span className={`block mb-1 ${muted}`}>
+                {channel === "email" ? "Email body" : "Operator call brief"}
+              </span>
+              <textarea
+                rows={8}
+                value={content}
+                onChange={(event) => {
+                  setContent(event.target.value);
+                  markDraftAsCustom();
+                }}
+                className={`w-full resize-y rounded-lg border px-3 py-2 leading-relaxed ${panel}`}
+              />
+            </label>
+            <button
+              onClick={prepareDraft}
+              disabled={
+                busy ||
+                currentLead.review_state !== "qualified" ||
+                evidence.length === 0 ||
+                (channel === "email"
+                  ? !currentLead.email ||
+                    currentLead.email_verification !==
+                      "verified_owner_email" ||
+                    senderIdentity.trim().length < 2 ||
+                    advertisementDisclosure.trim().length < 10 ||
+                    physicalPostalAddress.trim().length < 10 ||
+                    optOutInstructions.trim().length < 10
+                  : !currentLead.phone ||
+                    currentLead.phone_contact_mode !==
+                      "operator_review_only")
+              }
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-violet-700 px-4 py-2.5 text-xs font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <FileText size={14} /> Prepare for approval
+            </button>
+          </section>
+
+          <section
+            id="prospect-qc-revision-queue"
+            className="space-y-3"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold">QC revision queue</p>
+                <p className={`text-xs ${muted}`}>
+                  Failed deterministic checks have no approval or execution
+                  authority.
+                </p>
+              </div>
+              <span className="rounded bg-amber-950 px-2 py-1 text-[10px] font-semibold text-amber-300">
+                {
+                  qcRevisions.filter(
+                    revision => revision.state === "REVISION_REQUIRED"
+                  ).length
+                }{" "}
+                open
+              </span>
+            </div>
+            {loading ? (
+              <div className="flex justify-center py-6">
+                <Loader2 size={18} className="animate-spin text-gray-500" />
+              </div>
+            ) : qcRevisions.length === 0 ? (
+              <div className={`rounded-lg border p-4 text-xs ${panel} ${muted}`}>
+                No drafts are waiting for QC revision.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {qcRevisions.map(revision => (
+                  <div
+                    key={revision.revision_id}
+                    id={`prospect-qc-revision-${revision.revision_id}`}
+                    className={`rounded-lg border p-4 ${panel}`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold uppercase">
+                          {revision.channel} · {revision.variant_key}
+                        </p>
+                        <p className={`truncate text-[10px] ${muted}`}>
+                          {revision.recipient}
+                        </p>
+                      </div>
+                      <span
+                        className={`rounded px-2 py-1 text-[10px] font-semibold ${
+                          revision.state === "REVISION_REQUIRED"
+                            ? "bg-amber-950 text-amber-300"
+                            : revision.state === "SUPERSEDED"
+                              ? "bg-emerald-950 text-emerald-300"
+                              : "bg-gray-800 text-gray-300"
+                        }`}
+                      >
+                        {revision.state.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    {revision.subject && (
+                      <p className="mt-3 text-xs font-semibold">
+                        {revision.subject}
+                      </p>
+                    )}
+                    <p className={`mt-2 whitespace-pre-wrap text-xs leading-relaxed ${muted}`}>
+                      {revision.content}
+                    </p>
+                    <div className="mt-3 rounded border border-red-900/70 bg-red-950/20 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[10px] font-semibold uppercase text-red-300">
+                          Deterministic QC failed
+                        </p>
+                        <p className="text-[10px] text-gray-500">
+                          {revision.qc_receipt.ruleVersion}
+                        </p>
+                      </div>
+                      <div className="mt-2 space-y-1.5">
+                        {revision.qc_receipt.ruleResults
+                          .filter(rule => !rule.passed)
+                          .map(rule => (
+                            <div
+                              key={rule.code}
+                              className="flex items-start gap-2 text-[11px] text-red-200"
+                            >
+                              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                              <span>
+                                <strong>{rule.code}</strong>: {rule.detail}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                    <div className={`mt-3 grid gap-1 text-[10px] ${muted}`}>
+                      <p className="break-all">
+                        Receipt: {revision.qc_receipt.receiptId}
+                      </p>
+                      <p className="break-all">
+                        Payload: {revision.payload_hash}
+                      </p>
+                      <p>Prepared: {fmt.date(revision.prepared_at)}</p>
+                      <p>
+                        Authority: no approval, provider request, email, or
+                        call
+                      </p>
+                    </div>
+                    {revision.state === "REVISION_REQUIRED" ? (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-[auto_minmax(180px,1fr)_auto]">
+                        <button
+                          type="button"
+                          onClick={() => loadQcRevisionIntoEditor(revision)}
+                          disabled={busy}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-800 px-3 py-2 text-[11px] font-semibold text-amber-300 hover:bg-amber-950/40 disabled:opacity-50"
+                        >
+                          <Pencil size={12} /> Load for revision
+                        </button>
+                        <input
+                          value={
+                            revisionRejectReasons[revision.revision_id] || ""
+                          }
+                          onChange={event =>
+                            setRevisionRejectReasons(current => ({
+                              ...current,
+                              [revision.revision_id]: event.target.value,
+                            }))
+                          }
+                          placeholder="Rejection reason"
+                          className={`min-w-0 rounded-lg border px-3 py-2 text-xs ${panel}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => rejectQcRevision(revision)}
+                          disabled={busy}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-700 px-3 py-2 text-[11px] font-semibold text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+                        >
+                          <X size={12} /> Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <p className={`mt-3 text-[10px] ${muted}`}>
+                        {revision.state === "SUPERSEDED"
+                          ? `Superseded by passing approval ${revision.superseded_by_approval_id || "record"}.`
+                          : `Rejected${revision.rejected_by ? ` by ${revision.rejected_by}` : ""}: ${revision.rejection_reason || "No reason recorded."}`}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section
+            id="prospect-approval-ledger"
+            className="space-y-3 pb-8"
+          >
+            <div>
+              <p className="text-sm font-semibold">Approval ledger</p>
+              <p className={`text-xs ${muted}`}>
+                Every state is durable and bound to the displayed payload hash.
+              </p>
+            </div>
+            {(channel === "call" ||
+              jobs.some(job => job.channel === "call")) && (
+              <div
+                className={`rounded-lg border p-3 text-[10px] ${
+                  manualCall?.availableForWorkspace
+                    ? "border-emerald-900/60 bg-emerald-950/20 text-emerald-300"
+                    : "border-amber-900/60 bg-amber-950/20 text-amber-300"
+                }`}
+              >
+                <p className="font-semibold">
+                  {manualCall?.availableForWorkspace
+                    ? "Manual-call lane available"
+                    : "Manual-call lane locked"}
+                </p>
+                <p className="mt-1 leading-relaxed text-gray-400">
+                  {manualCall?.availableForWorkspace
+                    ? `Workspace locked, operator dial only, with a rolling cap of ${manualCall.dailyApprovalCap || 1} approval per 24 hours.`
+                    : manualCall?.enabled
+                      ? `Configuration incomplete: ${manualCall.missing.join(", ") || "workspace binding mismatch"}.`
+                      : "Enable the reviewed operator-only lane before approving or opening a prospect dialer."}
+                  {" "}SMIRK cannot auto-dial from this workflow.
+                </p>
+              </div>
+            )}
+            {loading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 size={18} className="animate-spin text-gray-500" />
+              </div>
+            ) : jobs.length === 0 ? (
+              <div className={`border rounded-lg p-4 text-xs ${panel} ${muted}`}>
+                No outreach jobs prepared.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {jobs.map((job) => {
+                  const modelRecord = qcModelReviewFor(job);
+                  const completedModelRecord =
+                    completedQcModelReviewFor(job);
+                  const modelReview = effectiveQcModelReview(job);
+                  const manualDial =
+                    job.channel === "call"
+                      ? getProspectManualDialAvailability({
+                          recipient: job.recipient,
+                          receipt:
+                            job.approval_attestations
+                              ?.callComplianceReceipt,
+                          lane: manualCall,
+                          now: manualDialNow,
+                        })
+                      : null;
+                  return (
+                    <div
+                    key={job.approval_id}
+                    id={`prospect-outreach-${job.approval_id}`}
+                    className={`border rounded-lg p-4 transition-shadow ${panel} ${
+                      focusApprovalId === job.approval_id
+                        ? "ring-2 ring-violet-500 ring-offset-2 ring-offset-gray-950"
+                        : ""
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold uppercase">
+                          {job.channel} · {job.variant_key}
+                        </p>
+                        <p className={`truncate text-[10px] ${muted}`}>
+                          {job.recipient}
+                        </p>
+                      </div>
+                      <span className="rounded bg-gray-800 px-2 py-1 text-[10px] font-semibold text-gray-300">
+                        {job.state}
+                      </span>
+                    </div>
+                    {job.experiment_assignment && (
+                      <div
+                        className={`mt-3 rounded border px-2.5 py-2 text-[10px] ${
+                          job.experiment_assignment.protocolCompliant
+                            ? "border-cyan-900/70 bg-cyan-950/20 text-cyan-400"
+                            : "border-amber-900/70 bg-amber-950/20 text-amber-400"
+                        }`}
+                      >
+                        Experiment {job.experiment_assignment.arm} arm ·
+                        assigned{" "}
+                        {job.experiment_assignment.assignedVariantKey} ·{" "}
+                        {job.experiment_assignment.protocolCompliant
+                          ? "protocol matched"
+                          : `off protocol as ${job.experiment_assignment.actualVariantKey}`}
+                      </div>
+                    )}
+                    {job.qc_receipt ? (
+                      <div
+                        className={`mt-3 rounded border px-2.5 py-2 text-[10px] ${
+                          job.qc_receipt.deterministicPassed
+                            ? job.qc_receipt.reviewPriority ===
+                              "elevated"
+                              ? "border-amber-900/70 bg-amber-950/20 text-amber-300"
+                              : "border-emerald-900/70 bg-emerald-950/20 text-emerald-300"
+                            : "border-red-900/70 bg-red-950/20 text-red-300"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-semibold">
+                            QC{" "}
+                            {job.qc_receipt.deterministicPassed
+                              ? "eligible for human review"
+                              : "revision required"}
+                          </span>
+                          <span>
+                            Model:{" "}
+                            {(modelReview?.status ||
+                              "NOT_RUN").toLowerCase()}
+                          </span>
+                        </div>
+                        <p className="mt-1 leading-relaxed text-gray-500">
+                          Deterministic rules{" "}
+                          {job.qc_receipt.deterministicPassed
+                            ? "passed"
+                            : "failed"}
+                          . QC authorizes neither contact nor execution.
+                        </p>
+                        <p className="mt-1 font-mono text-gray-600">
+                          {job.qc_receipt.receiptId}
+                        </p>
+                        {(modelReview?.failureReasons || []).map(
+                          (reason) => (
+                            <p
+                              key={reason}
+                              className="mt-1 leading-relaxed text-amber-400"
+                            >
+                              {reason}
+                            </p>
+                          )
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded border border-red-900/70 bg-red-950/20 px-2.5 py-2 text-[10px] text-red-300">
+                        Legacy draft without a QC receipt. Prepare a new draft;
+                        this one cannot be approved or executed.
+                      </div>
+                    )}
+                    {modelRecord && (
+                      <div
+                        className={`mt-3 rounded border px-2.5 py-2 text-[10px] ${
+                          modelRecord.state === "COMPLETED"
+                            ? "border-cyan-900/70 bg-cyan-950/20 text-cyan-300"
+                            : modelRecord.state === "SENDING"
+                              ? "border-amber-900/70 bg-amber-950/20 text-amber-300"
+                              : "border-red-900/70 bg-red-950/20 text-red-300"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-semibold">
+                            Advisory QC {modelRecord.state.toLowerCase()}
+                          </span>
+                          <span>
+                            Reserved {modelRecord.reserved_cost_cents}c
+                          </span>
+                        </div>
+                        <p className="mt-1 leading-relaxed text-gray-500">
+                          {modelRecord.state === "COMPLETED"
+                            ? "Immutable receipt recorded. Human approval remains mandatory."
+                            : "No automatic retry is permitted for this provider request."}
+                        </p>
+                        <p className="mt-1 break-all font-mono text-gray-600">
+                          {modelRecord.review_id}
+                        </p>
+                        {modelRecord.failure_code && (
+                          <p className="mt-1 break-all font-mono text-red-400">
+                            {modelRecord.failure_code}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {job.subject && (
+                      <p className="mt-3 text-xs font-semibold">{job.subject}</p>
+                    )}
+                    <p className={`mt-2 whitespace-pre-wrap text-xs ${muted}`}>
+                      {job.content}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-600">
+                      <span>Cost cap: {job.max_cost_cents}c</span>
+                      <span>Hash: {job.payload_hash.slice(0, 12)}...</span>
+                      <span>Expires: {fmt.date(job.expires_at)}</span>
+                    </div>
+                    {job.state === "PREPARED" && (
+                      <div className="mt-3 space-y-3">
+                        {job.qc_receipt?.deterministicPassed === true &&
+                          qcModelProvider?.availableForWorkspace &&
+                          !modelRecord && (
+                            <div className="space-y-2 rounded-lg border border-cyan-900/60 bg-cyan-950/20 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-[10px] leading-relaxed text-gray-400">
+                                  {qcModelProvider.requiredForApproval
+                                    ? "Required pre-approval"
+                                    : "Optional"}{" "}
+                                  evidence-bound review for this draft only. It
+                                  reserves{" "}
+                                  {qcModelProvider.reservedCostCents ?? "?"}c,
+                                  cannot approve contact, and never sends or
+                                  dials.
+                                </p>
+                                <Microscope
+                                  size={14}
+                                  className="shrink-0 text-cyan-400"
+                                />
+                              </div>
+                              <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    qcModelReviewChecks[
+                                      job.approval_id
+                                    ] === true
+                                  }
+                                  onChange={(event) =>
+                                    setQcModelReviewChecks(current => ({
+                                      ...current,
+                                      [job.approval_id]:
+                                        event.target.checked,
+                                    }))
+                                  }
+                                />
+                                Run one capped advisory review against this
+                                exact draft and evidence
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => runQcModelReview(job)}
+                                disabled={
+                                  busy ||
+                                  qcModelReviewChecks[
+                                    job.approval_id
+                                  ] !== true
+                                }
+                                className="w-full rounded-lg bg-cyan-800 px-3 py-2 text-[11px] font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Run advisory QC
+                              </button>
+                            </div>
+                          )}
+                        {qcModelProvider?.requiredForApproval &&
+                          !completedModelRecord?.receipt && (
+                            <div className="rounded-lg border border-amber-900/60 bg-amber-950/20 p-3 text-[10px] leading-relaxed text-amber-300">
+                              Approval is locked until this exact draft has a
+                              completed advisory receipt. Provider availability
+                              does not waive that requirement.
+                            </div>
+                          )}
+                        <div className="space-y-2 text-[10px] text-gray-400">
+                          <label className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={
+                                checksFor(job.approval_id).recipient
+                              }
+                              onChange={(event) =>
+                                setApprovalCheck(
+                                  job.approval_id,
+                                  "recipient",
+                                  event.target.checked
+                                )
+                              }
+                            />
+                            Exact recipient and content reviewed
+                          </label>
+                          <label className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={
+                                checksFor(job.approval_id).suppression
+                              }
+                              onChange={(event) =>
+                                setApprovalCheck(
+                                  job.approval_id,
+                                  "suppression",
+                                  event.target.checked
+                                )
+                              }
+                            />
+                            Suppression status checked
+                          </label>
+                          {job.channel === "email" ? (
+                            <label className="flex items-start gap-2">
+                              <input
+                                type="checkbox"
+                                checked={
+                                  checksFor(job.approval_id)
+                                    .emailCompliance
+                                }
+                                onChange={(event) =>
+                                  setApprovalCheck(
+                                    job.approval_id,
+                                    "emailCompliance",
+                                    event.target.checked
+                                  )
+                                }
+                              />
+                              Sender identity, commercial disclosure, postal
+                              address, and opt-out instructions reviewed
+                            </label>
+                          ) : (
+                            <>
+                              <label className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    checksFor(job.approval_id).dnc
+                                  }
+                                  onChange={event => {
+                                    const checked = event.target.checked;
+                                    setApprovalCheck(
+                                      job.approval_id,
+                                      "dnc",
+                                      checked
+                                    );
+                                    setCallComplianceField(
+                                      job.approval_id,
+                                      "checkedAt",
+                                      checked
+                                        ? new Date().toISOString()
+                                        : ""
+                                    );
+                                  }}
+                                />
+                                Federal, state, and internal do-not-call
+                                checks completed
+                              </label>
+                              <label className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    checksFor(job.approval_id)
+                                      .callingWindow
+                                  }
+                                  onChange={(event) =>
+                                    setApprovalCheck(
+                                      job.approval_id,
+                                      "callingWindow",
+                                      event.target.checked
+                                    )
+                                  }
+                                />
+                                Recipient-local calling window checked
+                              </label>
+                              <div className="grid grid-cols-1 gap-2 border-t border-gray-800 pt-2 sm:grid-cols-2">
+                                <label className="text-[10px] text-gray-400 sm:col-span-2">
+                                  Recipient timezone
+                                  <input
+                                    value={
+                                      callComplianceFor(job.approval_id)
+                                        .recipientTimezone
+                                    }
+                                    onChange={event =>
+                                      setCallComplianceField(
+                                        job.approval_id,
+                                        "recipientTimezone",
+                                        event.target.value
+                                      )
+                                    }
+                                    placeholder="America/Los_Angeles"
+                                    className="mt-1 w-full rounded-md border border-gray-800 bg-gray-950 px-2 py-1.5 text-[11px] text-white"
+                                  />
+                                </label>
+                                {(
+                                  [
+                                    [
+                                      "Federal source",
+                                      "federalSource",
+                                      "Federal reference",
+                                      "federalReference",
+                                    ],
+                                    [
+                                      "State source",
+                                      "stateSource",
+                                      "State reference",
+                                      "stateReference",
+                                    ],
+                                    [
+                                      "Internal source",
+                                      "internalSource",
+                                      "Internal reference",
+                                      "internalReference",
+                                    ],
+                                  ] as const
+                                ).flatMap(
+                                  ([
+                                    sourceLabel,
+                                    sourceKey,
+                                    referenceLabel,
+                                    referenceKey,
+                                  ]) => [
+                                    <label
+                                      key={sourceKey}
+                                      className="text-[10px] text-gray-400"
+                                    >
+                                      {sourceLabel}
+                                      <input
+                                        value={
+                                          callComplianceFor(
+                                            job.approval_id
+                                          )[sourceKey]
+                                        }
+                                        onChange={event =>
+                                          setCallComplianceField(
+                                            job.approval_id,
+                                            sourceKey,
+                                            event.target.value
+                                          )
+                                        }
+                                        className="mt-1 w-full rounded-md border border-gray-800 bg-gray-950 px-2 py-1.5 text-[11px] text-white"
+                                      />
+                                    </label>,
+                                    <label
+                                      key={referenceKey}
+                                      className="text-[10px] text-gray-400"
+                                    >
+                                      {referenceLabel}
+                                      <input
+                                        value={
+                                          callComplianceFor(
+                                            job.approval_id
+                                          )[referenceKey]
+                                        }
+                                        onChange={event =>
+                                          setCallComplianceField(
+                                            job.approval_id,
+                                            referenceKey,
+                                            event.target.value
+                                          )
+                                        }
+                                        className="mt-1 w-full rounded-md border border-gray-800 bg-gray-950 px-2 py-1.5 text-[11px] text-white"
+                                      />
+                                    </label>,
+                                  ]
+                                )}
+                              </div>
+                              <label className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    checksFor(job.approval_id).manualDial
+                                  }
+                                  onChange={(event) =>
+                                    setApprovalCheck(
+                                      job.approval_id,
+                                      "manualDial",
+                                      event.target.checked
+                                    )
+                                  }
+                                />
+                                Manual operator dial only
+                              </label>
+                            </>
+                          )}
+                          {job.qc_receipt &&
+                            ["FLAGGED", "ERROR"].includes(
+                              modelReview?.status || ""
+                            ) && (
+                              <label className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    checksFor(job.approval_id)
+                                      .qcAdvisory
+                                  }
+                                  onChange={(event) =>
+                                    setApprovalCheck(
+                                      job.approval_id,
+                                      "qcAdvisory",
+                                      event.target.checked
+                                    )
+                                  }
+                                />
+                                Advisory model flags reviewed; deterministic
+                                rules and human judgment remain authoritative
+                              </label>
+                            )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => decideJob(job, "reject")}
+                            disabled={busy}
+                            className="flex-1 rounded-lg border border-red-900/50 px-3 py-2 text-[11px] text-red-300 hover:bg-red-950/30 disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                          <button
+                            onClick={() => decideJob(job, "approve")}
+                            disabled={busy || !approvalReady(job)}
+                            className="flex-1 rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                          >
+                            Approve exact draft
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {job.state === "APPROVED" && (
+                      <div className="mt-3 space-y-3 rounded-lg border border-amber-900/50 bg-amber-950/20 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-[10px] leading-relaxed text-amber-300">
+                            Approved, not executed.{" "}
+                            {job.channel === "email" &&
+                            emailProvider?.availableForWorkspace
+                              ? "Submitting this exact email requires the separate confirmation below."
+                              : "Complete the exact action outside SMIRK, then record verifiable proof."}
+                          </p>
+                          <button
+                            onClick={() => decideJob(job, "cancel")}
+                            disabled={busy}
+                            className="shrink-0 text-[10px] text-red-300 hover:text-red-200 disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        {job.channel === "call" &&
+                          job.approval_attestations
+                            ?.callComplianceReceipt && (
+                            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-amber-900/40 pt-2 text-[10px]">
+                              <dt className="text-gray-500">Timezone</dt>
+                              <dd className="text-right text-gray-300">
+                                {
+                                  job.approval_attestations
+                                    .callComplianceReceipt
+                                    .recipientTimezone
+                                }
+                              </dd>
+                              <dt className="text-gray-500">Window</dt>
+                              <dd className="text-right text-gray-300">
+                                09:00-17:00 local
+                              </dd>
+                              <dt className="text-gray-500">Evidence valid</dt>
+                              <dd className="text-right text-gray-300">
+                                {new Date(
+                                  job.approval_attestations
+                                    .callComplianceReceipt.validUntil
+                                ).toLocaleString()}
+                              </dd>
+                              <dt className="text-gray-500">Receipt</dt>
+                              <dd className="truncate text-right font-mono text-gray-300">
+                                {job.approval_attestations
+                                  .callComplianceReceiptHash?.slice(0, 12) ||
+                                  "missing"}
+                              </dd>
+                            </dl>
+                          )}
+                        {job.channel === "email" &&
+                          emailProvider?.availableForWorkspace && (
+                            <div className="space-y-2 rounded-lg border border-emerald-900/50 bg-emerald-950/20 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-[10px] leading-relaxed text-gray-400">
+                                  One recipient only. Reserved cost:{" "}
+                                  {emailProvider.reservedCostPerEmailCents ??
+                                    "?"}
+                                  c. Rolling cap:{" "}
+                                  {emailProvider.dailyRecipientCap ?? "?"}{" "}
+                                  recipient
+                                  {emailProvider.dailyRecipientCap === 1
+                                    ? ""
+                                    : "s"}
+                                  .
+                                </p>
+                                <Mail
+                                  size={14}
+                                  className="shrink-0 text-emerald-400"
+                                />
+                              </div>
+                              <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    providerSendChecks[job.approval_id] ===
+                                    true
+                                  }
+                                  onChange={(event) =>
+                                    setProviderSendChecks((current) => ({
+                                      ...current,
+                                      [job.approval_id]:
+                                        event.target.checked,
+                                    }))
+                                  }
+                                />
+                                Send only this displayed email to this displayed
+                                recipient
+                              </label>
+                              <button
+                                onClick={() => executeApprovedEmail(job)}
+                                disabled={
+                                  busy ||
+                                  providerSendChecks[job.approval_id] !==
+                                    true
+                                }
+                                className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Send this one approved email
+                              </button>
+                            </div>
+                          )}
+                        {job.channel === "call" && (
+                          <details
+                            open
+                            className="rounded-lg border border-gray-800 p-3"
+                          >
+                          <summary className="cursor-pointer text-[10px] font-semibold text-gray-400">
+                            Record one manual call
+                          </summary>
+                          <div className="mt-3 space-y-2">
+                            {manualDial && (
+                              <div className="space-y-2 rounded-lg border border-gray-800 bg-gray-950/60 p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p
+                                      className={`text-[10px] font-semibold ${
+                                        manualDial.eligible
+                                          ? "text-emerald-300"
+                                          : "text-amber-300"
+                                      }`}
+                                    >
+                                      {manualDial.eligible
+                                        ? "Manual dial window open"
+                                        : "Manual dial unavailable"}
+                                    </p>
+                                    <p className="mt-1 text-[10px] leading-relaxed text-gray-500">
+                                      {manualDial.localTime
+                                        ? `${manualDial.localTime} recipient local time. `
+                                        : ""}
+                                      {manualDial.detail}
+                                    </p>
+                                  </div>
+                                  <PhoneCall
+                                    size={14}
+                                    className={
+                                      manualDial.eligible
+                                        ? "shrink-0 text-emerald-400"
+                                        : "shrink-0 text-amber-400"
+                                    }
+                                  />
+                                </div>
+                                <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      manualDialChecks[
+                                        job.approval_id
+                                      ] === true
+                                    }
+                                    disabled={!manualDial.eligible}
+                                    onChange={event =>
+                                      setManualDialChecks(current => ({
+                                        ...current,
+                                        [job.approval_id]:
+                                          event.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  Rechecked the approved recipient and current
+                                  local calling window
+                                </label>
+                                {manualDial.eligible &&
+                                manualDial.href &&
+                                manualDialChecks[job.approval_id] ===
+                                  true ? (
+                                  <a
+                                    href={manualDial.href}
+                                    aria-label={`Open phone dialer for ${job.recipient}`}
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-emerald-600"
+                                  >
+                                    <PhoneCall size={13} /> Open dialer
+                                  </a>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    title={manualDial.detail}
+                                    className="inline-flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-lg bg-gray-800 px-3 py-2 text-[11px] font-semibold text-gray-500 opacity-70"
+                                  >
+                                    <PhoneCall size={13} /> Dialer locked
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            <label className="block text-[10px]">
+                              <span className="mb-1 block text-gray-400">
+                                External completion proof
+                              </span>
+                              <input
+                                value={
+                                  executionProofs[job.approval_id] || ""
+                                }
+                                onChange={(event) =>
+                                  setExecutionProofs((current) => ({
+                                    ...current,
+                                    [job.approval_id]: event.target.value,
+                                  }))
+                                }
+                                placeholder={
+                                  "manual:phone-log-reference"
+                                }
+                                className={`w-full rounded-lg border px-3 py-2 font-mono ${panel}`}
+                              />
+                            </label>
+                            <button
+                              onClick={() => recordExternalExecution(job)}
+                              disabled={
+                                busy ||
+                                !executionProofReferencePattern.test(
+                                  String(
+                                    executionProofs[job.approval_id] || ""
+                                  ).trim()
+                                )
+                              }
+                              className="w-full rounded-lg bg-gray-800 px-3 py-2 text-[11px] font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Record completed external action
+                            </button>
+                          </div>
+                          </details>
+                        )}
+                      </div>
+                    )}
+                    {job.state === "SENDING" && (
+                      <div className="mt-3 space-y-3 rounded-lg border border-amber-900/50 bg-amber-950/20 p-3">
+                        <div>
+                          <p className="text-[10px] font-semibold text-amber-300">
+                            Provider outcome not confirmed
+                          </p>
+                          <p className="mt-1 text-[10px] leading-relaxed text-gray-400">
+                            The durable request is in flight or uncertain.
+                            Delivery is not confirmed. Any retry reuses the same
+                            provider idempotency key.
+                          </p>
+                          <p className="mt-2 text-[10px] text-gray-500">
+                            Attempts: {job.provider_attempts || 1}
+                            {job.failure_code
+                              ? ` · ${job.failure_code}`
+                              : ""}
+                          </p>
+                        </div>
+                        {job.provider_response_at &&
+                          emailProvider?.availableForWorkspace && (
+                            <>
+                              <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    providerSendChecks[job.approval_id] ===
+                                    true
+                                  }
+                                  onChange={(event) =>
+                                    setProviderSendChecks((current) => ({
+                                      ...current,
+                                      [job.approval_id]:
+                                        event.target.checked,
+                                    }))
+                                  }
+                                />
+                                Retry only this exact approved email with the
+                                existing idempotency key
+                              </label>
+                              <button
+                                onClick={() => executeApprovedEmail(job)}
+                                disabled={
+                                  busy ||
+                                  providerSendChecks[job.approval_id] !==
+                                    true
+                                }
+                                className="w-full rounded-lg border border-amber-700 px-3 py-2 text-[11px] font-semibold text-amber-200 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Retry same provider request
+                              </button>
+                            </>
+                          )}
+                      </div>
+                    )}
+                    {job.state === "FAILED" && (
+                      <div className="mt-3 rounded-lg border border-red-900/50 bg-red-950/20 p-3">
+                        <p className="text-[10px] font-semibold text-red-300">
+                          Provider request failed
+                        </p>
+                        <p className="mt-1 text-[10px] leading-relaxed text-gray-400">
+                          No provider acceptance was recorded. Review the error
+                          before preparing a new approval.
+                        </p>
+                        {job.failure_code && (
+                          <p className="mt-2 break-all font-mono text-[10px] text-gray-500">
+                            {job.failure_code}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {job.state === "SENT" && (
+                      <div className="mt-3 space-y-3 rounded-lg border border-emerald-900/50 bg-emerald-950/20 p-3">
+                        <div>
+                          <p className="text-[10px] font-semibold text-emerald-300">
+                            {job.provider_name === "resend"
+                              ? "Accepted by Resend"
+                              : "External action recorded"}
+                          </p>
+                          <p className="mt-1 text-[10px] leading-relaxed text-gray-400">
+                            {job.provider_name === "resend"
+                              ? "The provider accepted one recipient-specific email. Delivery is not confirmed until a measured delivery outcome is recorded."
+                              : "SMIRK recorded operator-supplied proof; it did not send the email or dial the number."}
+                          </p>
+                          {job.provider_message_id && (
+                            <p className="mt-2 break-all font-mono text-[10px] text-gray-500">
+                              {job.provider_message_id}
+                            </p>
+                          )}
+                          {job.execution_proof_reference && (
+                            <p className="mt-2 break-all font-mono text-[10px] text-gray-500">
+                              {job.execution_proof_reference}
+                            </p>
+                          )}
+                        </div>
+
+                        {outcomes.filter(
+                          (outcome) =>
+                            outcome.approval_id === job.approval_id
+                        ).length > 0 && (
+                          <div className="space-y-2 border-t border-gray-800 pt-3">
+                            <p className="text-[10px] font-semibold uppercase text-gray-500">
+                              Recorded outcomes
+                            </p>
+                            {outcomes
+                              .filter(
+                                (outcome) =>
+                                  outcome.approval_id === job.approval_id
+                              )
+                              .map((outcome) => (
+                                <div
+                                  key={outcome.external_event_id}
+                                  className="rounded border border-gray-800 p-2 text-[10px]"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-semibold text-gray-300">
+                                      {outcome.outcome.replaceAll("_", " ")}
+                                    </span>
+                                    <span className="text-gray-600">
+                                      {fmt.date(outcome.occurred_at)}
+                                    </span>
+                                  </div>
+                                  {outcome.notes && (
+                                    <p className="mt-1 text-gray-500">
+                                      {outcome.notes}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                          <label className="text-[10px]">
+                            <span className="mb-1 block text-gray-400">
+                              Measured outcome
+                            </span>
+                            <select
+                              value={outcomeDraftFor(job).outcome}
+                              onChange={(event) =>
+                                setOutcomeDrafts((current) => ({
+                                  ...current,
+                                  [job.approval_id]: {
+                                    ...outcomeDraftFor(job),
+                                    outcome: event.target
+                                      .value as ProspectOutcomeValue,
+                                  },
+                                }))
+                              }
+                              className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                            >
+                              {prospectOutcomesByChannel[job.channel].map(
+                                (outcome) => (
+                                  <option key={outcome} value={outcome}>
+                                    {outcome.replaceAll("_", " ")}
+                                  </option>
+                                )
+                              )}
+                            </select>
+                          </label>
+                          <label className="text-[10px]">
+                            <span className="mb-1 block text-gray-400">
+                              Operator notes
+                            </span>
+                            <input
+                              value={outcomeDraftFor(job).notes}
+                              onChange={(event) =>
+                                setOutcomeDrafts((current) => ({
+                                  ...current,
+                                  [job.approval_id]: {
+                                    ...outcomeDraftFor(job),
+                                    notes: event.target.value,
+                                  },
+                                }))
+                              }
+                              placeholder="Observed result only"
+                              className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                            />
+                          </label>
+                        </div>
+                        <button
+                          onClick={() => recordMeasuredOutcome(job)}
+                          disabled={
+                            busy ||
+                            outcomes.some(
+                              (outcome) =>
+                                outcome.approval_id === job.approval_id &&
+                                outcome.outcome ===
+                                  outcomeDraftFor(job).outcome
+                            )
+                          }
+                          className="w-full rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {outcomes.some(
+                            (outcome) =>
+                              outcome.approval_id === job.approval_id &&
+                              outcome.outcome === outcomeDraftFor(job).outcome
+                          )
+                            ? "Outcome already recorded"
+                            : "Record measured outcome"}
+                        </button>
+                        <p className="text-[10px] leading-relaxed text-gray-500">
+                          Outcomes feed the scorecard. They never change runtime
+                          policy without a separate human decision.
+                        </p>
+                      </div>
+                    )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      </aside>
+    </div>,
+    document.body
+  );
+}
+
 function ProspectingPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [leads, setLeads] = useState<ProspectLead[]>([]);
+  const [revenueLoop, setRevenueLoop] =
+    useState<ProspectRevenueLoopStatus | null>(null);
+  const [revenueLoopError, setRevenueLoopError] = useState<string | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const [leadsLoading, setLeadsLoading] = useState(false);
-  const [dialing, setDialing] = useState(false);
   const [showNewCampaign, setShowNewCampaign] = useState(false);
-  const [showScriptEditor, setShowScriptEditor] = useState(false);
   const [showLeadImport, setShowLeadImport] = useState(false);
   const [newCampaign, setNewCampaign] = useState({ name: "", target_industry: "", target_location: "", agent_name: "FORGE", max_calls_per_day: 50, call_window_start: "09:00", call_window_end: "17:00" });
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchLoading, setSearchLoading] = useState(false);
   const [csvText, setCsvText] = useState("");
   const [manualLeads, setManualLeads] = useState("");
   const [seqStats, setSeqStats] = useState<{ total: number; pending: number; sent: number; failed: number } | null>(null);
   const [funnel, setFunnel] = useState<{ total: number; pending: number; dialed: number; answered: number; interested: number; voicemail: number; not_interested: number; callback: number; converted: number } | null>(null);
   const [pipelineView, setPipelineView] = useState<"table" | "pipeline">("table");
-  const [autoDialActive, setAutoDialActive] = useState(false);
-  const [autoDialCalls, setAutoDialCalls] = useState(0);
-  const [autoDialLastCallAt, setAutoDialLastCallAt] = useState<string | null>(null);
-  const [lastPitch, setLastPitch] = useState<string | null>(null);
+  const [selectedLead, setSelectedLead] = useState<ProspectLead | null>(null);
+  const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(
+    null
+  );
+  const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(
+    null
+  );
+  const [learning, setLearning] = useState<{
+    variants: ProspectLearningVariant[];
+    sampleSize: number;
+    eventCount: number;
+    studyDesign: "observational";
+  }>({
+    variants: [],
+    sampleSize: 0,
+    eventCount: 0,
+    studyDesign: "observational",
+  });
+  const [messageExperiments, setMessageExperiments] = useState<
+    ProspectMessageExperiment[]
+  >([]);
+  const [learningCandidates, setLearningCandidates] = useState<
+    ProspectLearningCandidate[]
+  >([]);
+  const [messagePolicies, setMessagePolicies] = useState<
+    ProspectMessagePolicyItem[]
+  >([]);
+  const [messagePolicyReleases, setMessagePolicyReleases] = useState<
+    ProspectMessagePolicyItem[]
+  >([]);
+  const [experimentDraft, setExperimentDraft] = useState(() => {
+    const channel = "email" as const;
+    const controlVariantKey =
+      getDefaultProspectMessageVariantKey(channel);
+    return {
+      channel,
+      controlVariantKey,
+      challengerVariantKey:
+        getPreferredProspectMessageChallengerKey({
+          channel,
+          controlVariantKey,
+        }) || "",
+      cohortSize: 20,
+    };
+  });
+  const [inboxPlacement, setInboxPlacement] =
+    useState<ProspectInboxPlacementStatus>({
+      tests: [],
+      configuration: { configured: false, missing: [] },
+      emailProvider: null,
+    });
+  const [inboxPlacementDraft, setInboxPlacementDraft] = useState({
+    controlVariantKey: "micro-after-hours-v1",
+    challengerVariantKey: "micro-urgent-workflow-v1",
+    mailboxes: [
+      {
+        label: "Google Workspace 1",
+        provider: "google_workspace" as ProspectInboxProvider,
+        email: "",
+      },
+      {
+        label: "Google Workspace 2",
+        provider: "google_workspace" as ProspectInboxProvider,
+        email: "",
+      },
+      {
+        label: "Microsoft 365 1",
+        provider: "microsoft_365" as ProspectInboxProvider,
+        email: "",
+      },
+      {
+        label: "Microsoft 365 2",
+        provider: "microsoft_365" as ProspectInboxProvider,
+        email: "",
+      },
+      {
+        label: "Yahoo or AOL 1",
+        provider: "yahoo_aol" as ProspectInboxProvider,
+        email: "",
+      },
+    ],
+    senderIdentity: "SMIRK",
+    advertisementDisclosure: "This is a commercial message from SMIRK.",
+    physicalPostalAddress: "",
+    optOutInstructions:
+      "If this isn't relevant, reply no and I won't follow up.",
+  });
+  const [inboxPlacementBusy, setInboxPlacementBusy] = useState<
+    string | null
+  >(null);
+  const [inboxPrepareChecked, setInboxPrepareChecked] = useState(false);
+  const [inboxApprovalChecks, setInboxApprovalChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [inboxSendChecks, setInboxSendChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [inboxInspectionChecks, setInboxInspectionChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [inboxInspectionDrafts, setInboxInspectionDrafts] = useState<
+    Record<string, ProspectInboxInspectionDraft>
+  >({});
+  const [inboxFinalizeChecks, setInboxFinalizeChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [learningBusy, setLearningBusy] = useState(false);
+  const [experimentActionChecks, setExperimentActionChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [experimentFeedChecks, setExperimentFeedChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [learningCandidateChecks, setLearningCandidateChecks] = useState<
+    Record<number, boolean>
+  >({});
+  const [policyApplicationChecks, setPolicyApplicationChecks] = useState<
+    Record<number, boolean>
+  >({});
+  const [policyRollbackChecks, setPolicyRollbackChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [policyRollbackReasons, setPolicyRollbackReasons] = useState<
+    Record<string, string>
+  >({});
+  const [velvetOutbox, setVelvetOutbox] = useState<
+    VelvetOutcomeOutboxItem[]
+  >([]);
+  const [velvetDispatch, setVelvetDispatch] =
+    useState<VelvetOutcomeDispatchStatus | null>(null);
+  const [velvetDispatchChecks, setVelvetDispatchChecks] = useState<
+    Record<number, boolean>
+  >({});
+  const [velvetBusyId, setVelvetBusyId] = useState<number | null>(
+    null
+  );
+  const [positiveOutcomeReviews, setPositiveOutcomeReviews] = useState<
+    ProspectPositiveOutcomeReview[]
+  >([]);
+  const [inboundReplyReviews, setInboundReplyReviews] = useState<
+    ProspectInboundReplyReview[]
+  >([]);
+  const [inboundReplyReviewError, setInboundReplyReviewError] =
+    useState<string | null>(null);
+  const [inboundReplyReviewBusyId, setInboundReplyReviewBusyId] =
+    useState<string | null>(null);
+  const [inboundReplyContentBusyId, setInboundReplyContentBusyId] =
+    useState<string | null>(null);
+  const [inboundReplyReviewDrafts, setInboundReplyReviewDrafts] =
+    useState<
+      Record<
+        string,
+        {
+          resolution: ProspectInboundReplyResolution;
+          notes: string;
+          confirmed: boolean;
+          optOutConfirmed: boolean;
+          selectedOutreachApprovalId: string;
+        }
+      >
+    >({});
+  const [positiveOutcomeReviewError, setPositiveOutcomeReviewError] =
+    useState<string | null>(null);
+  const [positiveOutcomeReviewBusyId, setPositiveOutcomeReviewBusyId] =
+    useState<string | null>(null);
+  const [positiveOutcomeReviewDrafts, setPositiveOutcomeReviewDrafts] =
+    useState<
+      Record<
+        string,
+        {
+          resolution: ProspectPositiveOutcomeResolution;
+          notes: string;
+          confirmed: boolean;
+        }
+      >
+    >({});
+  const [velvetSourceStatus, setVelvetSourceStatus] =
+    useState<VelvetLeadSourceStatus | null>(null);
+  const [velvetSourceRequests, setVelvetSourceRequests] = useState<
+    VelvetLeadSourceRequestItem[]
+  >([]);
+  const [velvetSourceBusy, setVelvetSourceBusy] = useState(false);
+  const [velvetSourceChecks, setVelvetSourceChecks] = useState<
+    Record<number, boolean>
+  >({});
+  const [velvetSourceDraft, setVelvetSourceDraft] = useState({
+    limit: 5,
+    category: "plumbing",
+    city: "Reno",
+    state: "NV",
+    learningMode: "none" as
+      | "none"
+      | "latest_released"
+      | "latest_approved",
+  });
+  const [velvetDiscoveryStatus, setVelvetDiscoveryStatus] =
+    useState<VelvetDiscoveryStatus | null>(null);
+  const [velvetActiveExperiment, setVelvetActiveExperiment] =
+    useState<VelvetAcquisitionExperimentStatus | null>(null);
+  const [velvetDiscoveryRequests, setVelvetDiscoveryRequests] = useState<
+    VelvetDiscoveryRequestItem[]
+  >([]);
+  const [velvetDiscoveryBusy, setVelvetDiscoveryBusy] = useState(false);
+  const [velvetDiscoveryChecks, setVelvetDiscoveryChecks] = useState<
+    Record<number, boolean>
+  >({});
+  const [velvetDiscoveryDraft, setVelvetDiscoveryDraft] = useState({
+    limit: 5,
+    category: "plumbing",
+    city: "Reno",
+    state: "NV",
+    learningMode: "none" as
+      "none" | "latest_released" | "latest_approved" | "experiment",
+    learnedDimension: "category" as "category" | "metro",
+  });
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+  const panel = dark
+    ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600"
+    : "bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400";
   const muted = dark ? "text-gray-500" : "text-gray-500";
   const sub = dark ? "text-gray-400" : "text-gray-600";
 
+  const blankInboxInspection = (): ProspectInboxInspectionDraft => ({
+    folder: "missing",
+    smtpAccepted: false,
+    spf: "NOT_CHECKED",
+    dkim: "NOT_CHECKED",
+    dmarc: "NOT_CHECKED",
+    fromAligned: false,
+    plainTextOnly: false,
+    trackingPixelAbsent: false,
+    unexpectedLinksAbsent: false,
+    complianceFooterRendered: false,
+    notes: "",
+  });
+
+  const inspectionDraftFor = (approvalId: string) =>
+    inboxInspectionDrafts[approvalId] || blankInboxInspection();
+
+  const updateInspectionDraft = (
+    approvalId: string,
+    update: Partial<ProspectInboxInspectionDraft>
+  ) => {
+    setInboxInspectionDrafts((current) => ({
+      ...current,
+      [approvalId]: {
+        ...(current[approvalId] || blankInboxInspection()),
+        ...update,
+      },
+    }));
+  };
+
+  const loadInboxPlacement = () => {
+    api<ProspectInboxPlacementStatus>(
+      "/api/prospecting/inbox-placement"
+    )
+      .then((data) =>
+        setInboxPlacement({
+          tests: data.tests || [],
+          configuration: data.configuration || {
+            configured: false,
+            missing: ["PROSPECT_INBOX_SEED_ALLOWLIST"],
+          },
+          emailProvider: data.emailProvider || null,
+        })
+      )
+      .catch(() =>
+        setInboxPlacement((current) => ({
+          ...current,
+          tests: [],
+        }))
+      );
+  };
+
   const loadCampaigns = () => {
+    api<ProspectRevenueLoopStatus>(
+      "/api/prospecting/revenue-loop"
+    )
+      .then((data) => {
+        setRevenueLoop(data);
+        setRevenueLoopError(null);
+      })
+      .catch((error) => {
+        setRevenueLoop(null);
+        setRevenueLoopError(
+          errorMessage(error, "Revenue-loop status unavailable.")
+        );
+      });
     api<{ campaigns: Campaign[] }>("/api/prospecting/campaigns")
       .then((d) => setCampaigns(d.campaigns || []))
       .catch(() => {})
       .finally(() => setLoading(false));
+    api<{
+      variants: ProspectLearningVariant[];
+      sampleSize: number;
+      eventCount: number;
+      studyDesign: "observational";
+    }>(
+      "/api/prospecting/learning/scorecard"
+    )
+      .then((data) => {
+        const variants = data.variants || [];
+        setLearning({
+          variants,
+          sampleSize: data.sampleSize || 0,
+          eventCount: data.eventCount || 0,
+          studyDesign: "observational",
+        });
+      })
+      .catch(() => {});
+    api<{ experiments: ProspectMessageExperiment[] }>(
+      "/api/prospecting/learning/experiments"
+    )
+      .then((data) => setMessageExperiments(data.experiments || []))
+      .catch(() => setMessageExperiments([]));
+    api<{ candidates: ProspectLearningCandidate[] }>(
+      "/api/prospecting/learning/candidates"
+    )
+      .then((data) => setLearningCandidates(data.candidates || []))
+      .catch(() => setLearningCandidates([]));
+    api<{
+      policies: ProspectMessagePolicyItem[];
+      releases: ProspectMessagePolicyItem[];
+    }>("/api/prospecting/learning/policies")
+      .then((data) => {
+        setMessagePolicies(data.policies || []);
+        setMessagePolicyReleases(data.releases || []);
+      })
+      .catch(() => {
+        setMessagePolicies([]);
+        setMessagePolicyReleases([]);
+      });
+    loadInboxPlacement();
+    api<{
+      events: VelvetOutcomeOutboxItem[];
+      dispatch: VelvetOutcomeDispatchStatus;
+    }>("/api/prospecting/velvet-outcomes/outbox")
+      .then((data) => {
+        setVelvetOutbox(data.events || []);
+        setVelvetDispatch(data.dispatch || null);
+      })
+      .catch(() => {});
+    api<{ reviews: ProspectPositiveOutcomeReview[] }>(
+      "/api/prospecting/positive-outcomes?state=pending"
+    )
+      .then((data) => {
+        setPositiveOutcomeReviews(data.reviews || []);
+        setPositiveOutcomeReviewError(null);
+      })
+      .catch((error) => {
+        setPositiveOutcomeReviews([]);
+        setPositiveOutcomeReviewError(
+          errorMessage(
+            error,
+            "Positive-outcome review queue unavailable."
+          )
+        );
+      });
+    api<{ reviews: ProspectInboundReplyReview[] }>(
+      "/api/prospecting/email-replies?state=pending"
+    )
+      .then((data) => {
+        setInboundReplyReviews(data.reviews || []);
+        setInboundReplyReviewError(null);
+      })
+      .catch((error) => {
+        setInboundReplyReviews([]);
+        setInboundReplyReviewError(
+          errorMessage(
+            error,
+            "Inbound-reply review queue unavailable."
+          )
+        );
+      });
+    api<VelvetLeadSourceStatus>(
+      "/api/prospecting/velvet-source/status"
+    )
+      .then(setVelvetSourceStatus)
+      .catch(() => setVelvetSourceStatus(null));
+    api<{ requests: VelvetLeadSourceRequestItem[] }>(
+      "/api/prospecting/velvet-source/requests"
+    )
+      .then((data) => setVelvetSourceRequests(data.requests || []))
+      .catch(() => setVelvetSourceRequests([]));
+    api<VelvetDiscoveryStatus>(
+      "/api/prospecting/velvet-discovery/status"
+    )
+      .then(setVelvetDiscoveryStatus)
+      .catch(() => setVelvetDiscoveryStatus(null));
+    api<VelvetAcquisitionExperimentStatus>(
+      "/api/prospecting/velvet-discovery/active-experiment",
+    )
+      .then(setVelvetActiveExperiment)
+      .catch(() => setVelvetActiveExperiment(null));
+    api<{ requests: VelvetDiscoveryRequestItem[] }>(
+      "/api/prospecting/velvet-discovery/requests"
+    )
+      .then((data) =>
+        setVelvetDiscoveryRequests(data.requests || [])
+      )
+      .catch(() => setVelvetDiscoveryRequests([]));
   };
 
   useEffect(() => { loadCampaigns(); }, []);
@@ -11129,79 +14866,6 @@ function ProspectingPage() {
     loadCampaigns();
   };
 
-  const dialNext = async () => {
-    if (!selectedCampaign) return;
-    setDialing(true);
-    try {
-      const r = await api<{ call_sid: string; lead: ProspectLead; pitch?: string }>(`/api/prospecting/campaigns/${selectedCampaign.id}/dial-next`, { method: "POST" });
-      if (r.pitch) setLastPitch(r.pitch);
-      addToast({ type: "success", message: `Dialing ${r.lead.business_name}…` });
-      loadLeads(selectedCampaign.id);
-      loadCampaigns();
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Dial failed" });
-    } finally { setDialing(false); }
-  };
-
-  const launchAutoDial = async () => {
-    if (!selectedCampaign) return;
-    try {
-      await api(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/start`, { method: "POST" });
-      setAutoDialActive(true);
-      setAutoDialCalls(0);
-      addToast({ type: "success", message: "Auto-dial launched — SMIRK is dialing" });
-      // Poll status every 8s — refresh funnel + leads on each tick
-      const poll = setInterval(async () => {
-        try {
-          const s = await api<{ active: boolean; callsThisSession: number; lastCallAt: string | null }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/status`);
-          setAutoDialActive(s.active);
-          setAutoDialCalls(s.callsThisSession);
-          if (s.lastCallAt) setAutoDialLastCallAt(s.lastCallAt);
-          // Refresh leads + funnel on every tick so UI stays live
-          loadLeads(selectedCampaign.id);
-          if (!s.active) { clearInterval(poll); loadCampaigns(); }
-        } catch { clearInterval(poll); }
-      }, 8_000);
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Failed to launch auto-dial" });
-    }
-  };
-
-  const stopAutoDial = async () => {
-    if (!selectedCampaign) return;
-    try {
-      const r = await api<{ callsThisSession: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/stop`, { method: "POST" });
-      setAutoDialActive(false);
-      addToast({ type: "success", message: `Auto-dial stopped. ${r.callsThisSession} calls placed this session.` });
-      loadLeads(selectedCampaign.id);
-      loadCampaigns();
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Failed to stop auto-dial" });
-    }
-  };
-
-  const searchLeads = async () => {
-    if (!selectedCampaign || !searchQuery.trim()) return;
-    setSearchLoading(true);
-    try {
-      const r = await api<{ found: number; added: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/search`, {
-        method: "POST",
-        body: JSON.stringify({ query: searchQuery, maxResults: 20 }),
-      });
-      addToast({ type: "success", message: `Found ${r.found} businesses, added ${r.added} new leads` });
-      loadLeads(selectedCampaign.id);
-      loadCampaigns();
-    } catch (e: any) {
-      const raw = String(e?.message || "");
-      const msg = raw.toLowerCase().includes("legacy api")
-        ? "Lead search failed: this campaign is still hitting a legacy Places path. Refresh and retry; if it persists, redeploy latest build."
-        : raw.toLowerCase().includes("google_places_api_key")
-          ? "Lead search failed: add GOOGLE_PLACES_API_KEY in Settings."
-          : raw || "Lead search failed. Check Settings → Lead Source and try again.";
-      addToast({ type: "error", message: msg });
-    } finally { setSearchLoading(false); }
-  };
-
   const importLeads = async () => {
     if (!selectedCampaign) return;
     try {
@@ -11215,6 +14879,1558 @@ function ProspectingPage() {
       loadLeads(selectedCampaign.id);
       loadCampaigns();
     } catch { addToast({ type: "error", message: "Import failed" }); }
+  };
+
+  const selectExperimentChannel = (channel: "email" | "call") => {
+    const policy = messagePolicies.find(
+      item =>
+        item.release.campaignId === selectedCampaign?.id &&
+        item.release.channel === channel
+    );
+    const controlVariantKey =
+      policy?.release.championVariantKey ||
+      getDefaultProspectMessageVariantKey(channel);
+    setExperimentDraft({
+      channel,
+      controlVariantKey,
+      challengerVariantKey:
+        getPreferredProspectMessageChallengerKey({
+          channel,
+          controlVariantKey,
+          previousVariantKey:
+            policy?.release.previousChampionVariantKey,
+        }) || "",
+      cohortSize: 20,
+    });
+  };
+
+  useEffect(() => {
+    if (!selectedCampaign) return;
+    const policy = messagePolicies.find(
+      item =>
+        item.release.campaignId === selectedCampaign.id &&
+        item.release.channel === experimentDraft.channel
+    );
+    if (!policy) return;
+    const champion = policy.release.championVariantKey;
+    const variants = getProspectMessageVariantDefinitions(
+      experimentDraft.channel
+    );
+    setExperimentDraft(current => {
+      const preferredChallenger =
+        getPreferredProspectMessageChallengerKey({
+          channel: experimentDraft.channel,
+          controlVariantKey: champion,
+          previousVariantKey:
+            policy.release.previousChampionVariantKey,
+        }) || "";
+      const challenger =
+        current.challengerVariantKey !== champion &&
+        current.challengerVariantKey !==
+          policy.release.previousChampionVariantKey &&
+        variants.some(
+          variant => variant.key === current.challengerVariantKey
+        )
+          ? current.challengerVariantKey
+          : preferredChallenger;
+      if (
+        current.controlVariantKey === champion &&
+        current.challengerVariantKey === challenger
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        controlVariantKey: champion,
+        challengerVariantKey: challenger,
+      };
+    });
+    if (experimentDraft.channel === "email") {
+      setInboxPlacementDraft(current => {
+        const preferredChallenger =
+          getPreferredProspectMessageChallengerKey({
+            channel: "email",
+            controlVariantKey: champion,
+            previousVariantKey:
+              policy.release.previousChampionVariantKey,
+          }) || "";
+        const challenger =
+          current.challengerVariantKey !== champion &&
+          current.challengerVariantKey !==
+            policy.release.previousChampionVariantKey &&
+          variants.some(
+            variant => variant.key === current.challengerVariantKey
+          )
+            ? current.challengerVariantKey
+            : preferredChallenger;
+        if (
+          current.controlVariantKey === champion &&
+          current.challengerVariantKey === challenger
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          controlVariantKey: champion,
+          challengerVariantKey: challenger,
+        };
+      });
+    }
+  }, [
+    selectedCampaign?.id,
+    experimentDraft.channel,
+    messagePolicies,
+  ]);
+
+  const prepareInboxPlacementTest = async () => {
+    if (!selectedCampaign) {
+      addToast({
+        type: "warning",
+        message: "Select the real campaign this inbox proof will gate.",
+      });
+      return;
+    }
+    if (!inboxPlacement.configuration.configured) {
+      addToast({
+        type: "warning",
+        message:
+          "Configure the exact five-address PROSPECT_INBOX_SEED_ALLOWLIST first.",
+      });
+      return;
+    }
+    if (
+      !inboxPrepareChecked ||
+      inboxPlacementDraft.mailboxes.some(
+        (mailbox) => !mailbox.email.trim() || !mailbox.label.trim()
+      ) ||
+      !inboxPlacementDraft.physicalPostalAddress.trim()
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Enter all five controlled addresses, the physical address, and complete the preparation attestation.",
+      });
+      return;
+    }
+    setInboxPlacementBusy("prepare");
+    try {
+      await api("/api/prospecting/inbox-placement", {
+        method: "POST",
+        body: JSON.stringify({
+          campaignId: selectedCampaign.id,
+          controlVariantKey: inboxPlacementDraft.controlVariantKey,
+          challengerVariantKey:
+            inboxPlacementDraft.challengerVariantKey,
+          mailboxes: inboxPlacementDraft.mailboxes,
+          emailCompliance: {
+            senderIdentity: inboxPlacementDraft.senderIdentity,
+            advertisementDisclosure:
+              inboxPlacementDraft.advertisementDisclosure,
+            physicalPostalAddress:
+              inboxPlacementDraft.physicalPostalAddress,
+            optOutInstructions:
+              inboxPlacementDraft.optOutInstructions,
+          },
+          maxCostCents: 2,
+          expiresInHours: 72,
+          confirmation: "prepare-five-controlled-inbox-seeds-v1",
+          attestations: {
+            controlledMailboxesOnly: true,
+            mailboxAccessVerified: true,
+            noRealProspectsIncluded: true,
+            noContactOrSpendAuthorized: true,
+          },
+        }),
+      });
+      setInboxPrepareChecked(false);
+      setInboxPlacementDraft((current) => ({
+        ...current,
+        mailboxes: current.mailboxes.map((mailbox) => ({
+          ...mailbox,
+          email: "",
+        })),
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Five controlled seed drafts were prepared. Nothing was sent and no spend was authorized.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled inbox test could not be prepared."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const approveInboxSeed = async (
+    item: ProspectInboxPlacementItem
+  ) => {
+    if (inboxApprovalChecks[item.approvalId] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Review the exact recipient, copy, QC receipt, suppression status, and footer first.",
+      });
+      return;
+    }
+    setInboxPlacementBusy(`approve:${item.approvalId}`);
+    try {
+      await api(
+        `/api/prospecting/outreach/${item.approvalId}/approve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.payloadHash,
+            attestations: {
+              recipientReviewed: true,
+              suppressionChecked: true,
+              emailComplianceReviewed: true,
+            },
+          }),
+        }
+      );
+      setInboxApprovalChecks((current) => ({
+        ...current,
+        [item.approvalId]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "One controlled seed draft was approved. It has not been sent.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled seed draft could not be approved."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const executeInboxSeed = async (
+    item: ProspectInboxPlacementItem
+  ) => {
+    if (inboxSendChecks[item.approvalId] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm this exact one-recipient provider request first.",
+      });
+      return;
+    }
+    setInboxPlacementBusy(`send:${item.approvalId}`);
+    try {
+      const result = await api<{
+        providerAccepted: boolean;
+        delivered: boolean;
+      }>(`/api/prospecting/outreach/${item.approvalId}/execute`, {
+        method: "POST",
+        body: JSON.stringify({
+          payloadHash: item.payloadHash,
+          confirmation: "send-one-approved-email-v1",
+        }),
+      });
+      setInboxSendChecks((current) => ({
+        ...current,
+        [item.approvalId]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          result.providerAccepted && !result.delivered
+            ? "One controlled email was accepted by the provider. Delivery and inbox placement are not yet proven."
+            : "The exact provider result was recorded.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Provider acceptance was not confirmed. Reconcile durable state before retrying."
+        ),
+      });
+      loadInboxPlacement();
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const recordInboxInspection = async (
+    test: ProspectInboxPlacementTest,
+    item: ProspectInboxPlacementItem
+  ) => {
+    if (
+      inboxInspectionChecks[item.approvalId] !== true ||
+      !item.providerMessageId
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Open the controlled mailbox, review the raw headers, and confirm the observed folder first.",
+      });
+      return;
+    }
+    const inspection = inspectionDraftFor(item.approvalId);
+    setInboxPlacementBusy(`inspect:${item.approvalId}`);
+    try {
+      await api(
+        `/api/prospecting/inbox-placement/${test.testId}/items/${item.approvalId}/inspect`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            definitionHash: test.definitionHash,
+            payloadHash: item.payloadHash,
+            providerMessageId: item.providerMessageId,
+            inspectedAt: new Date().toISOString(),
+            ...inspection,
+            notes: inspection.notes?.trim() || undefined,
+            confirmation:
+              "record-one-controlled-inbox-inspection-v1",
+            attestations: {
+              mailboxOpenedByOperator: true,
+              folderLocationObserved: true,
+              rawHeadersReviewed: true,
+            },
+          }),
+        }
+      );
+      setInboxInspectionChecks((current) => ({
+        ...current,
+        [item.approvalId]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "One immutable folder and authentication inspection was recorded.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled inbox inspection could not be recorded."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const finalizeInboxPlacementTest = async (
+    test: ProspectInboxPlacementTest
+  ) => {
+    if (inboxFinalizeChecks[test.testId] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm all five controlled mailboxes and raw headers were reviewed.",
+      });
+      return;
+    }
+    setInboxPlacementBusy(`finalize:${test.testId}`);
+    try {
+      const result = await api<{ state: "PASSED" | "FAILED" }>(
+        `/api/prospecting/inbox-placement/${test.testId}/finalize`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            definitionHash: test.definitionHash,
+            confirmation: "finalize-five-controlled-inbox-seeds-v1",
+            attestations: {
+              allFiveMailboxesReviewed: true,
+              rawHeadersReviewed: true,
+              noRealProspectOutreach: true,
+            },
+          }),
+        }
+      );
+      setInboxFinalizeChecks((current) => ({
+        ...current,
+        [test.testId]: false,
+      }));
+      addToast({
+        type: result.state === "PASSED" ? "success" : "warning",
+        message:
+          result.state === "PASSED"
+            ? "All five controlled inboxes passed. Only the matching experiment may now be activated; contact and spend remain separately gated."
+            : "The controlled inbox proof failed. Real-prospect email experiment activation remains blocked.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled inbox test could not be finalized."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const cancelInboxPlacementTest = async (
+    test: ProspectInboxPlacementTest
+  ) => {
+    setInboxPlacementBusy(`cancel:${test.testId}`);
+    try {
+      await api(
+        `/api/prospecting/inbox-placement/${test.testId}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            definitionHash: test.definitionHash,
+            confirmation: "cancel-five-controlled-inbox-seeds-v1",
+            reason: "Cancelled by full operator before finalization.",
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          "Controlled inbox test cancelled. No additional provider action occurred.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled inbox test could not be cancelled."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const prepareMessageExperiment = async () => {
+    if (!selectedCampaign) {
+      addToast({
+        type: "warning",
+        message: "Select a campaign before preparing an experiment.",
+      });
+      return;
+    }
+    if (
+      !experimentDraft.controlVariantKey ||
+      !experimentDraft.challengerVariantKey ||
+      experimentDraft.controlVariantKey ===
+        experimentDraft.challengerVariantKey
+    ) {
+      addToast({
+        type: "warning",
+        message: "Choose two different registered strategies.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      await api("/api/prospecting/learning/experiments", {
+        method: "POST",
+        body: JSON.stringify({
+          campaignId: selectedCampaign.id,
+          channel: experimentDraft.channel,
+          controlVariantKey: experimentDraft.controlVariantKey,
+          challengerVariantKey: experimentDraft.challengerVariantKey,
+          cohortSize: experimentDraft.cohortSize,
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "A balanced untouched cohort was frozen for review. Nothing was sent, dialed, spent, or approved.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The experiment could not be prepared."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const transitionMessageExperiment = async (
+    experiment: ProspectMessageExperiment,
+    action: "activate" | "close" | "cancel"
+  ) => {
+    const checkKey = `${experiment.experiment_id}:${action}`;
+    if (
+      action !== "cancel" &&
+      experimentActionChecks[checkKey] !== true
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          action === "activate"
+            ? "Review the fixed variants, assignment, and no-contact boundary first."
+            : "Confirm enrollment stopped and review the measured outcomes. The server will independently enforce terminal jobs and the full channel observation window.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      const body =
+        action === "activate"
+          ? {
+              definitionHash: experiment.definition_hash,
+              confirmation:
+                "activate-one-reviewed-message-experiment-v1",
+              attestations: {
+                registeredContentReviewed: true,
+                deterministicAssignmentReviewed: true,
+                noContactOrSpendAuthorized: true,
+              },
+            }
+          : action === "close"
+            ? {
+                definitionHash: experiment.definition_hash,
+                confirmation: "close-one-message-experiment-v1",
+                attestations: {
+                  enrollmentStopped: true,
+                  allJobsTerminal: true,
+                  outcomeWindowReviewed: true,
+                },
+              }
+            : {
+                definitionHash: experiment.definition_hash,
+                confirmation: "cancel-one-prepared-message-experiment-v1",
+              };
+      await api(
+        `/api/prospecting/learning/experiments/${experiment.experiment_id}/${action}`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        }
+      );
+      setExperimentActionChecks((current) => ({
+        ...current,
+        [checkKey]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          action === "activate"
+            ? "Experiment activated. Assignments now appear on human-reviewed drafts; no contact was initiated."
+            : action === "close"
+              ? "Experiment closed after the measured-outcome and elapsed-window gates. Evidence can now be evaluated."
+              : "Prepared experiment cancelled. No contact action occurred.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          `The experiment could not ${action}.`
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const prepareFrozenCohortDrafts = async (
+    experiment: ProspectMessageExperiment
+  ) => {
+    const checkKey = `${experiment.experiment_id}:prepare-drafts`;
+    if (experimentFeedChecks[checkKey] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm that this creates review drafts only and keeps recipient approval and execution separate.",
+      });
+      return;
+    }
+    if (
+      experiment.channel === "email" &&
+      (!inboxPlacementDraft.senderIdentity.trim() ||
+        !inboxPlacementDraft.advertisementDisclosure.trim() ||
+        !inboxPlacementDraft.physicalPostalAddress.trim() ||
+        !inboxPlacementDraft.optOutInstructions.trim())
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Complete the sender, disclosure, postal address, and opt-out fields in the inbox gate first.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      const result = await api<{
+        selectedCount: number;
+        createdCount: number;
+        duplicateCount: number;
+        pendingHumanReview: number;
+      }>(
+        `/api/prospecting/learning/experiments/${experiment.experiment_id}/prepare-drafts`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            channel: experiment.channel,
+            definitionHash: experiment.definition_hash,
+            confirmation: "prepare-frozen-cohort-drafts-v1",
+            ...(experiment.channel === "email"
+              ? {
+                  emailCompliance: {
+                    senderIdentity:
+                      inboxPlacementDraft.senderIdentity,
+                    advertisementDisclosure:
+                      inboxPlacementDraft.advertisementDisclosure,
+                    physicalPostalAddress:
+                      inboxPlacementDraft.physicalPostalAddress,
+                    optOutInstructions:
+                      inboxPlacementDraft.optOutInstructions,
+                  },
+                  maxCostCents: 2,
+                  expiresInHours: 24,
+                }
+              : {
+                  maxCostCents: 1,
+                  expiresInHours: 8,
+                }),
+            attestations: {
+              frozenCohortReviewed: true,
+              recipientApprovalStillRequired: true,
+              noContactOrSpendAuthorized: true,
+            },
+          }),
+        }
+      );
+      setExperimentFeedChecks((current) => ({
+        ...current,
+        [checkKey]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          result.createdCount > 0
+            ? `${result.createdCount} assigned drafts prepared for individual review. Nothing was sent, dialed, approved, or spent.`
+            : `All ${result.duplicateCount} assigned drafts already exist. No duplicate contact was created.`,
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The frozen cohort could not be prepared as one review batch."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const createLearningCandidate = async (
+    experiment: ProspectMessageExperiment
+  ) => {
+    setLearningBusy(true);
+    try {
+      await api("/api/prospecting/learning/candidates", {
+        method: "POST",
+        body: JSON.stringify({
+          experimentId: experiment.experiment_id,
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "Closed assigned-cohort evidence was recorded for human review. Runtime policy is unchanged.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Both arms need 10 protocol-matched executed jobs with outcomes and positive challenger lift."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const decideLearningCandidate = async (
+    candidate: ProspectLearningCandidate,
+    decision: "APPROVED" | "REJECTED"
+  ) => {
+    if (!learningCandidateChecks[candidate.id]) {
+      addToast({
+        type: "warning",
+        message: "Confirm the measured evidence review before deciding.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      await api(
+        `/api/prospecting/learning/candidates/${candidate.id}/decision`,
+        {
+          method: "POST",
+          body: JSON.stringify({ decision }),
+        }
+      );
+      setLearningCandidateChecks((current) => ({
+        ...current,
+        [candidate.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          decision === "APPROVED"
+            ? "Recommendation approved. It remains opt-in for each reviewed draft."
+            : "Recommendation rejected. Runtime outreach policy is unchanged.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The candidate was already decided or could not be updated."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const applyLearningCandidatePolicy = async (
+    candidate: ProspectLearningCandidate
+  ) => {
+    if (policyApplicationChecks[candidate.id] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm that the measured winner becomes only the next experiment's control.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      await api(
+        `/api/prospecting/learning/candidates/${candidate.id}/apply-policy`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            proposalHash: candidate.proposal_hash,
+            confirmation: "apply-one-approved-message-policy-v1",
+            attestations: {
+              approvedCandidateReviewed: true,
+              measuredEvidenceReviewed: true,
+              futureExperimentsOnly: true,
+              noContactOrSpendAuthorized: true,
+            },
+          }),
+        }
+      );
+      setPolicyApplicationChecks(current => ({
+        ...current,
+        [candidate.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Reviewed winner released as the next experiment control. Existing jobs were not changed and no contact occurred.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The approved candidate could not be released as the next control."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const rollbackMessagePolicy = async (
+    policy: ProspectMessagePolicyItem
+  ) => {
+    const releaseId = policy.release.releaseId;
+    const reason = (policyRollbackReasons[releaseId] || "").trim();
+    if (
+      policyRollbackChecks[releaseId] !== true ||
+      reason.length < 3
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Enter a rollback reason and confirm the reviewed target.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      await api(
+        `/api/prospecting/learning/policies/${releaseId}/rollback`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            releaseHash: policy.releaseHash,
+            reason,
+            confirmation: "rollback-one-message-policy-v1",
+            attestations: {
+              currentPolicyReviewed: true,
+              rollbackTargetReviewed: true,
+              futureExperimentsOnly: true,
+              noContactOrSpendAuthorized: true,
+            },
+          }),
+        }
+      );
+      setPolicyRollbackChecks(current => ({
+        ...current,
+        [releaseId]: false,
+      }));
+      setPolicyRollbackReasons(current => ({
+        ...current,
+        [releaseId]: "",
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Next-experiment control rolled back through a new immutable release. Existing jobs were unchanged.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The current message policy could not be rolled back."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const inboundReplyReviewDraftFor = (
+    review: ProspectInboundReplyReview
+  ) =>
+    inboundReplyReviewDrafts[review.reviewId] || {
+      resolution:
+        review.payload.candidates.length > 0
+          ? ("reply" as const)
+          : ("not_actionable" as const),
+      notes: "",
+      confirmed: false,
+      optOutConfirmed: false,
+      selectedOutreachApprovalId:
+        review.payload.candidates[0]?.outreachApprovalId || "",
+    };
+
+  const resolveInboundReply = async (
+    review: ProspectInboundReplyReview
+  ) => {
+    const draft = inboundReplyReviewDraftFor(review);
+    setInboundReplyReviewBusyId(review.reviewId);
+    try {
+      await api(
+        `/api/prospecting/email-replies/${review.reviewId}/resolve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: review.payloadHash,
+            contentReceiptHash: review.contentReceiptHash,
+            confirmation: "resolve-one-inbound-reply-v1",
+            resolution: draft.resolution,
+            ...(draft.resolution === "not_actionable"
+              ? {}
+              : {
+                  selectedOutreachApprovalId:
+                    draft.selectedOutreachApprovalId,
+                }),
+            notes: draft.notes.trim(),
+            attestations: {
+              messageContentReviewed: true,
+              senderIdentityMatched: true,
+              ...(draft.resolution === "opt_out"
+                ? { recipientOptOutVerified: true }
+                : {}),
+              noContactExecutedByResolution: true,
+              followUpRemainsSeparate: true,
+            },
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          draft.resolution === "opt_out"
+            ? draft.selectedOutreachApprovalId
+              ? "Opt-out suppression and linked DNC outcome recorded. Nothing was sent."
+              : "Opt-out suppression recorded without fabricating a prospect outcome. Nothing was sent."
+            : draft.resolution === "reply"
+              ? "Reply classified and queued for interaction review. Nothing was sent."
+              : "Inbound message marked not actionable. Nothing was sent.",
+      });
+      setInboundReplyReviewDrafts(current => {
+        const next = { ...current };
+        delete next[review.reviewId];
+        return next;
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The inbound reply could not be resolved."
+        ),
+      });
+    } finally {
+      setInboundReplyReviewBusyId(null);
+    }
+  };
+
+  const retrieveInboundReplyContent = async (
+    review: ProspectInboundReplyReview
+  ) => {
+    setInboundReplyContentBusyId(review.reviewId);
+    try {
+      const result = await api<{
+        receipt: NonNullable<
+          ProspectInboundReplyReview["contentReceipt"]
+        >;
+        receiptHash: string;
+        outcome: "retrieved" | "duplicate";
+      }>(
+        `/api/prospecting/email-replies/${review.reviewId}/content`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: review.payloadHash,
+            confirmation: "retrieve-one-inbound-email-content-v1",
+            attestations: {
+              noContactAuthorized: true,
+              noSendAuthorized: true,
+              attachmentsNotRequested: true,
+              htmlWillNotBeStored: true,
+            },
+          }),
+        }
+      );
+      setInboundReplyReviews(current =>
+        current.map(item =>
+          item.reviewId === review.reviewId
+            ? {
+                ...item,
+                contentReceipt: result.receipt,
+                contentReceiptHash: result.receiptHash,
+              }
+            : item
+        )
+      );
+      addToast({
+        type: "success",
+        message:
+          result.outcome === "duplicate"
+            ? "Verified plain-text receipt already loaded. Nothing was sent."
+            : "Exact provider-backed plain text loaded. Nothing was sent.",
+      });
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The exact inbound message could not be retrieved."
+        ),
+      });
+    } finally {
+      setInboundReplyContentBusyId(null);
+    }
+  };
+
+  const positiveOutcomeReviewDraftFor = (reviewId: string) =>
+    positiveOutcomeReviewDrafts[reviewId] || {
+      resolution: "continue_guarded_loop" as const,
+      notes: "",
+      confirmed: false,
+    };
+
+  const acknowledgePositiveOutcome = async (
+    review: ProspectPositiveOutcomeReview
+  ) => {
+    const draft = positiveOutcomeReviewDraftFor(review.reviewId);
+    setPositiveOutcomeReviewBusyId(review.reviewId);
+    try {
+      await api(
+        `/api/prospecting/positive-outcomes/${review.reviewId}/acknowledge`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: review.payloadHash,
+            confirmation: "acknowledge-one-positive-outcome-v1",
+            resolution: draft.resolution,
+            notes: draft.notes.trim() || undefined,
+            attestations: {
+              interactionReviewed: true,
+              noContactExecutedByAcknowledgment: true,
+              followUpRemainsSeparate: true,
+            },
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          "Interaction review recorded. This acknowledgment did not contact the prospect or change policy.",
+      });
+      setPositiveOutcomeReviewDrafts(current => {
+        const next = { ...current };
+        delete next[review.reviewId];
+        return next;
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The interaction review could not be recorded."
+        ),
+      });
+    } finally {
+      setPositiveOutcomeReviewBusyId(null);
+    }
+  };
+
+  const dispatchOneVelvetOutcome = async (
+    item: VelvetOutcomeOutboxItem
+  ) => {
+    setVelvetBusyId(item.id);
+    try {
+      const result = await api<{
+        state: string;
+        remoteEventId?: number;
+      }>(`/api/prospecting/velvet-outcomes/${item.id}/dispatch`, {
+        method: "POST",
+        body: JSON.stringify({
+          payloadHash: item.payload_hash,
+          confirmation: "dispatch-one-velvet-outcome-v1",
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          result.state === "DISPATCHED"
+            ? "Velvet recorded one measured outcome."
+            : "Velvet outcome state was reconciled.",
+      });
+      setVelvetDispatchChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Velvet did not confirm this outcome. Review its durable state before retrying."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetBusyId(null);
+    }
+  };
+
+  const prepareVelvetDiscoveryRequest = async () => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      const experimentMode = velvetDiscoveryDraft.learningMode === "experiment";
+      const activeExperiment = velvetActiveExperiment?.experiment;
+      if (experimentMode && !activeExperiment) {
+        throw new Error(
+          "Velvet has no active frozen sourcing experiment for this workspace.",
+        );
+      }
+      const learned =
+        velvetDiscoveryDraft.learningMode !== "none" && !experimentMode;
+      const learnedCategory =
+        learned &&
+        velvetDiscoveryDraft.learnedDimension === "category";
+      await api("/api/prospecting/velvet-discovery/requests", {
+        method: "POST",
+        body: JSON.stringify({
+          criteria: {
+            limit: experimentMode
+              ? activeExperiment!.leadsPerRequest
+              : velvetDiscoveryDraft.limit,
+            category:
+              experimentMode || (learned && learnedCategory)
+                ? undefined
+                : velvetDiscoveryDraft.category.trim() || undefined,
+            city:
+              experimentMode || (learned && !learnedCategory)
+                ? undefined
+                : velvetDiscoveryDraft.city.trim() || undefined,
+            state:
+              experimentMode || (learned && !learnedCategory)
+                ? undefined
+                : velvetDiscoveryDraft.state.trim() || undefined,
+            learningMode: velvetDiscoveryDraft.learningMode,
+          },
+          ...(experimentMode
+            ? { acquisitionExperiment: activeExperiment!.binding }
+            : {}),
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "Discovery request prepared locally. Velvet has not been contacted and no spend is approved.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The Velvet discovery request could not be prepared."
+        ),
+      });
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const approveVelvetDiscoveryRequest = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      await api(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/approve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "approve-one-velvet-discovery-request-v2",
+            attestations: {
+              noContactAuthorized: true,
+              requestOnlyNoProviderSpend: true,
+            },
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Request submission approved. Provider spend still requires separate approval inside Velvet.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The Velvet discovery request could not be approved."
+        ),
+      });
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const dispatchVelvetDiscoveryRequest = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      const result = await api<{
+        state: string;
+        remoteState?: string;
+        quote?: { maximumCostCents: number };
+      }>(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/dispatch`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "dispatch-one-velvet-discovery-request-v2",
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          result.remoteState === "PREPARED"
+            ? `Velvet prepared the quote${
+                result.quote
+                  ? ` at up to $${(
+                      result.quote.maximumCostCents / 100
+                    ).toFixed(2)}`
+                  : ""
+              }. Approve and queue it inside Velvet before any search.`
+            : "Velvet reconciled the exact discovery request. Refresh its status before importing.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Velvet did not confirm the discovery request. Inspect its durable state before an exact retry."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const refreshVelvetDiscoveryRequest = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      const result = await api<{
+        remoteState: string;
+        readyLeadCount: number;
+        canPrepareImport: boolean;
+      }>(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/refresh`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "refresh-one-velvet-discovery-request-v2",
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: result.remoteState === "FAILED" ? "warning" : "success",
+        message: result.canPrepareImport
+          ? `${result.readyLeadCount} reviewed lead${
+              result.readyLeadCount === 1 ? " is" : "s are"
+            } ready for a separately approved pull.`
+          : `Velvet discovery is ${result.remoteState}. No records were imported.`,
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Velvet discovery status could not be verified."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const prepareVelvetDiscoveryImport = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      const result = await api<{
+        sourceRequestId: number;
+        replay: boolean;
+      }>(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/prepare-import`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "prepare-import-from-one-velvet-discovery-v2",
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message: result.replay
+          ? `Reviewed pull #${result.sourceRequestId} already exists.`
+          : `Reviewed pull #${result.sourceRequestId} is prepared below. It still requires separate approval and dispatch.`,
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The reviewed pull could not be prepared from discovery."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const cancelVelvetDiscoveryRequest = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    if (
+      !window.confirm(
+        "Cancel this local discovery request? Submitted Velvet requests must be rejected or cancelled inside Velvet."
+      )
+    ) {
+      return;
+    }
+    setVelvetDiscoveryBusy(true);
+    try {
+      await api(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "cancel-one-velvet-discovery-request-v2",
+            reason: "Cancelled by full operator before remote submission.",
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Local discovery request cancelled. No provider or prospect was contacted.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The Velvet discovery request could not be cancelled."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const prepareVelvetSourceRequest = async () => {
+    setVelvetSourceBusy(true);
+    try {
+      const learned = velvetSourceDraft.learningMode !== "none";
+      await api("/api/prospecting/velvet-source/requests", {
+        method: "POST",
+        body: JSON.stringify({
+          criteria: {
+            limit: velvetSourceDraft.limit,
+            category: learned
+              ? undefined
+              : velvetSourceDraft.category.trim() || undefined,
+            city: learned
+              ? undefined
+              : velvetSourceDraft.city.trim() || undefined,
+            state: learned
+              ? undefined
+              : velvetSourceDraft.state.trim() || undefined,
+            learningMode: velvetSourceDraft.learningMode,
+          },
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "Reviewed lead pull prepared. It has not contacted Velvet yet.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The reviewed lead pull could not be prepared."
+        ),
+      });
+    } finally {
+      setVelvetSourceBusy(false);
+    }
+  };
+
+  const approveVelvetSourceRequest = async (
+    item: VelvetLeadSourceRequestItem
+  ) => {
+    setVelvetSourceBusy(true);
+    try {
+      await api(
+        `/api/prospecting/velvet-source/requests/${item.id}/approve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation: "approve-one-velvet-source-request-v1",
+            attestations: {
+              noContactAuthorized: true,
+              zeroSpendAuthorized: true,
+            },
+          }),
+        }
+      );
+      setVelvetSourceChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Research-only pull approved. No email, SMS, or call was authorized.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The reviewed lead pull could not be approved."
+        ),
+      });
+    } finally {
+      setVelvetSourceBusy(false);
+    }
+  };
+
+  const dispatchVelvetSourceRequest = async (
+    item: VelvetLeadSourceRequestItem
+  ) => {
+    setVelvetSourceBusy(true);
+    try {
+      const result = await api<{
+        state: string;
+        importedCount: number;
+        failedCount: number;
+      }>(
+        `/api/prospecting/velvet-source/requests/${item.id}/dispatch`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation: "dispatch-one-velvet-source-request-v1",
+          }),
+        }
+      );
+      setVelvetSourceChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: result.state === "PARTIAL" ? "warning" : "success",
+        message:
+          result.state === "EMPTY"
+            ? "Velvet had no new reviewed leads for this segment."
+            : `${result.importedCount} reviewed lead${
+                result.importedCount === 1 ? "" : "s"
+              } imported into pending review.`,
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Velvet did not confirm the reviewed lead pull. Its state is safe to inspect and retry."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetSourceBusy(false);
+    }
+  };
+
+  const cancelVelvetSourceRequest = async (
+    item: VelvetLeadSourceRequestItem
+  ) => {
+    if (
+      !window.confirm(
+        "Cancel this reviewed lead pull? A cancelled request cannot be dispatched."
+      )
+    ) {
+      return;
+    }
+    setVelvetSourceBusy(true);
+    try {
+      await api(
+        `/api/prospecting/velvet-source/requests/${item.id}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation: "cancel-one-velvet-source-request-v1",
+            reason: "Cancelled by full operator before dispatch.",
+          }),
+        }
+      );
+      setVelvetSourceChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message: "Reviewed lead pull cancelled. Nothing was contacted.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The reviewed lead pull could not be cancelled."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetSourceBusy(false);
+    }
   };
 
   const statusColor: Record<string, string> = {
@@ -11245,29 +16461,3161 @@ function ProspectingPage() {
   const interestedCount = leads.filter((l) => l.status === "interested").length;
   const calledCount = leads.filter((l) => l.status !== "pending").length;
   const convRate = calledCount > 0 ? Math.round((interestedCount / calledCount) * 100) : 0;
+  const approvedLearningVariants =
+    learningCandidates.reduce<ProspectLearningRecommendations>(
+      (recommendations, candidate) => {
+        const channel = candidate.proposal?.channel;
+        if (
+          candidate.state === "APPROVED" &&
+          candidate.recommendation_eligible === true &&
+          [
+            "deterministic-assignment-v1",
+            "deterministic-eligible-cohort-v1",
+          ].includes(String(candidate.proposal.studyDesign)) &&
+          candidate.evidence.studyDesign ===
+            candidate.proposal.studyDesign &&
+          (channel === "email" || channel === "call") &&
+          !recommendations[channel]
+        ) {
+          recommendations[channel] = candidate;
+        }
+        return recommendations;
+      },
+      {}
+    );
+  const currentExperimentPolicy = messagePolicies.find(
+    item =>
+      item.release.campaignId === selectedCampaign?.id &&
+      item.release.channel === experimentDraft.channel
+  );
+  const visibleInboxPlacementTests = inboxPlacement.tests.filter(
+    (test) =>
+      !selectedCampaign || test.campaignId === selectedCampaign.id
+  );
+  const inboxEmailVariants =
+    getProspectMessageVariantDefinitions("email");
+  const revenueLoopFocus = revenueLoop?.nextAction.focus || null;
+  const visibleVelvetDiscoveryRequests =
+    prioritizeRevenueLoopRecords<VelvetDiscoveryRequestItem>(
+      velvetDiscoveryRequests,
+      revenueLoopFocus?.kind === "velvet_discovery_request"
+        ? revenueLoopFocus.requestId
+        : null,
+      item => item.id,
+      5
+    );
+  const visibleVelvetSourceRequests =
+    prioritizeRevenueLoopRecords<VelvetLeadSourceRequestItem>(
+      velvetSourceRequests,
+      revenueLoopFocus?.kind === "velvet_source_request"
+        ? revenueLoopFocus.requestId
+        : null,
+      item => item.id,
+      5
+    );
+  const visibleVelvetOutbox =
+    prioritizeRevenueLoopRecords<VelvetOutcomeOutboxItem>(
+      velvetOutbox,
+      revenueLoopFocus?.kind === "velvet_outcome"
+        ? revenueLoopFocus.outboxId
+        : null,
+      item => item.id,
+      5
+    );
+  const campaignMessageExperiments = messageExperiments.filter(
+    experiment =>
+      !selectedCampaign ||
+      experiment.campaign_id === selectedCampaign.id
+  );
+  const visibleMessageExperiments =
+    prioritizeRevenueLoopRecords<ProspectMessageExperiment>(
+      campaignMessageExperiments,
+      revenueLoopFocus?.kind === "message_experiment"
+        ? revenueLoopFocus.experimentId
+        : null,
+      experiment => experiment.experiment_id,
+      6
+    );
+  const visibleLearningCandidates =
+    prioritizeRevenueLoopRecords<ProspectLearningCandidate>(
+      learningCandidates,
+      revenueLoopFocus?.kind === "learning_candidate"
+        ? revenueLoopFocus.candidateId
+        : null,
+      candidate => candidate.id,
+      6
+    );
+  const visiblePositiveOutcomeReviews =
+    prioritizeRevenueLoopRecords<ProspectPositiveOutcomeReview>(
+      positiveOutcomeReviews,
+      revenueLoopFocus?.kind === "positive_outcome_review"
+        ? revenueLoopFocus.reviewId
+        : null,
+      review => review.reviewId,
+      positiveOutcomeReviews.length
+    );
+  const visibleInboundReplyReviews = inboundReplyReviews;
+  const scrollToRevenueLoopTarget = () => {
+    if (!revenueLoop?.nextAction.target) return;
+    document
+      .getElementById(revenueLoop.nextAction.target)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const focusRevenueLoopNextAction = async () => {
+    const focus = revenueLoop?.nextAction.focus;
+    if (!focus) {
+      scrollToRevenueLoopTarget();
+      return;
+    }
+    if (focus.kind !== "prospect") {
+      if (
+        focus.kind === "message_experiment" ||
+        focus.kind === "inbox_placement"
+      ) {
+        const campaign = campaigns.find(
+          item => item.id === focus.campaignId
+        );
+        if (!campaign) {
+          addToast({
+            type: "warning",
+            message:
+              "The referenced experiment campaign is not in the current workspace view. Refresh the queue before acting.",
+          });
+          scrollToRevenueLoopTarget();
+          return;
+        }
+        setSelectedCampaign(campaign);
+      }
+      window.requestAnimationFrame(() => {
+        const element = document.getElementById(
+          revenueLoopFocusElementId(focus)
+        );
+        if (!element) {
+          addToast({
+            type: "warning",
+            message:
+              "The referenced operator record changed after the controller snapshot. Refresh the queue before acting.",
+          });
+          scrollToRevenueLoopTarget();
+          return;
+        }
+        element.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
+      return;
+    }
+    const campaign = campaigns.find(
+      item => item.id === focus.campaignId
+    );
+    if (!campaign) {
+      addToast({
+        type: "warning",
+        message:
+          "The referenced campaign is not in the current workspace view. Refresh the queue before acting.",
+      });
+      scrollToRevenueLoopTarget();
+      return;
+    }
+    setSelectedCampaign(campaign);
+    setLeadsLoading(true);
+    try {
+      const data = await api<{ leads: ProspectLead[]; funnel?: any }>(
+        `/api/prospecting/campaigns/${campaign.id}`
+      );
+      const loadedLeads = data.leads || [];
+      setLeads(loadedLeads);
+      if (data.funnel) setFunnel(data.funnel);
+      loadSeqStats(campaign.id);
+      const lead = loadedLeads.find(item => item.id === focus.leadId);
+      if (!lead) {
+        addToast({
+          type: "warning",
+          message:
+            "The referenced prospect changed after the controller snapshot. Refresh the queue before acting.",
+        });
+        scrollToRevenueLoopTarget();
+        return;
+      }
+      setSelectedApprovalId(focus.approvalId || null);
+      setSelectedRevisionId(focus.revisionId || null);
+      setSelectedLead(lead);
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The referenced prospect could not be loaded."
+        ),
+      });
+      scrollToRevenueLoopTarget();
+    } finally {
+      setLeadsLoading(false);
+    }
+  };
 
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold">Database Reactivation</h2>
-          <p className={`text-sm ${muted}`}>Upload old leads, auto-dial with a personalized pitch, and create callback tasks from your existing database</p>
+          <h2 className="text-lg font-bold">Prospect Research Queue</h2>
+          <p className={`text-sm ${muted}`}>Organize researched businesses for human review before any recipient-specific outreach approval.</p>
         </div>
         <button onClick={() => setShowNewCampaign(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
-          <Plus size={14} /> New Campaign
+          <Plus size={14} /> New Research Batch
         </button>
       </div>
+
+      <section
+        className={`overflow-hidden rounded-xl border ${card}`}
+        aria-live="polite"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-violet-950/50 p-2 text-violet-300">
+              <Gauge size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold">
+                Revenue loop controller
+              </p>
+              <p className={`mt-0.5 text-[11px] ${muted}`}>
+                Velvet source to measured outcome, one guarded step at a time
+              </p>
+            </div>
+          </div>
+          <span className="rounded-md bg-gray-950 px-2 py-1 text-[9px] font-semibold text-gray-500">
+            NO ACTION AUTHORIZED
+          </span>
+        </div>
+
+        {revenueLoopError ? (
+          <div className="flex items-start gap-2 px-4 py-4 text-[11px] text-red-300">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span>{revenueLoopError}</span>
+          </div>
+        ) : !revenueLoop ? (
+          <div className="flex items-center gap-2 px-4 py-4 text-[11px] text-gray-500">
+            <Loader2 size={13} className="animate-spin" />
+            Loading durable loop state
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 border-b border-gray-800 sm:grid-cols-6">
+              {revenueLoop.stages.map((stage) => (
+                <div
+                  key={stage.id}
+                  className="min-w-0 border-b border-r border-gray-800 px-3 py-3 last:border-r-0 sm:border-b-0"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                        stage.state === "ACTION_REQUIRED"
+                          ? "bg-amber-400"
+                          : stage.state === "MEASURED"
+                            ? "bg-emerald-400"
+                            : stage.state === "READY"
+                              ? "bg-cyan-400"
+                              : "bg-gray-700"
+                      }`}
+                    />
+                    <span className="truncate text-[9px] font-semibold uppercase text-gray-500">
+                      {stage.label}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm font-semibold text-gray-200">
+                    {stage.count}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[9px] font-semibold uppercase text-violet-400">
+                    Next safe step
+                  </span>
+                  <span className="rounded bg-gray-950 px-1.5 py-0.5 font-mono text-[9px] text-gray-600">
+                    {revenueLoop.nextAction.code}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm font-semibold text-gray-100">
+                  {revenueLoop.nextAction.title}
+                </p>
+                <p className={`mt-1 max-w-3xl text-[11px] ${sub}`}>
+                  {revenueLoop.nextAction.detail}
+                </p>
+                <p className="mt-2 text-[9px] text-gray-600">
+                  Human approval required
+                  {revenueLoop.nextAction
+                    .requiresSeparateExecutionConfirmation
+                    ? " · separate execution confirmation required"
+                    : ""}
+                  {" · "}
+                  effect:{" "}
+                  {revenueLoop.nextAction.executionEffect.replaceAll(
+                    "_",
+                    " "
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void focusRevenueLoopNextAction()}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-violet-800/70 px-3 text-[11px] font-semibold text-violet-300 hover:bg-violet-950/30"
+              >
+                {revenueLoop.nextAction.focus
+                  ? revenueLoop.nextAction.focus.kind === "prospect"
+                    ? "Open prospect"
+                    : "Open record"
+                  : "Open step"}{" "}
+                <ArrowUpRight size={13} />
+              </button>
+            </div>
+          </>
+        )}
+      </section>
 
       {/* Compliance notice */}
       <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-800/50 bg-amber-950/20">
         <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
         <div className="text-xs text-amber-300/80">
-          <span className="font-semibold text-amber-300">TCPA Compliance Required</span> — Only call businesses that have not requested removal. DNC status is enforced across all campaigns. Calls are limited to business hours in the lead's timezone. Recording disclosures are played automatically where required.
+          <span className="font-semibold text-amber-300">Guarded outreach queue</span> — No cold SMS, automated calls, bulk delivery, or paid lead search can start from this page. Email requires recipient review, approval, and a separate one-message send action.
         </div>
       </div>
 
+      <section
+        id="revenue-loop-source"
+        className={`scroll-mt-4 overflow-hidden rounded-xl border ${card}`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-emerald-950/50 p-2 text-emerald-300">
+              <Search size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold">Velvet lead discovery</p>
+              <p className={`mt-0.5 text-[11px] ${muted}`}>
+                Up to 20 public-source and verified owner-email records · $5 maximum quote · no contact authority
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p
+              className={`text-[10px] font-semibold ${
+                velvetDiscoveryStatus?.availableForWorkspace
+                  ? "text-emerald-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {velvetDiscoveryStatus?.availableForWorkspace
+                ? "Discovery connection ready"
+                : "Discovery connection disabled"}
+            </p>
+            <p className="text-[10px] text-gray-600">
+              {velvetDiscoveryRequests.length} durable request
+              {velvetDiscoveryRequests.length === 1 ? "" : "s"}
+            </p>
+          </div>
+        </div>
+
+        <div className="border-b border-gray-800 px-4 py-3 text-[10px] leading-relaxed text-gray-500">
+          SMIRK can request a bounded quote, but it cannot approve provider
+          spend. Approve and queue the search in Velvet, then return here to
+          verify the result and prepare a separate reviewed-record pull.
+        </div>
+
+        {velvetActiveExperiment?.state === "ACTIVE" &&
+          velvetActiveExperiment.experiment && (
+            <div className="border-b border-gray-800 bg-emerald-950/20 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase text-emerald-300">
+                    Frozen source experiment
+                  </p>
+                  <p className={`mt-0.5 text-[11px] ${sub}`}>
+                    {velvetActiveExperiment.experiment.dimension} comparison ·{" "}
+                    {velvetActiveExperiment.experiment.assignedRequests}/
+                    {velvetActiveExperiment.experiment.totalRequestSlots} slots
+                    assigned ·{" "}
+                    {velvetActiveExperiment.experiment.leadsPerRequest} leads
+                    per slot
+                  </p>
+                </div>
+                <span className="rounded border border-emerald-500/20 px-2 py-1 text-[10px] text-emerald-300">
+                  No policy, contact, or spend authority
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {(["control", "challenger"] as const).map((arm) => {
+                  const definition =
+                    velvetActiveExperiment.experiment!.arms[arm];
+                  return (
+                    <div
+                      key={arm}
+                      className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2"
+                    >
+                      <p className="text-[10px] font-semibold uppercase text-gray-500">
+                        {arm}
+                      </p>
+                      <p className="mt-1 text-xs font-medium">
+                        {definition.label}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-gray-500">
+                        {definition.criteria.category} ·{" "}
+                        {definition.criteria.city}, {definition.criteria.state}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+        <div className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(180px,0.8fr)_100px_minmax(0,1.4fr)_auto] lg:items-end">
+          <label className="min-w-0 text-[10px]">
+            <span className="mb-1 block font-semibold text-gray-400">
+              Discovery source
+            </span>
+            <select
+              value={velvetDiscoveryDraft.learningMode}
+              onChange={(event) =>
+                setVelvetDiscoveryDraft((current) => ({
+                  ...current,
+                  learningMode: event.target.value as
+                    | "none"
+                    | "latest_released"
+                    | "latest_approved"
+                    | "experiment",
+                }))
+              }
+              className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+            >
+              <option value="none">Manual target segment</option>
+              <option value="latest_released">
+                Latest released learning policy
+              </option>
+              <option value="experiment">
+                Active frozen source experiment
+              </option>
+            </select>
+          </label>
+
+          <label className="text-[10px]">
+            <span className="mb-1 block font-semibold text-gray-400">
+              Lead limit
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={
+                velvetDiscoveryDraft.learningMode === "experiment" &&
+                velvetActiveExperiment?.experiment
+                  ? velvetActiveExperiment.experiment.leadsPerRequest
+                  : velvetDiscoveryDraft.limit
+              }
+              disabled={velvetDiscoveryDraft.learningMode === "experiment"}
+              onChange={(event) =>
+                setVelvetDiscoveryDraft((current) => ({
+                  ...current,
+                  limit: Math.max(
+                    1,
+                    Math.min(20, Number(event.target.value) || 1)
+                  ),
+                }))
+              }
+              className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+            />
+          </label>
+
+          {velvetDiscoveryDraft.learningMode === "none" ? (
+            <div className="grid min-w-0 grid-cols-3 gap-2">
+              {[
+                {
+                  key: "category",
+                  label: "Trade",
+                  placeholder: "plumbing",
+                },
+                { key: "city", label: "City", placeholder: "Reno" },
+                { key: "state", label: "State", placeholder: "NV" },
+              ].map((field) => (
+                <label key={field.key} className="min-w-0 text-[10px]">
+                  <span className="mb-1 block font-semibold text-gray-400">
+                    {field.label}
+                  </span>
+                  <input
+                    value={
+                      velvetDiscoveryDraft[
+                        field.key as "category" | "city" | "state"
+                      ]
+                    }
+                    onChange={(event) =>
+                      setVelvetDiscoveryDraft((current) => ({
+                        ...current,
+                        [field.key]: event.target.value,
+                      }))
+                    }
+                    placeholder={field.placeholder}
+                    className={`h-9 w-full min-w-0 rounded-lg border px-2.5 ${panel}`}
+                  />
+                </label>
+              ))}
+            </div>
+          ) : velvetDiscoveryDraft.learningMode === "experiment" ? (
+            <div className="flex min-h-9 min-w-0 items-center rounded-lg border border-gray-800 px-3 text-[10px] text-gray-400">
+              {velvetActiveExperiment?.experiment
+                ? `Next request receives frozen slot ${velvetActiveExperiment.experiment.assignedRequests + 1} of ${velvetActiveExperiment.experiment.totalRequestSlots}. Velvet assigns the arm.`
+                : "Activate a source experiment in Velvet before preparing a slot."}
+            </div>
+          ) : (
+            <div className="grid min-w-0 grid-cols-[150px_minmax(0,1fr)] gap-2">
+              <label className="min-w-0 text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Learn
+                </span>
+                <select
+                  value={velvetDiscoveryDraft.learnedDimension}
+                  onChange={(event) =>
+                    setVelvetDiscoveryDraft((current) => ({
+                      ...current,
+                      learnedDimension: event.target.value as
+                        | "category"
+                        | "metro",
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                >
+                  <option value="category">Trade category</option>
+                  <option value="metro">Metro</option>
+                </select>
+              </label>
+              {velvetDiscoveryDraft.learnedDimension === "category" ? (
+                <div className="grid min-w-0 grid-cols-2 gap-2">
+                  {[
+                    { key: "city", label: "City", placeholder: "Reno" },
+                    { key: "state", label: "State", placeholder: "NV" },
+                  ].map((field) => (
+                    <label key={field.key} className="min-w-0 text-[10px]">
+                      <span className="mb-1 block font-semibold text-gray-400">
+                        {field.label}
+                      </span>
+                      <input
+                        value={
+                          velvetDiscoveryDraft[
+                            field.key as "city" | "state"
+                          ]
+                        }
+                        onChange={(event) =>
+                          setVelvetDiscoveryDraft((current) => ({
+                            ...current,
+                            [field.key]: event.target.value,
+                          }))
+                        }
+                        placeholder={field.placeholder}
+                        className={`h-9 w-full min-w-0 rounded-lg border px-2.5 ${panel}`}
+                      />
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <label className="min-w-0 text-[10px]">
+                  <span className="mb-1 block font-semibold text-gray-400">
+                    Trade
+                  </span>
+                  <input
+                    value={velvetDiscoveryDraft.category}
+                    onChange={(event) =>
+                      setVelvetDiscoveryDraft((current) => ({
+                        ...current,
+                        category: event.target.value,
+                      }))
+                    }
+                    placeholder="plumbing"
+                    className={`h-9 w-full min-w-0 rounded-lg border px-2.5 ${panel}`}
+                  />
+                </label>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={prepareVelvetDiscoveryRequest}
+            disabled={
+              velvetDiscoveryBusy ||
+              (velvetDiscoveryDraft.learningMode === "experiment" &&
+                !velvetActiveExperiment?.experiment)
+            }
+            className="mr-14 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 text-[11px] font-semibold text-black hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40 sm:mr-0"
+          >
+            {velvetDiscoveryBusy ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Search size={13} />
+            )}
+            {velvetDiscoveryDraft.learningMode === "experiment"
+              ? "Prepare frozen slot"
+              : "Prepare discovery"}
+          </button>
+        </div>
+
+        {velvetDiscoveryRequests.length > 0 && (
+          <div className="divide-y divide-gray-800 border-t border-gray-800">
+            {visibleVelvetDiscoveryRequests.map((item) => {
+              const checked =
+                velvetDiscoveryChecks[item.id] === true;
+              const canApprove = item.state === "PREPARED";
+              const canDispatch = ["APPROVED", "SENDING"].includes(
+                item.state
+              );
+              const canRefresh = item.state === "SUBMITTED";
+              const remoteComplete = ["COMPLETED", "PARTIAL"].includes(
+                item.remote_state || ""
+              );
+              const canPrepareImport =
+                canRefresh &&
+                remoteComplete &&
+                item.ready_lead_count > 0 &&
+                !item.source_request_id;
+              const actionable =
+                canApprove ||
+                canDispatch ||
+                canRefresh ||
+                canPrepareImport;
+              const criteria = item.effective_criteria || item.criteria;
+              const segment = [
+                criteria.category,
+                criteria.city && criteria.state
+                  ? `${criteria.city}, ${criteria.state}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              const quoteCents =
+                item.quote_payload?.maximumCostCents;
+              const needsVelvetAction =
+                item.state === "SUBMITTED" &&
+                ["PREPARED", "APPROVED", "QUEUED"].includes(
+                  item.remote_state || ""
+                );
+              return (
+                <div
+                  key={item.id}
+                  id={`revenue-loop-velvet-discovery-${item.id}`}
+                  className={`grid scroll-mt-24 gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.9fr)] lg:items-center ${
+                    revenueLoopFocus?.kind ===
+                      "velvet_discovery_request" &&
+                    revenueLoopFocus.requestId === item.id
+                      ? "ring-2 ring-inset ring-violet-500"
+                      : ""
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-semibold text-gray-300">
+                        Discovery #{item.id}
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold ${
+                          item.state === "SUBMITTED"
+                            ? "text-emerald-400"
+                            : item.state === "SENDING"
+                              ? "text-amber-400"
+                              : ["FAILED", "EXPIRED", "CANCELLED"].includes(
+                                    item.state
+                                  )
+                                ? "text-red-400"
+                                : "text-violet-400"
+                        }`}
+                      >
+                        SMIRK {item.state}
+                      </span>
+                      {item.remote_state && (
+                        <span className="text-[10px] font-semibold text-cyan-400">
+                          Velvet {item.remote_state}
+                        </span>
+                      )}
+                      {quoteCents != null && (
+                        <span className="text-[10px] text-gray-500">
+                          Quote ceiling ${(quoteCents / 100).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate text-[11px] text-gray-400">
+                      {segment || "Pending effective criteria"} · limit{" "}
+                      {criteria.limit}
+                    </p>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      {item.ready_lead_count || 0} ready ·{" "}
+                      {item.skipped_lead_count || 0} skipped ·{" "}
+                      {item.failed_lead_count || 0} failed ·{" "}
+                      {item.provider_requests || 0} provider request
+                      {item.provider_requests === 1 ? "" : "s"}
+                      {item.approved_max_spend_cents != null
+                        ? ` · $${(
+                            item.approved_max_spend_cents / 100
+                          ).toFixed(2)} approved in Velvet`
+                        : ""}
+                    </p>
+                    {item.quote_payload ? (
+                      <p className="mt-1 text-[10px] text-gray-500">
+                        Maps {item.quote_payload.providers.maps.maximumRequests}
+                        /$
+                        {(
+                          item.quote_payload.providers.maps.maximumCostCents /
+                          100
+                        ).toFixed(2)} · Owner email{" "}
+                        {
+                          item.quote_payload.providers.ownerEmailEnrichment
+                            .maximumRequests
+                        }
+                        /$
+                        {(
+                          item.quote_payload.providers.ownerEmailEnrichment
+                            .maximumCostCents / 100
+                        ).toFixed(2)}
+                      </p>
+                    ) : null}
+                    <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
+                      {item.request_id}
+                    </p>
+                    {item.source_request_id && (
+                      <p className="mt-1 text-[10px] text-violet-300">
+                        Reviewed pull #{item.source_request_id} ·{" "}
+                        {item.source_state || "PREPARED"}
+                      </p>
+                    )}
+                    {item.last_error && (
+                      <p className="mt-1 text-[10px] text-red-400">
+                        {item.last_error}
+                      </p>
+                    )}
+                    {needsVelvetAction && (
+                      <a
+                        href="https://velvetalchemy.manus.space"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-semibold text-cyan-400 hover:text-cyan-300"
+                      >
+                        Review provider quote in Velvet
+                        <ExternalLink size={11} />
+                      </a>
+                    )}
+                  </div>
+
+                  {actionable ? (
+                    <div className="flex min-w-0 flex-col gap-2 pr-14 sm:pr-0">
+                      <label className="flex min-w-0 items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setVelvetDiscoveryChecks((current) => ({
+                              ...current,
+                              [item.id]: event.target.checked,
+                            }))
+                          }
+                          className="mt-0.5 h-3.5 w-3.5 accent-emerald-500"
+                        />
+                        <span>
+                          {canApprove
+                            ? "Approve one no-contact quote request; provider spend stays blocked"
+                            : canDispatch
+                              ? "Submit this exact request to Velvet"
+                              : canPrepareImport
+                                ? "Prepare one reviewed-record pull; no outreach"
+                                : "Refresh this exact Velvet status only"}
+                        </span>
+                      </label>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {["PREPARED", "APPROVED"].includes(item.state) && (
+                          <button
+                            onClick={() =>
+                              cancelVelvetDiscoveryRequest(item)
+                            }
+                            disabled={velvetDiscoveryBusy}
+                            title="Cancel this local discovery request"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-800 text-gray-500 hover:border-red-900/70 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                        {canRefresh && (
+                          <button
+                            onClick={() =>
+                              refreshVelvetDiscoveryRequest(item)
+                            }
+                            disabled={!checked || velvetDiscoveryBusy}
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-cyan-900/70 px-3 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <RefreshCw size={12} />
+                            Refresh status
+                          </button>
+                        )}
+                        {canPrepareImport && (
+                          <button
+                            onClick={() =>
+                              prepareVelvetDiscoveryImport(item)
+                            }
+                            disabled={!checked || velvetDiscoveryBusy}
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-violet-800/70 px-3 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Download size={12} />
+                            Prepare reviewed pull
+                          </button>
+                        )}
+                        {(canApprove || canDispatch) && (
+                          <button
+                            onClick={() =>
+                              canApprove
+                                ? approveVelvetDiscoveryRequest(item)
+                                : dispatchVelvetDiscoveryRequest(item)
+                            }
+                            disabled={
+                              !checked ||
+                              velvetDiscoveryBusy ||
+                              (canDispatch &&
+                                velvetDiscoveryStatus?.availableForWorkspace !==
+                                  true)
+                            }
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-emerald-800/70 px-3 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {canApprove ? (
+                              <ShieldCheck size={12} />
+                            ) : (
+                              <Send size={12} />
+                            )}
+                            {canApprove
+                              ? "Approve request"
+                              : item.state === "SENDING"
+                                ? "Retry exact request"
+                                : "Send request to Velvet"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="pr-14 text-right text-[10px] text-gray-600 sm:pr-0">
+                      {fmt.date(item.created_at)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section
+        id="revenue-loop-inbox"
+        className={`scroll-mt-4 overflow-hidden rounded-xl border ${card}`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-cyan-950/50 p-2 text-cyan-300">
+              <ShieldCheck size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold">
+                Controlled inbox placement gate
+              </p>
+              <p className={`mt-0.5 text-[11px] ${muted}`}>
+                2 Google Workspace · 2 Microsoft 365 · 1 Yahoo/AOL ·
+                exact two-variant proof
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p
+              className={`text-[10px] font-semibold ${
+                inboxPlacement.configuration.configured
+                  ? "text-emerald-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {inboxPlacement.configuration.configured
+                ? "Five-address allowlist ready"
+                : "Allowlist not configured"}
+            </p>
+            <p
+              className={`text-[10px] ${
+                inboxPlacement.emailProvider?.availableForWorkspace
+                  ? "text-gray-500"
+                  : "text-amber-500"
+              }`}
+            >
+              {inboxPlacement.emailProvider?.availableForWorkspace
+                ? `Resend ready · ${
+                    inboxPlacement.emailProvider.dailyRecipientCap || "?"
+                  }/day cap`
+                : "Email provider execution unavailable"}
+            </p>
+          </div>
+        </div>
+
+        <div className="border-b border-gray-800 px-4 py-3 text-[10px] leading-relaxed text-gray-500">
+          Preparation creates five hidden controlled-mailbox jobs and performs
+          no external action. Each draft requires its own approval and its own
+          send confirmation. A passing receipt gates only matching experiment
+          activation; it never authorizes prospect contact, spend, bulk send,
+          SMS, or automated dialing.
+        </div>
+
+        <div className="grid gap-4 px-4 py-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Control email strategy
+                </span>
+                <select
+                  value={inboxPlacementDraft.controlVariantKey}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      controlVariantKey: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                >
+                  {inboxEmailVariants.map((variant) => (
+                    <option key={`inbox-control-${variant.key}`} value={variant.key}>
+                      {variant.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Challenger email strategy
+                </span>
+                <select
+                  value={inboxPlacementDraft.challengerVariantKey}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      challengerVariantKey: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                >
+                  {inboxEmailVariants.map((variant) => (
+                    <option
+                      key={`inbox-challenger-${variant.key}`}
+                      value={variant.key}
+                    >
+                      {variant.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="space-y-2">
+              {inboxPlacementDraft.mailboxes.map((mailbox, index) => (
+                <div
+                  key={`${mailbox.provider}-${index}`}
+                  className="grid gap-2 sm:grid-cols-[minmax(140px,0.7fr)_minmax(0,1.3fr)]"
+                >
+                  <input
+                    value={mailbox.label}
+                    onChange={(event) =>
+                      setInboxPlacementDraft((current) => ({
+                        ...current,
+                        mailboxes: current.mailboxes.map((candidate, slot) =>
+                          slot === index
+                            ? { ...candidate, label: event.target.value }
+                            : candidate
+                        ),
+                      }))
+                    }
+                    aria-label={`Controlled mailbox ${index + 1} label`}
+                    className={`h-9 min-w-0 rounded-lg border px-3 text-[10px] ${panel}`}
+                  />
+                  <input
+                    type="email"
+                    value={mailbox.email}
+                    onChange={(event) =>
+                      setInboxPlacementDraft((current) => ({
+                        ...current,
+                        mailboxes: current.mailboxes.map((candidate, slot) =>
+                          slot === index
+                            ? { ...candidate, email: event.target.value }
+                            : candidate
+                        ),
+                      }))
+                    }
+                    placeholder={`${mailbox.provider.replaceAll("_", " ")} controlled address`}
+                    aria-label={`Controlled mailbox ${index + 1} email`}
+                    autoComplete="off"
+                    className={`h-9 min-w-0 rounded-lg border px-3 text-[10px] ${panel}`}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Sender identity
+                </span>
+                <input
+                  value={inboxPlacementDraft.senderIdentity}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      senderIdentity: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                />
+              </label>
+              <label className="text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Physical postal address
+                </span>
+                <input
+                  value={inboxPlacementDraft.physicalPostalAddress}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      physicalPostalAddress: event.target.value,
+                    }))
+                  }
+                  placeholder="Required commercial sender address"
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                />
+              </label>
+              <label className="text-[10px] sm:col-span-2">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Commercial disclosure
+                </span>
+                <input
+                  value={inboxPlacementDraft.advertisementDisclosure}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      advertisementDisclosure: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                />
+              </label>
+              <label className="text-[10px] sm:col-span-2">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Opt-out instructions
+                </span>
+                <input
+                  value={inboxPlacementDraft.optOutInstructions}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      optOutInstructions: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                />
+              </label>
+            </div>
+
+            <label className="flex items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+              <input
+                type="checkbox"
+                checked={inboxPrepareChecked}
+                onChange={(event) =>
+                  setInboxPrepareChecked(event.target.checked)
+                }
+                className="mt-0.5 h-3.5 w-3.5 accent-cyan-500"
+              />
+              <span>
+                I control all five mailboxes, can inspect their raw headers,
+                included no prospect, and understand preparation authorizes no
+                contact or spend.
+              </span>
+            </label>
+            <button
+              type="button"
+              onClick={prepareInboxPlacementTest}
+              disabled={
+                inboxPlacementBusy !== null ||
+                !selectedCampaign ||
+                !inboxPlacement.configuration.configured ||
+                !inboxPrepareChecked ||
+                inboxPlacementDraft.controlVariantKey ===
+                  inboxPlacementDraft.challengerVariantKey
+              }
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-cyan-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {inboxPlacementBusy === "prepare" ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <ShieldCheck size={12} />
+              )}
+              Prepare five controlled drafts
+            </button>
+          </div>
+
+          <div className="min-w-0 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase text-gray-500">
+                  Immutable seed ledger
+                </p>
+                <p className={`text-[10px] ${muted}`}>
+                  {selectedCampaign
+                    ? selectedCampaign.name
+                    : "Select a campaign to bind the proof"}
+                </p>
+              </div>
+              <span className={`text-[10px] ${muted}`}>
+                {visibleInboxPlacementTests.length} test
+                {visibleInboxPlacementTests.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            {visibleInboxPlacementTests.length === 0 ? (
+              <div className="border-t border-gray-800 py-5 text-[11px] text-gray-500">
+                No controlled inbox test exists for this campaign.
+              </div>
+            ) : (
+              visibleInboxPlacementTests.slice(0, 5).map((test) => {
+                const allInspected =
+                  test.items.length === 5 &&
+                  test.items.every((item) => Boolean(item.inspection));
+                const isOpen = test.effectiveState === "PREPARED";
+                return (
+                  <details
+                    key={test.testId}
+                    id={`revenue-loop-inbox-test-${test.testId}`}
+                    open={isOpen}
+                    className="scroll-mt-24 border-t border-gray-800 pt-3"
+                  >
+                    <summary className="cursor-pointer list-none">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[10px] font-semibold text-gray-300">
+                              {getProspectMessageVariantDefinition(
+                                test.controlVariantKey
+                              )?.label || test.controlVariantKey}
+                              {" vs "}
+                              {getProspectMessageVariantDefinition(
+                                test.challengerVariantKey
+                              )?.label || test.challengerVariantKey}
+                            </span>
+                            <span
+                              className={`text-[10px] font-semibold ${
+                                test.effectiveState === "PASSED"
+                                  ? "text-emerald-400"
+                                  : test.effectiveState === "PREPARED"
+                                    ? "text-amber-400"
+                                    : "text-red-400"
+                              }`}
+                            >
+                              {test.effectiveState}
+                            </span>
+                          </div>
+                          <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
+                            {test.definitionHash.slice(0, 20)}
+                          </p>
+                        </div>
+                        <span className="text-[10px] text-gray-600">
+                          {test.items.filter((item) => item.inspection).length}/5
+                          inspected
+                        </span>
+                      </div>
+                    </summary>
+
+                    <div className="mt-3 divide-y divide-gray-800 border-y border-gray-800">
+                      {test.items.map((item) => {
+                        const inspection = inspectionDraftFor(
+                          item.approvalId
+                        );
+                        const busy =
+                          inboxPlacementBusy?.endsWith(item.approvalId) ===
+                          true;
+                        return (
+                          <div
+                            key={item.approvalId}
+                            id={`revenue-loop-inbox-seed-${item.approvalId}`}
+                            className="scroll-mt-24 space-y-3 py-3"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[10px] font-semibold text-gray-300">
+                                    {item.slot}. {item.mailboxLabel}
+                                  </span>
+                                  <span className="text-[9px] text-cyan-400">
+                                    {item.provider.replaceAll("_", " ")}
+                                  </span>
+                                  <span
+                                    className={`text-[9px] font-semibold ${
+                                      item.state === "SENT"
+                                        ? "text-emerald-400"
+                                        : item.state === "PREPARED" ||
+                                            item.state === "APPROVED"
+                                          ? "text-amber-400"
+                                          : item.state === "SENDING"
+                                            ? "text-cyan-400"
+                                            : "text-red-400"
+                                    }`}
+                                  >
+                                    {item.state}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-[10px] text-gray-500">
+                                  {item.recipientMasked} ·{" "}
+                                  {getProspectMessageVariantDefinition(
+                                    item.assignedVariantKey
+                                  )?.label || item.assignedVariantKey}
+                                </p>
+                              </div>
+                              <span className="font-mono text-[9px] text-gray-700">
+                                {item.payloadHash.slice(0, 12)}
+                              </span>
+                            </div>
+
+                            <div className="rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2">
+                              <p className="text-[10px] font-semibold text-gray-300">
+                                {item.subject || "No subject"}
+                              </p>
+                              <p className="mt-1 whitespace-pre-wrap text-[10px] leading-relaxed text-gray-500">
+                                {item.content}
+                              </p>
+                              <p className="mt-2 text-[9px] text-gray-600">
+                                Deterministic QC{" "}
+                                {item.qcReceipt?.deterministicPassed
+                                  ? "passed"
+                                  : "not proven"}{" "}
+                                · advisory model{" "}
+                                {item.qcReceipt?.modelReview.status ||
+                                  "NOT_RUN"}{" "}
+                                · ceiling {item.maxCostCents}c
+                              </p>
+                            </div>
+
+                            {item.state === "PREPARED" && isOpen && (
+                              <div className="space-y-2">
+                                <label className="flex items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      inboxApprovalChecks[item.approvalId] ===
+                                      true
+                                    }
+                                    onChange={(event) =>
+                                      setInboxApprovalChecks((current) => ({
+                                        ...current,
+                                        [item.approvalId]:
+                                          event.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  <span>
+                                    Exact controlled recipient, subject, body,
+                                    QC receipt, suppression status, sender,
+                                    footer, and opt-out reviewed
+                                  </span>
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => approveInboxSeed(item)}
+                                  disabled={
+                                    busy ||
+                                    inboxApprovalChecks[item.approvalId] !==
+                                      true
+                                  }
+                                  className="w-full rounded-lg border border-cyan-800/70 px-3 py-2 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Approve this controlled draft
+                                </button>
+                              </div>
+                            )}
+
+                            {item.state === "APPROVED" && isOpen && (
+                              <div className="space-y-2 rounded-lg border border-amber-900/50 bg-amber-950/20 p-3">
+                                <p className="text-[10px] leading-relaxed text-amber-300">
+                                  This is a real external email request to one
+                                  controlled mailbox and may consume up to{" "}
+                                  {item.maxCostCents}c. Deployment or seed-test
+                                  preparation is not send approval.
+                                </p>
+                                <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      inboxSendChecks[item.approvalId] === true
+                                    }
+                                    onChange={(event) =>
+                                      setInboxSendChecks((current) => ({
+                                        ...current,
+                                        [item.approvalId]:
+                                          event.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  Send only this displayed seed to this
+                                  controlled mailbox
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => executeInboxSeed(item)}
+                                  disabled={
+                                    busy ||
+                                    inboxSendChecks[item.approvalId] !== true ||
+                                    inboxPlacement.emailProvider
+                                      ?.availableForWorkspace !== true
+                                  }
+                                  className="w-full rounded-lg bg-amber-700 px-3 py-2 text-[10px] font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Send this one controlled seed
+                                </button>
+                              </div>
+                            )}
+
+                            {item.state === "SENDING" && (
+                              <p className="text-[10px] leading-relaxed text-amber-300">
+                                Provider outcome is uncertain. Reconcile the
+                                durable provider record before retrying; this
+                                panel will not create a second request.
+                              </p>
+                            )}
+
+                            {item.state === "SENT" && !item.inspection && (
+                              <div className="space-y-3 rounded-lg border border-gray-800 p-3">
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <label className="text-[10px]">
+                                    <span className="mb-1 block text-gray-400">
+                                      Observed folder
+                                    </span>
+                                    <select
+                                      value={inspection.folder}
+                                      onChange={(event) =>
+                                        updateInspectionDraft(
+                                          item.approvalId,
+                                          {
+                                            folder: event.target
+                                              .value as ProspectInboxFolder,
+                                          }
+                                        )
+                                      }
+                                      className={`h-8 w-full rounded-lg border px-2 ${panel}`}
+                                    >
+                                      {[
+                                        "primary",
+                                        "promotions",
+                                        "spam",
+                                        "junk",
+                                        "other",
+                                        "missing",
+                                      ].map((folder) => (
+                                        <option key={folder} value={folder}>
+                                          {folder}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  {(["spf", "dkim", "dmarc"] as const).map(
+                                    (field) => (
+                                      <label
+                                        key={field}
+                                        className="text-[10px]"
+                                      >
+                                        <span className="mb-1 block uppercase text-gray-400">
+                                          {field}
+                                        </span>
+                                        <select
+                                          value={inspection[field]}
+                                          onChange={(event) =>
+                                            updateInspectionDraft(
+                                              item.approvalId,
+                                              {
+                                                [field]: event.target
+                                                  .value as ProspectInboxAuthenticationResult,
+                                              }
+                                            )
+                                          }
+                                          className={`h-8 w-full rounded-lg border px-2 ${panel}`}
+                                        >
+                                          <option value="NOT_CHECKED">
+                                            Not checked
+                                          </option>
+                                          <option value="PASS">Pass</option>
+                                          <option value="FAIL">Fail</option>
+                                        </select>
+                                      </label>
+                                    )
+                                  )}
+                                </div>
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  {(
+                                    [
+                                      ["smtpAccepted", "Provider accepted"],
+                                      ["fromAligned", "From aligned"],
+                                      ["plainTextOnly", "Plain text only"],
+                                      [
+                                        "trackingPixelAbsent",
+                                        "No tracking pixel",
+                                      ],
+                                      [
+                                        "unexpectedLinksAbsent",
+                                        "No unexpected links",
+                                      ],
+                                      [
+                                        "complianceFooterRendered",
+                                        "Footer rendered cleanly",
+                                      ],
+                                    ] as const
+                                  ).map(([field, label]) => (
+                                    <label
+                                      key={field}
+                                      className="flex items-start gap-2 text-[10px] text-gray-400"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={inspection[field]}
+                                        onChange={(event) =>
+                                          updateInspectionDraft(
+                                            item.approvalId,
+                                            {
+                                              [field]: event.target.checked,
+                                            }
+                                          )
+                                        }
+                                      />
+                                      {label}
+                                    </label>
+                                  ))}
+                                </div>
+                                <textarea
+                                  value={inspection.notes || ""}
+                                  onChange={(event) =>
+                                    updateInspectionDraft(item.approvalId, {
+                                      notes: event.target.value,
+                                    })
+                                  }
+                                  rows={2}
+                                  placeholder="Optional observed evidence note"
+                                  className={`w-full resize-none rounded-lg border px-3 py-2 text-[10px] ${panel}`}
+                                />
+                                <label className="flex items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      inboxInspectionChecks[
+                                        item.approvalId
+                                      ] === true
+                                    }
+                                    onChange={(event) =>
+                                      setInboxInspectionChecks((current) => ({
+                                        ...current,
+                                        [item.approvalId]:
+                                          event.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  I opened this controlled mailbox, observed
+                                  the folder, and reviewed raw authentication
+                                  headers for provider message{" "}
+                                  {item.providerMessageId}
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    recordInboxInspection(test, item)
+                                  }
+                                  disabled={
+                                    busy ||
+                                    inboxInspectionChecks[
+                                      item.approvalId
+                                    ] !== true
+                                  }
+                                  className="w-full rounded-lg border border-emerald-800/70 px-3 py-2 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Record immutable inspection
+                                </button>
+                              </div>
+                            )}
+
+                            {item.inspection && (
+                              <p className="text-[10px] text-emerald-400">
+                                Inspection locked · {item.inspection.folder} ·
+                                SPF {item.inspection.spf} · DKIM{" "}
+                                {item.inspection.dkim} · DMARC{" "}
+                                {item.inspection.dmarc}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {isOpen && (
+                      <div className="mt-3 space-y-2">
+                        <label className="flex items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+                          <input
+                            type="checkbox"
+                            checked={
+                              inboxFinalizeChecks[test.testId] === true
+                            }
+                            onChange={(event) =>
+                              setInboxFinalizeChecks((current) => ({
+                                ...current,
+                                [test.testId]: event.target.checked,
+                              }))
+                            }
+                          />
+                          All five controlled mailboxes and raw headers were
+                          reviewed; no real prospect was contacted
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              cancelInboxPlacementTest(test)
+                            }
+                            disabled={inboxPlacementBusy !== null}
+                            className="flex-1 rounded-lg border border-red-900/60 px-3 py-2 text-[10px] text-red-300 hover:bg-red-950/30 disabled:opacity-40"
+                          >
+                            Cancel test
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              finalizeInboxPlacementTest(test)
+                            }
+                            disabled={
+                              inboxPlacementBusy !== null ||
+                              !allInspected ||
+                              inboxFinalizeChecks[test.testId] !== true
+                            }
+                            className="flex-1 rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Finalize five-inbox receipt
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {test.receipt && (
+                      <div
+                        className={`mt-3 rounded-lg border px-3 py-2 ${
+                          test.receipt.verdict === "PASS"
+                            ? "border-emerald-900/60 bg-emerald-950/20"
+                            : "border-red-900/60 bg-red-950/20"
+                        }`}
+                      >
+                        <p
+                          className={`text-[10px] font-semibold ${
+                            test.receipt.verdict === "PASS"
+                              ? "text-emerald-300"
+                              : "text-red-300"
+                          }`}
+                        >
+                          Receipt {test.receipt.verdict}
+                        </p>
+                        <p className="mt-1 text-[10px] text-gray-500">
+                          {test.receipt.verdict === "PASS"
+                            ? `Matching experiment activation only, valid until ${fmt.date(
+                                test.receipt.validUntil
+                              )}. Contact and spend remain blocked.`
+                            : test.receipt.failureReasons.join(" ")}
+                        </p>
+                      </div>
+                    )}
+                  </details>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className={`overflow-hidden rounded-xl border ${card}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-violet-950/50 p-2 text-violet-300">
+              <Network size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold">Velvet reviewed lead feed</p>
+              <p className={`mt-0.5 text-[11px] ${muted}`}>
+                Existing audited inventory only · 20 maximum · $0 spend · no contact authority
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p
+              className={`text-[10px] font-semibold ${
+                velvetSourceStatus?.availableForWorkspace
+                  ? "text-emerald-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {velvetSourceStatus?.availableForWorkspace
+                ? "Source connection ready"
+                : "Source connection disabled"}
+            </p>
+            <p className="text-[10px] text-gray-600">
+              {velvetSourceRequests.length} durable request
+              {velvetSourceRequests.length === 1 ? "" : "s"}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_110px_minmax(0,1fr)_auto] md:items-end">
+          <label className="min-w-0 text-[10px]">
+            <span className="mb-1 block font-semibold text-gray-400">
+              Source segment
+            </span>
+            <select
+              value={velvetSourceDraft.learningMode}
+              onChange={(event) =>
+                setVelvetSourceDraft((current) => ({
+                  ...current,
+                  learningMode: event.target.value as
+                    | "none"
+                    | "latest_released"
+                    | "latest_approved",
+                }))
+              }
+              className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+            >
+              <option value="none">Manual reviewed segment</option>
+              <option value="latest_released">
+                Latest released learning policy
+              </option>
+            </select>
+          </label>
+          <label className="text-[10px]">
+            <span className="mb-1 block font-semibold text-gray-400">
+              Batch limit
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={velvetSourceDraft.limit}
+              onChange={(event) =>
+                setVelvetSourceDraft((current) => ({
+                  ...current,
+                  limit: Math.max(
+                    1,
+                    Math.min(20, Number(event.target.value) || 1)
+                  ),
+                }))
+              }
+              className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+            />
+          </label>
+          {velvetSourceDraft.learningMode === "none" ? (
+            <div className="grid min-w-0 grid-cols-3 gap-2">
+              {[
+                {
+                  key: "category",
+                  label: "Trade",
+                  placeholder: "plumbing",
+                },
+                { key: "city", label: "City", placeholder: "Reno" },
+                { key: "state", label: "State", placeholder: "NV" },
+              ].map((field) => (
+                <label key={field.key} className="min-w-0 text-[10px]">
+                  <span className="mb-1 block font-semibold text-gray-400">
+                    {field.label}
+                  </span>
+                  <input
+                    value={
+                      velvetSourceDraft[
+                        field.key as "category" | "city" | "state"
+                      ]
+                    }
+                    onChange={(event) =>
+                      setVelvetSourceDraft((current) => ({
+                        ...current,
+                        [field.key]: event.target.value,
+                      }))
+                    }
+                    placeholder={field.placeholder}
+                    className={`h-9 w-full min-w-0 rounded-lg border px-2.5 ${panel}`}
+                  />
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div className="flex h-9 min-w-0 items-center rounded-lg border border-violet-900/50 bg-violet-950/20 px-3 text-[10px] text-violet-300">
+              <Sparkles size={13} className="mr-2 shrink-0" />
+              Candidate must be separately released in Velvet
+            </div>
+          )}
+          <button
+            onClick={prepareVelvetSourceRequest}
+            disabled={velvetSourceBusy}
+            className="mr-14 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-violet-700 px-3 text-[11px] font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40 sm:mr-0"
+          >
+            {velvetSourceBusy ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Download size={13} />
+            )}
+            Prepare pull
+          </button>
+        </div>
+
+        {velvetSourceRequests.length > 0 && (
+          <div className="divide-y divide-gray-800 border-t border-gray-800">
+            {visibleVelvetSourceRequests.map((item) => {
+              const actionable = [
+                "PREPARED",
+                "APPROVED",
+                "SENDING",
+                "PARTIAL",
+              ].includes(item.state);
+              const checked = velvetSourceChecks[item.id] === true;
+              const criteria = item.criteria;
+              const segment =
+                criteria.learningMode !== "none"
+                  ? item.applied_learning_candidate?.proposal.value ||
+                    "latest released candidate"
+                  : [
+                      criteria.category,
+                      criteria.city && criteria.state
+                        ? `${criteria.city}, ${criteria.state}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "all reviewed inventory";
+              return (
+                <div
+                  key={item.id}
+                  id={`revenue-loop-velvet-source-${item.id}`}
+                  className={`grid scroll-mt-24 gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(240px,0.8fr)] lg:items-center ${
+                    revenueLoopFocus?.kind ===
+                      "velvet_source_request" &&
+                    revenueLoopFocus.requestId === item.id
+                      ? "ring-2 ring-inset ring-violet-500"
+                      : ""
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-semibold text-gray-300">
+                        Request #{item.id}
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold ${
+                          item.state === "COMPLETED"
+                            ? "text-emerald-400"
+                            : item.state === "EMPTY"
+                              ? "text-gray-400"
+                              : item.state === "PARTIAL" ||
+                                  item.state === "SENDING"
+                                ? "text-amber-400"
+                                : item.state === "FAILED" ||
+                                    item.state === "EXPIRED" ||
+                                    item.state === "CANCELLED"
+                                  ? "text-red-400"
+                                  : "text-violet-400"
+                        }`}
+                      >
+                        {item.state}
+                      </span>
+                      <span className="text-[10px] text-gray-600">
+                        {item.imported_count || 0} imported ·{" "}
+                        {item.failed_count || 0} failed
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate text-[11px] text-gray-400">
+                      {segment} · limit {criteria.limit}
+                    </p>
+                    <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
+                      {item.request_id}
+                    </p>
+                    {item.last_error && (
+                      <p className="mt-1 text-[10px] text-red-400">
+                        {item.last_error}
+                      </p>
+                    )}
+                  </div>
+                  {actionable ? (
+                    <div className="flex min-w-0 flex-col gap-2 pr-14 sm:flex-row sm:items-center sm:justify-end sm:pr-0">
+                      <label className="flex min-w-0 items-center gap-2 text-[10px] text-gray-400">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setVelvetSourceChecks((current) => ({
+                              ...current,
+                              [item.id]: event.target.checked,
+                            }))
+                          }
+                          className="h-3.5 w-3.5 accent-violet-600"
+                        />
+                        <span>
+                          {item.state === "PREPARED"
+                            ? "No contact and $0 spend"
+                            : "Import reviewed records only"}
+                        </span>
+                      </label>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {["PREPARED", "APPROVED"].includes(item.state) && (
+                          <button
+                            onClick={() =>
+                              cancelVelvetSourceRequest(item)
+                            }
+                            disabled={velvetSourceBusy}
+                            title="Cancel this reviewed lead pull"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-800 text-gray-500 hover:border-red-900/70 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() =>
+                            item.state === "PREPARED"
+                              ? approveVelvetSourceRequest(item)
+                              : dispatchVelvetSourceRequest(item)
+                          }
+                          disabled={
+                            !checked ||
+                            velvetSourceBusy ||
+                            (item.state !== "PREPARED" &&
+                              velvetSourceStatus?.availableForWorkspace !== true)
+                          }
+                          className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-violet-800/70 px-3 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {item.state === "PREPARED" ? (
+                            <ShieldCheck size={12} />
+                          ) : (
+                            <Download size={12} />
+                          )}
+                          {item.state === "PREPARED"
+                            ? "Approve pull"
+                            : item.state === "APPROVED"
+                              ? "Pull from Velvet"
+                              : "Retry exact request"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="pr-14 text-right text-[10px] text-gray-600 sm:pr-0">
+                      {fmt.date(item.created_at)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section
+        id="revenue-loop-learning"
+        className={`scroll-mt-4 overflow-hidden rounded-xl border ${card}`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+          <div>
+            <p className="text-xs font-semibold">
+              Observational message signals
+            </p>
+            <p className={`text-[11px] ${muted}`}>
+              {learning.sampleSize} executed outreach jobs across{" "}
+              {learning.eventCount} measured events. Operators selected these
+              messages, so this scorecard is descriptive and cannot create a
+              recommendation by itself.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {learning.variants.length === 0 ? (
+              <span className={`text-[10px] ${muted}`}>
+                No scored variants
+              </span>
+            ) : (
+              learning.variants.slice(0, 4).map((variant) => {
+                const definition = getProspectMessageVariantDefinition(
+                  variant.variantKey
+                );
+                return (
+                  <span
+                    key={`${variant.channel}-${variant.variantKey}`}
+                    className="rounded-lg bg-gray-950 px-2.5 py-1.5 text-[10px] text-gray-400"
+                  >
+                    {definition?.label || variant.variantKey}:{" "}
+                    {Math.round(variant.positiveRate * 100)}% (
+                    {variant.sampleSize})
+                  </span>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="grid border-t border-gray-800 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+          <div className="space-y-4 border-b border-gray-800 px-4 py-4 lg:border-b-0 lg:border-r">
+            <div>
+              <p className="text-xs font-semibold">
+                Deterministic message experiment
+              </p>
+              <p className={`text-[10px] ${muted}`}>
+                Freeze an untouched operator-qualified population, select an
+                exact balanced cohort, and bind two registered strategies.
+                Every draft still needs human approval and separate execution.
+                Email activation also requires a fresh all-pass receipt for
+                these exact two strategies.
+              </p>
+            </div>
+            {currentExperimentPolicy && (
+              <div className="border-y border-emerald-950 bg-emerald-950/20 px-3 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase text-emerald-400">
+                      Reviewed control policy v
+                      {currentExperimentPolicy.release.version}
+                    </p>
+                    <p className="mt-1 text-[11px] text-gray-300">
+                      {getProspectMessageVariantDefinition(
+                        currentExperimentPolicy.release
+                          .championVariantKey
+                      )?.label ||
+                        currentExperimentPolicy.release
+                          .championVariantKey}
+                    </p>
+                    <p className={`mt-1 text-[9px] ${muted}`}>
+                      Next experiments only ·{" "}
+                      {currentExperimentPolicy.release.action.toLowerCase()}{" "}
+                      ·{" "}
+                      {fmt.date(
+                        currentExperimentPolicy.release.appliedAt
+                      )}
+                    </p>
+                  </div>
+                  <span className="text-[9px] text-emerald-500">
+                    No contact authority
+                  </span>
+                </div>
+                <input
+                  value={
+                    policyRollbackReasons[
+                      currentExperimentPolicy.release.releaseId
+                    ] || ""
+                  }
+                  onChange={event =>
+                    setPolicyRollbackReasons(current => ({
+                      ...current,
+                      [currentExperimentPolicy.release.releaseId]:
+                        event.target.value,
+                    }))
+                  }
+                  placeholder="Rollback reason"
+                  className={`mt-3 w-full rounded-lg border px-3 py-2 text-[10px] ${panel}`}
+                />
+                <label className="mt-2 flex items-start gap-2 text-[9px] text-gray-500">
+                  <input
+                    type="checkbox"
+                    checked={
+                      policyRollbackChecks[
+                        currentExperimentPolicy.release.releaseId
+                      ] === true
+                    }
+                    onChange={event =>
+                      setPolicyRollbackChecks(current => ({
+                        ...current,
+                        [currentExperimentPolicy.release.releaseId]:
+                          event.target.checked,
+                      }))
+                    }
+                  />
+                  <span>
+                    Roll back only the next-experiment control through a
+                    new audit release. Existing drafts and outcomes stay
+                    immutable.
+                  </span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    rollbackMessagePolicy(currentExperimentPolicy)
+                  }
+                  disabled={
+                    learningBusy ||
+                    policyRollbackChecks[
+                      currentExperimentPolicy.release.releaseId
+                    ] !== true ||
+                    (
+                      policyRollbackReasons[
+                        currentExperimentPolicy.release.releaseId
+                      ] || ""
+                    ).trim().length < 3
+                  }
+                  className="mt-2 w-full rounded-lg border border-amber-900 px-3 py-2 text-[10px] font-semibold text-amber-300 hover:bg-amber-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Roll back next control
+                </button>
+              </div>
+            )}
+            <div className="flex gap-1">
+              {(["email", "call"] as const).map((channel) => (
+                <button
+                  key={channel}
+                  type="button"
+                  onClick={() => selectExperimentChannel(channel)}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-semibold ${
+                    experimentDraft.channel === channel
+                      ? "bg-violet-700 text-white"
+                      : dark
+                        ? "bg-gray-950 text-gray-400"
+                        : "bg-gray-100 text-gray-600"
+                  }`}
+                >
+                  {channel === "email" ? (
+                    <Mail size={12} />
+                  ) : (
+                    <PhoneCall size={12} />
+                  )}
+                  {channel}
+                </button>
+              ))}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-[11px]">
+                <span className={`mb-1 block ${muted}`}>
+                  Control
+                  {currentExperimentPolicy ? " · policy locked" : ""}
+                </span>
+                <select
+                  value={experimentDraft.controlVariantKey}
+                  onChange={(event) =>
+                    setExperimentDraft((current) => ({
+                      ...current,
+                      controlVariantKey: event.target.value,
+                    }))
+                  }
+                  disabled={Boolean(currentExperimentPolicy)}
+                  className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                >
+                  {getProspectMessageVariantDefinitions(
+                    experimentDraft.channel
+                  ).map((variant) => (
+                    <option key={`control-${variant.key}`} value={variant.key}>
+                      {variant.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[11px]">
+                <span className={`mb-1 block ${muted}`}>Challenger</span>
+                <select
+                  value={experimentDraft.challengerVariantKey}
+                  onChange={(event) =>
+                    setExperimentDraft((current) => ({
+                      ...current,
+                      challengerVariantKey: event.target.value,
+                    }))
+                  }
+                  className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                >
+                  {getProspectMessageVariantDefinitions(
+                    experimentDraft.channel
+                  ).map((variant) => (
+                    <option
+                      key={`challenger-${variant.key}`}
+                      value={variant.key}
+                    >
+                      {variant.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="text-[11px]">
+              <span className={`mb-1 block ${muted}`}>
+                Frozen cohort size
+              </span>
+              <input
+                type="number"
+                min={20}
+                max={200}
+                step={2}
+                value={experimentDraft.cohortSize}
+                onChange={(event) =>
+                  setExperimentDraft((current) => ({
+                    ...current,
+                    cohortSize: Number(event.target.value),
+                  }))
+                }
+                className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+              />
+              <span className={`mt-1 block text-[9px] ${muted}`}>
+                Even number, 20-200. Selection is deterministic and split
+                equally between both arms.
+              </span>
+            </label>
+            <button
+              type="button"
+              onClick={prepareMessageExperiment}
+              disabled={
+                learningBusy ||
+                !selectedCampaign ||
+                !Number.isInteger(experimentDraft.cohortSize) ||
+                experimentDraft.cohortSize < 20 ||
+                experimentDraft.cohortSize > 200 ||
+                experimentDraft.cohortSize % 2 !== 0 ||
+                experimentDraft.controlVariantKey ===
+                  experimentDraft.challengerVariantKey
+              }
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {learningBusy ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Microscope size={12} />
+              )}
+              Prepare for {selectedCampaign?.name || "selected campaign"}
+            </button>
+
+            <div className="border-t border-gray-800 pt-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[10px] font-semibold uppercase text-gray-500">
+                  Experiment ledger
+                </p>
+                <span className={`text-[10px] ${muted}`}>
+                  {
+                    campaignMessageExperiments.length
+                  }{" "}
+                  shown
+                </span>
+              </div>
+              <div className="space-y-2">
+                {visibleMessageExperiments.map((experiment) => {
+                    const action =
+                      experiment.state === "PREPARED"
+                        ? "activate"
+                        : experiment.state === "ACTIVE"
+                          ? "close"
+                          : null;
+                    const checkKey = action
+                      ? `${experiment.experiment_id}:${action}`
+                      : "";
+                    const checked =
+                      checkKey !== "" &&
+                      experimentActionChecks[checkKey] === true;
+                    const feedCheckKey = `${experiment.experiment_id}:prepare-drafts`;
+                    const feedChecked =
+                      experimentFeedChecks[feedCheckKey] === true;
+                    return (
+                      <div
+                        key={experiment.experiment_id}
+                        id={`revenue-loop-experiment-${experiment.experiment_id}`}
+                        className={`scroll-mt-24 rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-3 ${
+                          revenueLoopFocus?.kind ===
+                            "message_experiment" &&
+                          revenueLoopFocus.experimentId ===
+                            experiment.experiment_id
+                            ? "ring-2 ring-violet-500"
+                            : ""
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[10px] font-semibold text-gray-300">
+                                {experiment.channel}
+                              </span>
+                              <span
+                                className={`text-[9px] font-semibold ${
+                                  experiment.state === "ACTIVE"
+                                    ? "text-cyan-400"
+                                    : experiment.state === "CLOSED"
+                                      ? "text-emerald-400"
+                                      : experiment.state === "CANCELLED"
+                                        ? "text-red-400"
+                                        : "text-amber-400"
+                                }`}
+                              >
+                                {experiment.state}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[10px] text-gray-500">
+                              {getProspectMessageVariantDefinition(
+                                experiment.control_variant_key
+                              )?.label || experiment.control_variant_key}
+                              {" vs "}
+                              {getProspectMessageVariantDefinition(
+                                experiment.challenger_variant_key
+                              )?.label || experiment.challenger_variant_key}
+                            </p>
+                            <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
+                              {experiment.definition_hash.slice(0, 16)}
+                            </p>
+                            {experiment.definition?.cohortSize && (
+                              <>
+                                <p className="mt-1 text-[9px] text-cyan-500">
+                                  {experiment.definition.cohortSize} selected
+                                  {" / "}
+                                  {
+                                    experiment.definition
+                                      .eligiblePopulationSize
+                                  }{" "}
+                                  eligible, exact 50/50
+                                </p>
+                                <p className="mt-1 text-[9px] text-gray-600">
+                                  {Number(
+                                    experiment.enrolled_count || 0
+                                  )}{" "}
+                                  enrolled,{" "}
+                                  {Number(
+                                    experiment.prepared_count || 0
+                                  )}{" "}
+                                  awaiting review,{" "}
+                                  {Number(
+                                    experiment.terminal_count || 0
+                                  )}{" "}
+                                  terminal
+                                </p>
+                              </>
+                            )}
+                            {experiment.channel === "email" && (
+                              <p
+                                className={`mt-1 text-[9px] ${
+                                  experiment.inbox_placement_test_id
+                                    ? "text-emerald-500"
+                                    : "text-amber-500"
+                                }`}
+                              >
+                                {experiment.inbox_placement_test_id
+                                  ? `Inbox receipt ${experiment.inbox_placement_test_id.slice(
+                                      0,
+                                      8
+                                    )} bound`
+                                  : "Fresh matching five-inbox receipt required"}
+                              </p>
+                            )}
+                          </div>
+                          {experiment.state === "PREPARED" && (
+                            <button
+                              type="button"
+                              title="Cancel prepared experiment"
+                              onClick={() =>
+                                transitionMessageExperiment(
+                                  experiment,
+                                  "cancel"
+                                )
+                              }
+                              disabled={learningBusy}
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-800 text-gray-500 hover:border-red-900 hover:text-red-400 disabled:opacity-40"
+                            >
+                              <X size={11} />
+                            </button>
+                          )}
+                        </div>
+                        {experiment.state === "ACTIVE" &&
+                          experiment.definition.studyDesign ===
+                            "deterministic-eligible-cohort-v1" && (
+                            <div className="mt-3 border-t border-gray-800 pt-3">
+                              <label className="flex items-start gap-2 text-[9px] text-gray-500">
+                                <input
+                                  type="checkbox"
+                                  checked={feedChecked}
+                                  onChange={(event) =>
+                                    setExperimentFeedChecks((current) => ({
+                                      ...current,
+                                      [feedCheckKey]:
+                                        event.target.checked,
+                                    }))
+                                  }
+                                />
+                                <span>
+                                  Prepare the exact assigned cohort as
+                                  recipient-specific review drafts. Every
+                                  recipient still requires individual approval
+                                  and separate execution confirmation.
+                                </span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  prepareFrozenCohortDrafts(experiment)
+                                }
+                                disabled={!feedChecked || learningBusy}
+                                className="mt-2 w-full rounded-lg border border-cyan-900/70 px-3 py-2 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Prepare assigned review queue
+                              </button>
+                              <p className="mt-1 text-[9px] leading-relaxed text-gray-600">
+                                This creates drafts only. It does not approve,
+                                send, dial, contact, or spend.
+                              </p>
+                            </div>
+                          )}
+                        {action && (
+                          <label className="mt-3 flex items-start gap-2 text-[9px] text-gray-500">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) =>
+                                setExperimentActionChecks((current) => ({
+                                  ...current,
+                                  [checkKey]: event.target.checked,
+                                }))
+                              }
+                            />
+                            <span>
+                              {action === "activate"
+                                ? experiment.channel === "email"
+                                  ? "Frozen cohort, fixed content, and balanced assignment reviewed; the exact fresh five-inbox receipt must pass; no contact or spend is authorized."
+                                  : "Frozen cohort, fixed content, and balanced assignment reviewed; no contact or spend is authorized."
+                                : "Every frozen prospect is enrolled; enrollment stopped; measured outcomes reviewed. I understand the server independently enforces terminal jobs and the full channel observation window."}
+                            </span>
+                          </label>
+                        )}
+                        <div className="mt-2">
+                          {action ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                transitionMessageExperiment(
+                                  experiment,
+                                  action
+                                )
+                              }
+                              disabled={!checked || learningBusy}
+                              className="w-full rounded-lg border border-violet-800/70 px-3 py-2 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {action === "activate"
+                                ? "Activate assignment"
+                                : "Close experiment"}
+                            </button>
+                          ) : experiment.state === "CLOSED" ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                createLearningCandidate(experiment)
+                              }
+                              disabled={learningBusy}
+                              className="w-full rounded-lg border border-emerald-900/70 px-3 py-2 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Evaluate closed cohort
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                {campaignMessageExperiments.length === 0 && (
+                  <p className={`py-3 text-[10px] ${muted}`}>
+                    No experiment has been prepared for this campaign.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <div>
+                <p className="text-xs font-semibold">Human decision queue</p>
+                <p className={`text-[10px] ${muted}`}>
+                  Approval makes a recommendation available per draft. It does
+                  not execute outreach.
+                </p>
+              </div>
+              <span className={`text-[10px] ${muted}`}>
+                {
+                  learningCandidates.filter(
+                    (candidate) => candidate.state === "CANDIDATE"
+                  ).length
+                }{" "}
+                pending
+              </span>
+            </div>
+            {learningCandidates.length === 0 ? (
+              <div className="border-t border-gray-800 px-4 py-5 text-[11px] text-gray-500">
+                No measured recommendation is waiting for review.
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-800 border-t border-gray-800">
+                {visibleLearningCandidates.map((candidate) => {
+                  const checked = Boolean(
+                    learningCandidateChecks[candidate.id]
+                  );
+                  const recommendationEligible =
+                    candidate.recommendation_eligible === true;
+                  const promotedDefinition =
+                    getProspectMessageVariantDefinition(
+                      candidate.proposal.promoteVariant
+                    );
+                  const appliedRelease =
+                    messagePolicyReleases.find(
+                      item =>
+                        item.release.action === "PROMOTE" &&
+                        item.release.sourceCandidate?.id ===
+                          candidate.id
+                    );
+                  const isCurrentPolicy =
+                    Boolean(
+                      appliedRelease &&
+                        messagePolicies.some(
+                          item =>
+                            item.release.releaseId ===
+                            appliedRelease.release.releaseId
+                        )
+                    );
+                  const policyChecked =
+                    policyApplicationChecks[candidate.id] === true;
+                  return (
+                    <div
+                      key={candidate.id}
+                      id={`revenue-loop-learning-candidate-${candidate.id}`}
+                      className={`scroll-mt-24 space-y-3 px-4 py-3 ${
+                        revenueLoopFocus?.kind ===
+                          "learning_candidate" &&
+                        revenueLoopFocus.candidateId === candidate.id
+                          ? "ring-2 ring-inset ring-violet-500"
+                          : ""
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-semibold">
+                              {candidate.proposal.promoteLabel ||
+                                promotedDefinition?.label ||
+                                candidate.proposal.promoteVariant}
+                            </span>
+                            <span className={`text-[10px] ${muted}`}>
+                              replaces{" "}
+                              {candidate.proposal.replaceLabel ||
+                                candidate.proposal.replaceVariant}
+                            </span>
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                candidate.state === "APPROVED"
+                                  ? "bg-emerald-950 text-emerald-300"
+                                  : candidate.state === "REJECTED"
+                                    ? "bg-red-950 text-red-300"
+                                    : "bg-amber-950 text-amber-300"
+                              }`}
+                            >
+                              {candidate.state}
+                            </span>
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                recommendationEligible
+                                  ? "bg-cyan-950 text-cyan-300"
+                                  : "bg-gray-800 text-gray-400"
+                              }`}
+                            >
+                              {recommendationEligible
+                                ? "ASSIGNED COHORT"
+                                : "LEGACY / INELIGIBLE"}
+                            </span>
+                          </div>
+                          <p className={`mt-1 text-[10px] ${muted}`}>
+                            {candidate.proposal.channel} ·{" "}
+                            {Math.round(
+                              candidate.evidence.current.positiveRate * 100
+                            )}
+                            % to{" "}
+                            {Math.round(
+                              candidate.evidence.challenger.positiveRate * 100
+                            )}
+                            % · +
+                            {Math.round(
+                              candidate.evidence.absoluteLift * 100
+                            )}{" "}
+                            points · jobs={candidate.sample_size}
+                            {typeof candidate.evidence
+                              .oneSidedFisherPValue === "number"
+                              ? ` · Fisher p=${candidate.evidence.oneSidedFisherPValue.toFixed(6)}`
+                              : ""}
+                          </p>
+                          {(candidate.proposal.promoteHypothesis ||
+                            promotedDefinition?.hypothesis) && (
+                            <p className={`mt-1 max-w-xl text-[10px] ${muted}`}>
+                              {candidate.proposal.promoteHypothesis ||
+                                promotedDefinition?.hypothesis}
+                            </p>
+                          )}
+                        </div>
+                        <span className={`text-[9px] ${muted}`}>
+                          v{candidate.version} ·{" "}
+                          {fmt.date(
+                            candidate.decided_at || candidate.generated_at
+                          )}
+                        </span>
+                      </div>
+                      {candidate.state === "CANDIDATE" ? (
+                        <>
+                          <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) =>
+                                setLearningCandidateChecks((current) => ({
+                                  ...current,
+                                  [candidate.id]: event.target.checked,
+                                }))
+                              }
+                              className="mt-0.5"
+                            />
+                            <span>
+                              {recommendationEligible
+                                ? "I reviewed the assigned cohort and understand this decision records a recommendation only."
+                                : "This historical candidate cannot be approved as a recommendation. Reject it to clear it from the pending queue."}
+                            </span>
+                          </label>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                decideLearningCandidate(candidate, "REJECTED")
+                              }
+                              disabled={!checked || learningBusy}
+                              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-900 px-3 py-2 text-[10px] font-semibold text-red-300 hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <X size={11} /> Reject
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                decideLearningCandidate(candidate, "APPROVED")
+                              }
+                              disabled={
+                                !checked ||
+                                learningBusy ||
+                                !recommendationEligible
+                              }
+                              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <Check size={11} /> Approve recommendation
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p className={`text-[10px] ${muted}`}>
+                            Decision recorded
+                            {candidate.decided_by
+                              ? ` by ${candidate.decided_by}`
+                              : ""}
+                            .{" "}
+                            {recommendationEligible
+                              ? appliedRelease
+                                ? isCurrentPolicy
+                                  ? `Current next-experiment control in policy v${appliedRelease.release.version}.`
+                                  : `Applied in policy v${appliedRelease.release.version}, then superseded or rolled back.`
+                                : "Approved recommendation is not yet applied to the next experiment."
+                              : "This legacy candidate is excluded from draft recommendations."}
+                          </p>
+                          {candidate.state === "APPROVED" &&
+                            recommendationEligible &&
+                            !appliedRelease && (
+                              <div className="border-t border-gray-800 pt-3">
+                                <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                                  <input
+                                    type="checkbox"
+                                    checked={policyChecked}
+                                    onChange={event =>
+                                      setPolicyApplicationChecks(
+                                        current => ({
+                                          ...current,
+                                          [candidate.id]:
+                                            event.target.checked,
+                                        })
+                                      )
+                                    }
+                                    className="mt-0.5"
+                                  />
+                                  <span>
+                                    Use this measured winner only as the
+                                    campaign&apos;s next experiment control.
+                                    Existing jobs stay immutable and every
+                                    future recipient keeps individual approval.
+                                  </span>
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    applyLearningCandidatePolicy(candidate)
+                                  }
+                                  disabled={
+                                    !policyChecked || learningBusy
+                                  }
+                                  className="mt-2 w-full rounded-lg border border-emerald-800 px-3 py-2 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Release as next control
+                                </button>
+                                <p className="mt-1 text-[9px] text-gray-600">
+                                  This changes experiment selection only. It
+                                  does not send, dial, approve contact, or
+                                  spend.
+                                </p>
+                              </div>
+                            )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="revenue-loop-positive-review"
+        className={`scroll-mt-4 border rounded-xl ${card}`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={14} className="text-amber-400" />
+              <p className="text-xs font-semibold">
+                Market interaction review
+              </p>
+            </div>
+            <p className={`mt-1 text-[11px] ${muted}`}>
+              Inbound email content must be classified before it becomes a
+              reply or opt-out outcome. Verified positive outcomes remain
+              paused until a full operator records an exact review.
+            </p>
+          </div>
+          <div className="text-right">
+            <p
+              className={`text-[10px] font-semibold ${
+                positiveOutcomeReviewError || inboundReplyReviewError
+                  ? "text-red-400"
+                  : positiveOutcomeReviews.length +
+                        inboundReplyReviews.length >
+                      0
+                  ? "text-amber-400"
+                  : "text-emerald-400"
+              }`}
+            >
+              {positiveOutcomeReviewError || inboundReplyReviewError
+                ? "Queue unavailable"
+                : `${
+                    positiveOutcomeReviews.length +
+                    inboundReplyReviews.length
+                  } awaiting review`}
+            </p>
+            <p className="mt-1 text-[9px] text-gray-600">
+              Acknowledgment never contacts a prospect
+            </p>
+          </div>
+        </div>
+        {positiveOutcomeReviewError || inboundReplyReviewError ? (
+          <div className="flex items-start gap-2 border-t border-red-900/50 bg-red-950/20 px-4 py-4 text-[11px] text-red-300">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span>
+              {[inboundReplyReviewError, positiveOutcomeReviewError]
+                .filter(Boolean)
+                .join(" ")} Treat the acquisition loop as paused until
+              both queues load successfully.
+            </span>
+          </div>
+        ) :
+          positiveOutcomeReviews.length === 0 &&
+          inboundReplyReviews.length === 0 ? (
+          <div className="flex items-center gap-2 border-t border-gray-800 px-4 py-4 text-[11px] text-gray-500">
+            <CheckCircle2 size={14} className="text-emerald-500" />
+            No market interactions are waiting for review.
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-800 border-t border-gray-800">
+            {visibleInboundReplyReviews.map(review => {
+              const draft = inboundReplyReviewDraftFor(review);
+              const optOutReady =
+                draft.resolution !== "opt_out" ||
+                draft.optOutConfirmed;
+              return (
+                <div
+                  key={review.reviewId}
+                  id={`revenue-loop-inbound-reply-${review.reviewId}`}
+                  className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)]"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-xs font-semibold text-gray-200">
+                        {review.businessName}
+                      </p>
+                      <span className="rounded border border-cyan-800 bg-cyan-950/30 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-cyan-300">
+                        inbound reply - unclassified
+                      </span>
+                    </div>
+                    <p className="mt-1 break-all text-[10px] text-gray-400">
+                      {review.payload.sender}
+                    </p>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      {new Date(
+                        review.payload.occurredAt
+                      ).toLocaleString()}
+                    </p>
+                    {review.contentReceipt &&
+                    review.contentReceiptHash ? (
+                      <div className="mt-3 space-y-2 border-l-2 border-cyan-700 pl-3">
+                        <div>
+                          <p className="text-[9px] font-semibold uppercase text-cyan-400">
+                            Provider-backed plain text
+                          </p>
+                          <p className="mt-1 text-[10px] text-gray-400">
+                            {review.contentReceipt.subject ||
+                              "No subject"}
+                          </p>
+                        </div>
+                        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border border-gray-800 bg-black/30 p-3 font-sans text-[11px] leading-5 text-gray-200">
+                          {review.contentReceipt.plainText}
+                        </pre>
+                        <p className="truncate font-mono text-[9px] text-gray-600">
+                          content {review.contentReceipt.contentHash}
+                        </p>
+                        <p className="text-[9px] leading-4 text-gray-500">
+                          HTML, raw MIME, headers, and attachments were not
+                          retained. This read did not authorize or execute
+                          contact.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="mt-3 space-y-2 border-l-2 border-amber-700 pl-3">
+                        <p className="text-[10px] leading-5 text-amber-200">
+                          Classification is locked until a full operator
+                          retrieves the exact plain text from the signed
+                          provider event.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            retrieveInboundReplyContent(review)
+                          }
+                          disabled={inboundReplyContentBusyId !== null}
+                          className="flex items-center justify-center gap-2 rounded-lg border border-cyan-800 px-3 py-2 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {inboundReplyContentBusyId ===
+                          review.reviewId ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <MailOpen size={12} />
+                          )}
+                          Retrieve exact message
+                        </button>
+                        <p className="text-[9px] leading-4 text-gray-600">
+                          Performs one bounded Resend GET. It cannot send,
+                          reply, call, or fetch attachments.
+                        </p>
+                      </div>
+                    )}
+                    <p className="mt-3 truncate font-mono text-[9px] text-gray-700">
+                      {review.payload.inboundMessageId}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    {review.payload.candidates.length > 0 ? (
+                      <select
+                        value={draft.selectedOutreachApprovalId}
+                        onChange={event =>
+                          setInboundReplyReviewDrafts(current => ({
+                            ...current,
+                            [review.reviewId]: {
+                              ...draft,
+                              selectedOutreachApprovalId:
+                                event.target.value,
+                            },
+                          }))
+                        }
+                        className={`w-full rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                      >
+                        {review.payload.candidates.map(candidate => (
+                          <option
+                            key={candidate.outreachApprovalId}
+                            value={candidate.outreachApprovalId}
+                          >
+                            {candidate.businessName} - sent {new Date(
+                              candidate.sentAt
+                            ).toLocaleString()}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="border-l-2 border-red-800 pl-3 text-[10px] leading-5 text-red-300">
+                        No recent outreach record matched this sender. A
+                        verified opt-out can still suppress the address;
+                        positive reply attribution is unavailable.
+                      </div>
+                    )}
+                    <select
+                      value={draft.resolution}
+                      onChange={event =>
+                        setInboundReplyReviewDrafts(current => ({
+                          ...current,
+                          [review.reviewId]: {
+                            ...draft,
+                            resolution: event.target
+                              .value as ProspectInboundReplyResolution,
+                            optOutConfirmed: false,
+                          },
+                        }))
+                      }
+                      className={`w-full rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                    >
+                      {review.payload.candidates.length > 0 && (
+                        <option value="reply">
+                          Genuine reply - record interaction
+                        </option>
+                      )}
+                      <option value="opt_out">
+                        Recipient opt-out - suppress email
+                      </option>
+                      <option value="not_actionable">
+                        Not actionable - record only
+                      </option>
+                    </select>
+                    <textarea
+                      value={draft.notes}
+                      onChange={event =>
+                        setInboundReplyReviewDrafts(current => ({
+                          ...current,
+                          [review.reviewId]: {
+                            ...draft,
+                            notes: event.target.value,
+                          },
+                        }))
+                      }
+                      rows={2}
+                      maxLength={2000}
+                      placeholder="Exact review evidence (required)"
+                      className={`w-full resize-y rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                    />
+                    {draft.resolution === "opt_out" && (
+                      <label className="flex items-start gap-2 text-[10px] text-red-300">
+                        <input
+                          type="checkbox"
+                          checked={draft.optOutConfirmed}
+                          onChange={event =>
+                            setInboundReplyReviewDrafts(current => ({
+                              ...current,
+                              [review.reviewId]: {
+                                ...draft,
+                                optOutConfirmed: event.target.checked,
+                              },
+                            }))
+                          }
+                          className="mt-0.5"
+                        />
+                        <span>
+                          I verified the recipient explicitly requested no
+                          further email. Record suppression and DNC.
+                        </span>
+                      </label>
+                    )}
+                    <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                      <input
+                        type="checkbox"
+                        checked={draft.confirmed}
+                        onChange={event =>
+                          setInboundReplyReviewDrafts(current => ({
+                            ...current,
+                            [review.reviewId]: {
+                              ...draft,
+                              confirmed: event.target.checked,
+                            },
+                          }))
+                        }
+                        className="mt-0.5"
+                      />
+                      <span>
+                        I reviewed the exact message and matched the sender.
+                        This action sends nothing; follow-up remains a
+                        separate approval.
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => resolveInboundReply(review)}
+                      disabled={
+                        !review.contentReceipt ||
+                        !review.contentReceiptHash ||
+                        !draft.confirmed ||
+                        !optOutReady ||
+                        ((draft.resolution === "reply" ||
+                          (draft.resolution === "opt_out" &&
+                            review.payload.candidates.length > 0)) &&
+                          !draft.selectedOutreachApprovalId) ||
+                        draft.notes.trim().length < 3 ||
+                        inboundReplyReviewBusyId !== null
+                      }
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-800 px-3 py-2 text-[11px] font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {inboundReplyReviewBusyId === review.reviewId ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Check size={13} />
+                      )}
+                      Record classification
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {visiblePositiveOutcomeReviews.map(review => {
+              const draft = positiveOutcomeReviewDraftFor(
+                review.reviewId
+              );
+              return (
+                <div
+                  key={review.reviewId}
+                  id={`revenue-loop-positive-review-${review.reviewId}`}
+                  className={`grid scroll-mt-24 gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] ${
+                    revenueLoopFocus?.kind ===
+                      "positive_outcome_review" &&
+                    revenueLoopFocus.reviewId === review.reviewId
+                      ? "ring-2 ring-inset ring-amber-500"
+                      : ""
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-xs font-semibold text-gray-200">
+                        {review.payload.businessName}
+                      </p>
+                      <span className="rounded border border-amber-800 bg-amber-950/30 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-300">
+                        {review.payload.outcome.replaceAll("_", " ")}
+                      </span>
+                      <span className="text-[9px] uppercase text-gray-600">
+                        {review.payload.channel}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      {new Date(
+                        review.payload.occurredAt
+                      ).toLocaleString()}
+                    </p>
+                    {review.payload.notes && (
+                      <p className="mt-3 whitespace-pre-wrap text-[11px] leading-5 text-gray-400">
+                        {review.payload.notes}
+                      </p>
+                    )}
+                    <p className="mt-3 truncate font-mono text-[9px] text-gray-700">
+                      {review.reviewId}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <select
+                      value={draft.resolution}
+                      onChange={event =>
+                        setPositiveOutcomeReviewDrafts(current => ({
+                          ...current,
+                          [review.reviewId]: {
+                            ...draft,
+                            resolution: event.target
+                              .value as ProspectPositiveOutcomeResolution,
+                          },
+                        }))
+                      }
+                      className={`w-full rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                    >
+                      <option value="continue_guarded_loop">
+                        Reviewed - continue guarded loop
+                      </option>
+                      <option value="handled_outside_smirk">
+                        Follow-up handled separately
+                      </option>
+                      <option value="escalated_to_owner">
+                        Escalated to owner
+                      </option>
+                      <option value="not_actionable">
+                        Not actionable
+                      </option>
+                    </select>
+                    <textarea
+                      value={draft.notes}
+                      onChange={event =>
+                        setPositiveOutcomeReviewDrafts(current => ({
+                          ...current,
+                          [review.reviewId]: {
+                            ...draft,
+                            notes: event.target.value,
+                          },
+                        }))
+                      }
+                      rows={2}
+                      maxLength={2000}
+                      placeholder="Review note (optional)"
+                      className={`w-full resize-y rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                    />
+                    <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                      <input
+                        type="checkbox"
+                        checked={draft.confirmed}
+                        onChange={event =>
+                          setPositiveOutcomeReviewDrafts(current => ({
+                            ...current,
+                            [review.reviewId]: {
+                              ...draft,
+                              confirmed: event.target.checked,
+                            },
+                          }))
+                        }
+                        className="mt-0.5"
+                      />
+                      <span>
+                        I reviewed this exact interaction. This action sends
+                        nothing, and any follow-up remains a separate
+                        approval.
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        acknowledgePositiveOutcome(review)
+                      }
+                      disabled={
+                        !draft.confirmed ||
+                        positiveOutcomeReviewBusyId !== null
+                      }
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {positiveOutcomeReviewBusyId === review.reviewId ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Check size={13} />
+                      )}
+                      Record review and clear pause
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <div
+        id="revenue-loop-feedback"
+        className={`scroll-mt-4 border rounded-xl ${card}`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+          <div>
+            <p className="text-xs font-semibold">Velvet feedback queue</p>
+            <p className={`text-[11px] ${muted}`}>
+              Measured outcomes only. Each callback requires a separate
+              full-operator action.
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] font-semibold text-gray-400">
+              {velvetOutbox.filter((item) => item.state === "PREPARED").length}{" "}
+              queued
+            </p>
+            <p
+              className={`text-[10px] ${
+                velvetDispatch?.availableForWorkspace
+                  ? "text-emerald-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {velvetDispatch?.availableForWorkspace
+                ? "Dispatch configured"
+                : "Dispatch disabled"}
+            </p>
+          </div>
+        </div>
+        {velvetOutbox.length === 0 ? (
+          <div className="border-t border-gray-800 px-4 py-4 text-[11px] text-gray-500">
+            No measured outcomes are waiting for Velvet.
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-800 border-t border-gray-800">
+            {visibleVelvetOutbox.map((item) => {
+              const canDispatch =
+                velvetDispatch?.availableForWorkspace === true &&
+                (item.state === "PREPARED" ||
+                  (item.state === "SENDING" &&
+                    Boolean(item.dispatch_response_at)));
+              return (
+                <div
+                  key={item.id}
+                  id={`revenue-loop-velvet-outcome-${item.id}`}
+                  className={`grid scroll-mt-24 gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${
+                    revenueLoopFocus?.kind === "velvet_outcome" &&
+                    revenueLoopFocus.outboxId === item.id
+                      ? "ring-2 ring-inset ring-violet-500"
+                      : ""
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-semibold text-gray-300">
+                        Outcome #{item.id}
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold ${
+                          item.state === "DISPATCHED"
+                            ? "text-emerald-400"
+                            : item.state === "FAILED"
+                              ? "text-red-400"
+                              : item.state === "SENDING"
+                                ? "text-amber-400"
+                                : "text-violet-400"
+                        }`}
+                      >
+                        {item.state}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate font-mono text-[10px] text-gray-600">
+                      {item.external_event_id}
+                    </p>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      Attempts: {item.attempts}
+                      {item.remote_event_id
+                        ? ` · Velvet event ${item.remote_event_id}`
+                        : ""}
+                      {item.last_error ? ` · ${item.last_error}` : ""}
+                    </p>
+                  </div>
+                  {canDispatch && (
+                    <div className="flex flex-col gap-2 md:w-64">
+                      <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                        <input
+                          type="checkbox"
+                          checked={
+                            velvetDispatchChecks[item.id] === true
+                          }
+                          onChange={(event) =>
+                            setVelvetDispatchChecks((current) => ({
+                              ...current,
+                              [item.id]: event.target.checked,
+                            }))
+                          }
+                        />
+                        Dispatch only this measured outcome
+                      </label>
+                      <button
+                        onClick={() => dispatchOneVelvetOutcome(item)}
+                        disabled={
+                          velvetBusyId !== null ||
+                          velvetDispatchChecks[item.id] !== true
+                        }
+                        className="rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {item.state === "SENDING"
+                          ? "Retry same callback"
+                          : "Send one callback"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div id="revenue-loop-review" className="scroll-mt-4" />
+      <div id="revenue-loop-outreach" className="scroll-mt-4" />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Campaign List */}
         <div className="space-y-3">
@@ -11276,9 +19624,9 @@ function ProspectingPage() {
             <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
           ) : campaigns.length === 0 ? (
             <div className={`rounded-2xl border ${card} p-8 text-center`}>
-              <PhoneOutgoing size={32} className="mx-auto mb-3 text-gray-700" />
-              <p className={`text-sm ${muted}`}>No campaigns yet</p>
-              <button onClick={() => setShowNewCampaign(true)} className="mt-3 text-xs text-violet-400 hover:text-violet-300">Create your first campaign →</button>
+              <Target size={32} className="mx-auto mb-3 text-gray-700" />
+              <p className={`text-sm ${muted}`}>No research batches yet</p>
+              <button onClick={() => setShowNewCampaign(true)} className="mt-3 text-xs text-violet-400 hover:text-violet-300">Create your first batch →</button>
             </div>
           ) : (
             campaigns.map((c) => (
@@ -11314,8 +19662,8 @@ function ProspectingPage() {
         <div className="lg:col-span-2 space-y-4">
           {!selectedCampaign ? (
             <div className={`rounded-2xl border ${card} p-16 text-center`}>
-              <PhoneOutgoing size={40} className="mx-auto mb-4 text-gray-700" />
-              <p className={`text-sm ${muted}`}>Select a campaign to view leads and dial</p>
+              <Target size={40} className="mx-auto mb-4 text-gray-700" />
+              <p className={`text-sm ${muted}`}>Select a research batch to review its prospects</p>
             </div>
           ) : (
             <>
@@ -11325,25 +19673,20 @@ function ProspectingPage() {
                   <div>
                     <h3 className="text-base font-bold">{selectedCampaign.name}</h3>
                     <p className={`text-xs ${muted} mt-0.5`}>
-                      Agent: <span className="text-violet-400 font-semibold">{selectedCampaign.agent_name}</span>
-                      {" · "}{selectedCampaign.call_window_start}–{selectedCampaign.call_window_end}
-                      {" · "}{selectedCampaign.max_calls_per_day} calls/day max
+                      {selectedCampaign.target_industry || "General home services"}
+                      {selectedCampaign.target_location ? ` · ${selectedCampaign.target_location}` : ""}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => setShowScriptEditor(true)}
-                      className={`px-3 py-1.5 rounded-lg text-xs border ${dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600 hover:border-gray-300"} transition-colors`}>
-                      <Pencil size={12} className="inline mr-1" />Script
-                    </button>
                     {selectedCampaign.status === "active" ? (
                       <button onClick={() => setStatus("paused")}
                         className="px-3 py-1.5 rounded-lg text-xs bg-amber-900/40 border border-amber-700/50 text-amber-300 hover:bg-amber-900/60 transition-colors">
-                        Pause
+                        Pause Review
                       </button>
                     ) : (
                       <button onClick={() => setStatus("active")}
                         className="px-3 py-1.5 rounded-lg text-xs bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 hover:bg-emerald-900/60 transition-colors">
-                        Activate
+                        Resume Review
                       </button>
                     )}
                   </div>
@@ -11354,7 +19697,7 @@ function ProspectingPage() {
                   {[
                     { label: "Total Leads", val: selectedCampaign.total_leads, color: "text-white" },
                     { label: "Pending", val: pendingCount, color: "text-gray-400" },
-                    { label: "Called", val: calledCount, color: "text-blue-400" },
+                    { label: "Processed", val: calledCount, color: "text-blue-400" },
                     { label: "Interested", val: interestedCount, color: "text-emerald-400" },
                     { label: "Conv. Rate", val: `${convRate}%`, color: convRate > 10 ? "text-emerald-400" : "text-amber-400" },
                   ].map((s) => (
@@ -11365,64 +19708,18 @@ function ProspectingPage() {
                   ))}
                 </div>
 
-                {/* Actions */}
-                <div className="mt-4 space-y-2">
-                  {autoDialActive && (
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-950/40 border border-emerald-800/50">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse" />
-                      <span className="text-xs text-emerald-300 font-semibold">LIVE — Auto-dialing</span>
-                      <span className="text-xs text-emerald-500">{autoDialCalls} calls placed this session</span>
-                      {autoDialLastCallAt && (
-                        <span className="text-xs text-gray-600 ml-auto">Last call: {new Date(autoDialLastCallAt).toLocaleTimeString()}</span>
-                      )}
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2">
-                  {autoDialActive ? (
-                    <button onClick={stopAutoDial}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-800 hover:bg-red-700 text-white text-sm font-semibold transition-colors">
-                      <span className="w-2 h-2 rounded-full bg-red-300 inline-block" />
-                      Stop Auto-Dial
-                    </button>
-                  ) : (
-                    <>
-                      <button onClick={launchAutoDial} disabled={pendingCount === 0}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors">
-                        <PhoneOutgoing size={14} />
-                        Launch Auto-Dial
-                      </button>
-                      <button onClick={dialNext} disabled={dialing || pendingCount === 0}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm border transition-colors ${
-                          dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"
-                        } disabled:opacity-40`}>
-                        {dialing ? <Loader2 size={12} className="animate-spin" /> : <PhoneOutgoing size={12} />}
-                        {dialing ? "Dialing…" : "Dial One"}
-                      </button>
-                    </>
-                  )}
+                <div className="mt-4 flex items-center gap-2">
                   <button onClick={() => setShowLeadImport(true)}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm border transition-colors ${
                       dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"
                     }`}>
-                    <Plus size={14} /> Add Leads
+                    <Plus size={14} /> Add Prospects
                   </button>
-                  </div>
-                </div>
-
-                {/* Google Places search */}
-                <div className="mt-3 flex items-center gap-2">
-                  <input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && searchLeads()}
-                    placeholder='Search Google Places: "plumbers in Miami FL"'
-                    className={`flex-1 px-3 py-2 rounded-xl text-xs border ${
-                      dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"
-                    }`}
-                  />
-                  <button onClick={searchLeads} disabled={searchLoading || !searchQuery.trim()}
-                    className="px-3 py-2 rounded-xl bg-blue-800 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-semibold transition-colors">
-                    {searchLoading ? <Loader2 size={12} className="animate-spin" /> : "Find"}
+                  <button onClick={() => { loadLeads(selectedCampaign.id); loadSeqStats(selectedCampaign.id); }}
+                    className={`p-2 rounded-xl border transition-colors ${
+                      dark ? "border-gray-700 text-gray-500 hover:text-white" : "border-gray-200 text-gray-500"
+                    }`} title="Refresh research queue">
+                    <RefreshCw size={14} />
                   </button>
                 </div>
               </div>
@@ -11460,23 +19757,12 @@ function ProspectingPage() {
                 </div>
               )}
 
-              {/* AI Pitch Preview — shows the personalized opener used on the last dial */}
-              {lastPitch && (
-                <div className={`rounded-2xl border ${dark ? "border-emerald-800/40 bg-emerald-950/20" : "border-emerald-200 bg-emerald-50"} p-4`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">AI Personalized Pitch (Last Dial)</p>
-                    <button onClick={() => setLastPitch(null)} className="text-xs text-gray-500 hover:text-gray-300">✕</button>
-                  </div>
-                  <p className={`text-sm leading-relaxed ${dark ? "text-emerald-100" : "text-emerald-900"}`}>{lastPitch}</p>
-                </div>
-              )}
-
-              {/* Sequence Engine Stats */}
+              {/* Historical sequence records remain visible but cannot execute. */}
               {seqStats && seqStats.total > 0 && (
                 <div className={`rounded-2xl border ${card} p-4`}>
                   <div className="flex items-center justify-between mb-3">
-                    <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Follow-up Sequences</p>
-                    <span className="text-[10px] text-violet-400 bg-violet-950/40 border border-violet-800/30 px-2 py-0.5 rounded-full">Auto-running</span>
+                    <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Historical Follow-up Records</p>
+                    <span className="text-[10px] text-amber-300 bg-amber-950/40 border border-amber-800/30 px-2 py-0.5 rounded-full">Execution disabled</span>
                   </div>
                   <div className="grid grid-cols-4 gap-2">
                     {[
@@ -11491,7 +19777,7 @@ function ProspectingPage() {
                       </div>
                     ))}
                   </div>
-                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. Verify callback tasks and owner alerts after voicemail/no-answer outcomes.</p>
+                  <p className={`text-[10px] ${muted} mt-2`}>Pending rows are retained for audit and will not send email, SMS, or place calls.</p>
                 </div>
               )}
 
@@ -11518,7 +19804,7 @@ function ProspectingPage() {
                   <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
                 ) : leads.length === 0 ? (
                   <div className="text-center py-10">
-                    <p className={`text-sm ${muted}`}>No leads yet — use the search above or import a CSV</p>
+                    <p className={`text-sm ${muted}`}>No prospects yet — add a reviewed CSV or import one through the guarded Velvet research receiver.</p>
                   </div>
                 ) : pipelineView === "pipeline" ? (
                   <div className="p-4">
@@ -11570,7 +19856,7 @@ function ProspectingPage() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className={`border-b ${dark ? "border-gray-800 bg-gray-900/50" : "border-gray-100 bg-gray-50"}`}>
-                          {["Business", "Phone", "Industry", "Source", "Status", "Called"].map((h) => (
+                          {["Business", "Contact", "Industry", "Source", "Review", "Outcome", ""].map((h) => (
                             <th key={h} className={`text-left px-4 py-2.5 font-semibold uppercase tracking-wider ${muted}`}>{h}</th>
                           ))}
                         </tr>
@@ -11585,18 +19871,43 @@ function ProspectingPage() {
                               <p className="font-semibold truncate max-w-[140px]">{l.business_name}</p>
                               {l.contact_name && <p className={`text-[10px] ${muted}`}>{l.contact_name}</p>}
                             </td>
-                            <td className={`px-4 py-2.5 font-mono ${sub}`}>{l.phone}</td>
+                            <td className={`px-4 py-2.5 ${sub}`}>
+                              {l.phone ? <span className="font-mono">{l.phone}</span> : l.email || "—"}
+                            </td>
                             <td className={`px-4 py-2.5 ${muted} capitalize`}>{l.industry?.replace(/_/g, " ") || "—"}</td>
                             <td className={`px-4 py-2.5 ${muted}`}>
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                l.source === "velvet_alchemy_research" ? "bg-violet-950 text-violet-300" :
                                 l.source === "google_places" ? "bg-blue-950 text-blue-300" :
                                 l.source === "csv" ? "bg-gray-800 text-gray-400" : "bg-gray-800 text-gray-500"
                               }`}>{l.source.replace(/_/g, " ")}</span>
                             </td>
+                            <td className="px-4 py-2.5">
+                              <span className={`text-[10px] font-semibold ${
+                                l.review_state === "qualified"
+                                  ? "text-emerald-400"
+                                  : l.review_state === "rejected"
+                                    ? "text-red-400"
+                                    : "text-amber-400"
+                              }`}>
+                                {(l.review_state || "pending_review").replace(/_/g, " ")}
+                              </span>
+                            </td>
                             <td className={`px-4 py-2.5 font-semibold ${statusColor[l.status] || "text-gray-400"}`}>
                               {statusLabel[l.status] || l.status}
                             </td>
-                            <td className={`px-4 py-2.5 ${muted}`}>{l.called_at ? fmt.date(l.called_at) : "—"}</td>
+                            <td className="px-4 py-2.5 text-right">
+                              <button
+                                onClick={() => {
+                                  setSelectedApprovalId(null);
+                                  setSelectedRevisionId(null);
+                                  setSelectedLead(l);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-lg border border-violet-800/60 px-2.5 py-1.5 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30"
+                              >
+                                Review <ChevronRight size={11} />
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -11613,13 +19924,13 @@ function ProspectingPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className={`w-full max-w-md rounded-2xl border ${card} p-6 space-y-4`}>
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold">New Campaign</h3>
+              <h3 className="text-base font-bold">New Research Batch</h3>
               <button onClick={() => setShowNewCampaign(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
             </div>
             {[
-              { label: "Campaign Name", key: "name", placeholder: "Miami Plumbers Q2" },
-              { label: "Target Industry", key: "target_industry", placeholder: "plumbing, dental, restaurant…" },
-              { label: "Target Location", key: "target_location", placeholder: "Miami, FL" },
+              { label: "Batch Name", key: "name", placeholder: "Reno Plumbers - July" },
+              { label: "Target Industry", key: "target_industry", placeholder: "plumbing, HVAC, electrical…" },
+              { label: "Target Location", key: "target_location", placeholder: "Reno, NV" },
             ].map(({ label, key, placeholder }) => (
               <div key={key}>
                 <label className={`block text-xs font-semibold mb-1 ${muted}`}>{label}</label>
@@ -11630,84 +19941,13 @@ function ProspectingPage() {
                   }`} />
               </div>
             ))}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Agent</label>
-                <select value={newCampaign.agent_name} onChange={(e) => setNewCampaign((p) => ({ ...p, agent_name: e.target.value }))}
-                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
-                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
-                  }`}>
-                  {["SMIRK","FORGE","GRIT","LEX","VELVET","LEDGER","HAVEN","ATLAS","ECHO"].map((a) => (
-                    <option key={a} value={a}>{a}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Max Calls/Day</label>
-                <input type="number" value={newCampaign.max_calls_per_day} onChange={(e) => setNewCampaign((p) => ({ ...p, max_calls_per_day: parseInt(e.target.value) || 50 }))}
-                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
-                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
-                  }`} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Call Window Start</label>
-                <input type="time" value={newCampaign.call_window_start} onChange={(e) => setNewCampaign((p) => ({ ...p, call_window_start: e.target.value }))}
-                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
-                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
-                  }`} />
-              </div>
-              <div>
-                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Call Window End</label>
-                <input type="time" value={newCampaign.call_window_end} onChange={(e) => setNewCampaign((p) => ({ ...p, call_window_end: e.target.value }))}
-                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
-                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
-                  }`} />
-              </div>
-            </div>
             <div className="flex gap-2 pt-2">
               <button onClick={() => setShowNewCampaign(false)} className={`flex-1 py-2 rounded-xl text-sm border transition-colors ${
                 dark ? "border-gray-700 text-gray-400 hover:text-white" : "border-gray-200 text-gray-600"
               }`}>Cancel</button>
               <button onClick={createCampaign} disabled={!newCampaign.name.trim()}
                 className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 disabled:opacity-40 text-white font-semibold transition-colors">
-                Create Campaign
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Script Editor Modal */}
-      {showScriptEditor && selectedCampaign && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className={`w-full max-w-2xl rounded-2xl border ${card} p-6 space-y-4`}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold">Pitch Script — {selectedCampaign.name}</h3>
-              <button onClick={() => setShowScriptEditor(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
-            </div>
-            <p className={`text-xs ${muted}`}>This is the system prompt the agent uses during outbound calls. Leave blank to use the default SMIRK pitch.</p>
-            <textarea
-              defaultValue={selectedCampaign.pitch_script || ""}
-              id="pitch-script-textarea"
-              rows={12}
-              className={`w-full px-3 py-2 rounded-xl text-xs font-mono border resize-none ${
-                dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"
-              }`}
-              placeholder="Leave blank to use the default SMIRK pitch agent script…"
-            />
-            <div className="flex gap-2">
-              <button onClick={() => setShowScriptEditor(false)} className={`flex-1 py-2 rounded-xl text-sm border transition-colors ${
-                dark ? "border-gray-700 text-gray-400 hover:text-white" : "border-gray-200 text-gray-600"
-              }`}>Cancel</button>
-              <button onClick={async () => {
-                const script = (document.getElementById("pitch-script-textarea") as HTMLTextAreaElement)?.value || "";
-                await api(`/api/prospecting/campaigns/${selectedCampaign.id}/status`, { method: "PATCH", body: JSON.stringify({ status: selectedCampaign.status }) });
-                addToast({ type: "success", message: "Script saved" });
-                setShowScriptEditor(false);
-              }} className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 text-white font-semibold transition-colors">
-                Save Script
+                Create Batch
               </button>
             </div>
           </div>
@@ -11719,7 +19959,7 @@ function ProspectingPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className={`w-full max-w-lg rounded-2xl border ${card} p-6 space-y-4`}>
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold">Add Leads — {selectedCampaign.name}</h3>
+              <h3 className="text-base font-bold">Add Prospects — {selectedCampaign.name}</h3>
               <button onClick={() => setShowLeadImport(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
             </div>
             <div className="space-y-3">
@@ -11746,11 +19986,29 @@ function ProspectingPage() {
               }`}>Cancel</button>
               <button onClick={importLeads}
                 className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 text-white font-semibold transition-colors">
-                Import Leads
+                Import Prospects
               </button>
             </div>
           </div>
         </div>
+      )}
+      {selectedLead && (
+        <ProspectReviewDrawer
+          lead={selectedLead}
+          dark={dark}
+          approvedVariants={approvedLearningVariants}
+          focusApprovalId={selectedApprovalId}
+          focusRevisionId={selectedRevisionId}
+          onClose={() => {
+            setSelectedLead(null);
+            setSelectedApprovalId(null);
+            setSelectedRevisionId(null);
+          }}
+          onChanged={() => {
+            if (selectedCampaign) loadLeads(selectedCampaign.id);
+            loadCampaigns();
+          }}
+        />
       )}
     </div>
   );
@@ -12182,6 +20440,167 @@ type OwnerControlConnection = {
   balanceValue?: string | null;
   latencyMs?: number | null;
   verification: "provider_probe" | "configuration" | "policy" | string;
+  credentialState: "active" | "missing" | "rejected" | "unverified" | "not_applicable";
+  actionRequired: boolean;
+  actions: Array<{
+    id: "configure" | "provider" | "billing";
+    label: string;
+    href: string;
+    external: boolean;
+  }>;
+};
+
+type OwnerProspectAcquisitionOverview = {
+  contractVersion: string;
+  source: "process-environment";
+  stagedConfigurationReady: boolean;
+  safeStagingState: boolean;
+  redactedPlanDigest: string;
+  connections: Array<{
+    id: string;
+    label: string;
+    configured: boolean;
+    enabled: boolean;
+    available: boolean;
+    workspaceId: number | null;
+    missing: string[];
+  }>;
+  executionSwitches: Array<{
+    key: string;
+    label: string;
+    state:
+      | "safely-disabled"
+      | "enabled-requires-separate-approval"
+      | "invalid-switch-value";
+    enabled: boolean;
+  }>;
+  workspaceBoundary: { aligned: boolean; workspaceId: number | null };
+  credentialSeparation: Array<{
+    id: string;
+    label: string;
+    passed: boolean;
+  }>;
+  emailCaps: {
+    dailyRecipientCap: number | null;
+    dailySpendCapCents: number | null;
+    unitCostCents: number | null;
+  };
+  manualCallCaps: {
+    dailyApprovalCap: number | null;
+    manualDialOnly: true;
+    providerExecutionAllowed: false;
+    automatedDialingAllowed: false;
+  };
+  qcCaps: {
+    requiredForApproval: boolean;
+    dailyReviewCap: number | null;
+    dailySpendCapCents: number | null;
+    reservedCostCents: number | null;
+    timeoutMs: number | null;
+  };
+  usage: {
+    availability: "available" | "partial" | "unavailable";
+    source: "durable-database";
+    period: {
+      kind: "rolling-24-hours";
+      startsAt: string;
+      endsAt: string;
+    };
+    email: {
+      available: boolean;
+      recipientsReserved: number | null;
+      providerAccepted: number | null;
+      providerFailed: number | null;
+      providerAttempts: number | null;
+      reservedSpendCents: number | null;
+    };
+    qc: {
+      available: boolean;
+      reviewsReserved: number | null;
+      completed: number | null;
+      failedOrUnknown: number | null;
+      totalTokens: number | null;
+      reservedSpendCents: number | null;
+    };
+    discovery: {
+      available: boolean;
+      requests: number | null;
+      approved: number | null;
+      completed: number | null;
+      providerRequests: number | null;
+      approvedMaxSpendCents: number | null;
+    };
+    manualCall: {
+      available: boolean;
+      approvals: number | null;
+      openApproved: number | null;
+      recordedCompleted: number | null;
+      closedWithoutExecution: number | null;
+      providerRequests: 0;
+      automatedDials: 0;
+    };
+    issues: string[];
+    externalAction: "none";
+  };
+  phases: Array<{
+    id: string;
+    label: string;
+    configurationReady: boolean;
+    safeStagingState: boolean;
+    blockers: string[];
+    requiredVariables: Array<{
+      name: string;
+      group: string;
+      kind:
+        | "fixed-value"
+        | "operator-value"
+        | "generated-secret"
+        | "provider-secret"
+        | "activation-switch";
+      sensitive: boolean;
+      fixedValue?: string;
+      expected: string;
+      state:
+        | "missing"
+        | "present-redacted"
+        | "matches-fixed-value"
+        | "drifted-from-fixed-value"
+        | "safely-disabled"
+        | "enabled-requires-separate-approval"
+        | "invalid-switch-value";
+      currentValueDisclosed: false;
+    }>;
+    externalPrerequisites: string[];
+    setupLinks: Array<{
+      id: string;
+      label: string;
+      href: string;
+      external: boolean;
+    }>;
+    nextCheckCommand: string;
+    explicitApprovalRequired: boolean;
+    externalActionScope: string;
+    proofsStillRequired: string[];
+  }>;
+  blockers: string[];
+  unproven: string[];
+  nextAction: { code: string; title: string; detail: string };
+  activation: {
+    authorized: false;
+    contactAuthorized: false;
+    spendAuthorized: false;
+    providerMutationPerformed: false;
+    allExecutionSwitchesDisabled: boolean;
+  };
+  guardrails: {
+    coldSmsAllowed: false;
+    bulkEmailAllowed: false;
+    automatedProspectDialingAllowed: false;
+    qcMayAuthorizeContact: false;
+    inboundContentMayAuthorizeContact: false;
+    providerMutationPerformed: false;
+  };
+  externalAction: "none";
 };
 
 type OwnerControlOverview = {
@@ -12207,11 +20626,115 @@ type OwnerControlOverview = {
     estimated: { twilioVoice: number; ai: number; total: number };
     note: string;
   };
+  prospectAcquisition: OwnerProspectAcquisitionOverview;
   connections: OwnerControlConnection[];
-  credentials: { key: string; label: string; configured: boolean; critical: boolean; exposure: string }[];
+  settingsStorage: {
+    mode: string;
+    durableInAppWrites: boolean;
+    detail: string;
+  };
+  operationalChecklist: Array<{
+    id: string;
+    label: string;
+    state: "ready" | "attention" | "blocked" | "unverified";
+    detail: string;
+    next: string;
+    actions?: Array<{
+      id: string;
+      label: string;
+      href?: string;
+      copyText?: string;
+      external: boolean;
+    }>;
+  }>;
+  credentials: { key: string; label: string; category: string; configured: boolean; critical: boolean; exposure: string }[];
   guardrails: { label: string; state: string; detail: string }[];
   dataSources: string[];
 };
+
+type OwnerWebhookBufferLag = {
+  ok: boolean;
+  checkedAt: string;
+  thresholdMinutes: number;
+  pendingCount: number;
+  staleCount: number;
+  oldestPendingReceivedAt: string | null;
+  staleRows: Array<{
+    id: number;
+    callSidSuffix: string | null;
+    webhookType: string;
+    workspaceId: number | null;
+    processStatus: string;
+    hasError: boolean;
+    receivedAt: string | null;
+  }>;
+  code: string;
+  message: string;
+};
+
+type OwnerWebhookReplayPlan = {
+  ok: boolean;
+  contractVersion: string;
+  apply: false;
+  mode: "dry-run";
+  blockers: string[];
+  requestDigest: string;
+  approvalPhrase: string | null;
+  requestedIds: number[];
+  selected: number;
+  workspaceIds: number[];
+  runtimeCommit: string | null;
+  replayRows: Array<{
+    id: number;
+    callSidSuffix: string | null;
+    webhookType: string;
+    workspaceId: number | null;
+    direction: string;
+    processStatus: string;
+    receivedAt: string | null;
+    payloadHash: string | null;
+    rowDigest: string;
+    blockers: string[];
+  }>;
+  productionWritePerformed: false;
+  outboundContactPerformed: false;
+  smsSent: false;
+  deploymentPerformed: false;
+  deletionPerformed: false;
+};
+
+type OwnerWebhookReplayAudit = {
+  ok: boolean;
+  receipts: Array<{
+    id: number;
+    requestDigest: string;
+    actorAuthMode: string;
+    workspaceIds: number[];
+    targetIds: number[];
+    intendedAction: string;
+    appliedAt: string;
+  }>;
+  payloadsExposed: false;
+  phoneNumbersExposed: false;
+};
+
+type OwnerWebhookReplayApply = {
+  ok: boolean;
+  contractVersion: string;
+  apply: true;
+  mode: "apply-verified" | "apply-idempotent-replay";
+  requestDigest: string;
+  auditId: number;
+  processedIds: number[];
+  appliedAt: string;
+  productionWritePerformed: boolean;
+  outboundContactPerformed: false;
+  smsSent: false;
+  deploymentPerformed: false;
+  deletionPerformed: false;
+};
+
+const OWNER_WEBHOOK_REPLAY_CONTRACT = "smirk.webhook-buffer-replay.v2";
 
 const ownerStatusClass = (status: string) => {
   const normalized = status.toLowerCase();
@@ -12227,19 +20750,72 @@ const ownerVerificationLabel = (verification: string) => {
   return "configuration";
 };
 
+const ownerCredentialLabel = (state: OwnerControlConnection["credentialState"]) => {
+  if (state === "active") return "Active credential";
+  if (state === "missing") return "Credential missing";
+  if (state === "rejected") return "Rejected / expired";
+  if (state === "not_applicable") return "No credential";
+  return "Not live-verified";
+};
+
+const ownerCredentialClass = (state: OwnerControlConnection["credentialState"]) => {
+  if (state === "active") return "text-[#00e479]";
+  if (state === "missing" || state === "rejected") return "text-red-300";
+  if (state === "not_applicable") return "text-[#849585]";
+  return "text-[#ffba20]";
+};
+
+const ownerChecklistClass = (state: "ready" | "attention" | "blocked" | "unverified") => {
+  if (state === "ready") return "border-[#00e479]/40 bg-[#00e479]/10 text-[#00e479]";
+  if (state === "blocked") return "border-red-500/40 bg-red-500/10 text-red-300";
+  if (state === "attention") return "border-[#ffba20]/40 bg-[#ffba20]/10 text-[#ffba20]";
+  return "border-[#526053] bg-[#201f1f] text-[#b9cbb9]";
+};
+
+const ownerProspectStatusClass = (state: "ready" | "blocked" | "disabled" | "enabled" | "invalid") => {
+  if (state === "ready") return "border-[#00e479]/40 bg-[#00e479]/10 text-[#00e479]";
+  if (state === "disabled") return "border-[#526053] bg-[#201f1f] text-[#b9cbb9]";
+  if (state === "enabled") return "border-[#ffba20]/40 bg-[#ffba20]/10 text-[#ffba20]";
+  return "border-red-500/40 bg-red-500/10 text-red-300";
+};
+
 function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) {
   const { addToast } = useToast();
   const [overview, setOverview] = useState<OwnerControlOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [connectionFilter, setConnectionFilter] = useState<"all" | "provider" | "control">("all");
+  const [connectionFilter, setConnectionFilter] = useState<"all" | "provider" | "control" | "action">("all");
+  const [selectedProspectPhaseId, setSelectedProspectPhaseId] = useState<string | null>(null);
+  const [webhookLag, setWebhookLag] = useState<OwnerWebhookBufferLag | null>(null);
+  const [webhookAudit, setWebhookAudit] = useState<OwnerWebhookReplayAudit | null>(null);
+  const [selectedWebhookIds, setSelectedWebhookIds] = useState<number[]>([]);
+  const [webhookReplayPlan, setWebhookReplayPlan] = useState<OwnerWebhookReplayPlan | null>(null);
+  const [webhookReplayApproval, setWebhookReplayApproval] = useState("");
+  const [webhookReplayBusy, setWebhookReplayBusy] = useState(false);
+  const [webhookReplayError, setWebhookReplayError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const next = await api<OwnerControlOverview>("/api/owner-control/overview");
+      const [next, lagResult, auditResult] = await Promise.all([
+        api<OwnerControlOverview>("/api/owner-control/overview"),
+        api<OwnerWebhookBufferLag>(
+          "/api/admin/webhook-buffer-lag?thresholdMinutes=5&limit=20"
+        ).catch(() => null),
+        api<OwnerWebhookReplayAudit>(
+          "/api/admin/webhook-buffer-replay/audit?limit=10"
+        ).catch(() => null),
+      ]);
       setOverview(next);
+      setWebhookLag(lagResult);
+      setWebhookAudit(auditResult);
+      setSelectedWebhookIds((current) => current.filter((id) =>
+        lagResult?.staleRows.some((row) => row.id === id)
+      ));
+      setWebhookReplayPlan(null);
+      setWebhookReplayApproval("");
+      setWebhookReplayError(null);
     } catch (err: any) {
       const message = err?.message || "Owner control data is unavailable.";
       setError(message);
@@ -12256,26 +20832,217 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
   const connections = (overview?.connections || []).filter((connection) => {
     if (connectionFilter === "provider") return ["core", "ai", "payments", "email", "voice", "infra", "calendar", "leads", "integrations"].includes(connection.category);
     if (connectionFilter === "control") return ["access", "approval", "guardrail"].includes(connection.category);
+    if (connectionFilter === "action") return connection.actionRequired;
     return true;
   });
   const usage = overview?.business.usage;
   const business = overview?.business;
+  const prospect = overview?.prospectAcquisition;
+  const selectedProspectPhase = prospect?.phases.find(
+    (phase) => phase.id === selectedProspectPhaseId
+  ) || prospect?.phases.find((phase) => !phase.configurationReady) || prospect?.phases[0] || null;
   const formatNumber = (value: number | undefined) => Number(value || 0).toLocaleString();
   const formatMoney = (value: number | undefined) => new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: overview?.cost.currency || "USD",
   }).format(Number(value || 0));
+  const formatCents = (value: number | null | undefined) =>
+    value === null || value === undefined ? "Not configured" : `${value}¢`;
   const updatedAt = overview?.generatedAt ? new Date(overview.generatedAt).toLocaleString() : null;
+
+  const copyProspectPhaseTemplate = async (
+    phase: OwnerProspectAcquisitionOverview["phases"][number]
+  ) => {
+    const template = Object.fromEntries(
+      phase.requiredVariables.map((variable) => [
+        variable.name,
+        variable.fixedValue ?? "",
+      ])
+    );
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(template, null, 2));
+      addToast({
+        type: "success",
+        message: `${phase.label} redacted template copied`,
+      });
+    } catch {
+      addToast({
+        type: "error",
+        message: "The browser could not copy the configuration template.",
+      });
+    }
+  };
+
+  const copyOperationalCommand = async (label: string, command: string) => {
+    try {
+      await navigator.clipboard.writeText(command);
+      addToast({ type: "success", message: `${label} copied` });
+    } catch {
+      addToast({
+        type: "error",
+        message: "The browser could not copy the operator command.",
+      });
+    }
+  };
+
+  const updateWebhookSelection = (nextIds: number[]) => {
+    setSelectedWebhookIds([...new Set(nextIds)].sort((left, right) => left - right));
+    setWebhookReplayPlan(null);
+    setWebhookReplayApproval("");
+    setWebhookReplayError(null);
+  };
+
+  const prepareWebhookReplay = async () => {
+    if (selectedWebhookIds.length === 0) {
+      setWebhookReplayError("Select at least one stale inbound event.");
+      return;
+    }
+    setWebhookReplayBusy(true);
+    setWebhookReplayError(null);
+    setWebhookReplayPlan(null);
+    setWebhookReplayApproval("");
+    try {
+      const plan = await api<OwnerWebhookReplayPlan>(
+        "/api/admin/webhook-buffer-replay",
+        {
+          method: "POST",
+          body: JSON.stringify({ apply: false, selectedIds: selectedWebhookIds }),
+        }
+      );
+      const expectedIds = [...selectedWebhookIds]
+        .sort((left, right) => left - right);
+      const returnedIds = Array.isArray(plan.requestedIds)
+        ? [...plan.requestedIds].map(Number).sort((left, right) => left - right)
+        : [];
+      const replayRowIds = Array.isArray(plan.replayRows)
+        ? plan.replayRows.map((row) => Number(row.id)).sort((left, right) => left - right)
+        : [];
+      if (
+        !plan.ok ||
+        plan.contractVersion !== OWNER_WEBHOOK_REPLAY_CONTRACT ||
+        plan.apply !== false ||
+        plan.mode !== "dry-run" ||
+        !plan.approvalPhrase ||
+        !plan.approvalPhrase.startsWith("APPROVE_REPLAY_SMIRK_WEBHOOK_BUFFER:") ||
+        !/^[a-f0-9]{64}$/i.test(plan.requestDigest) ||
+        !/^[a-f0-9]{40}$/i.test(plan.runtimeCommit || "") ||
+        JSON.stringify(returnedIds) !== JSON.stringify(expectedIds) ||
+        JSON.stringify(replayRowIds) !== JSON.stringify(expectedIds) ||
+        plan.selected !== expectedIds.length ||
+        !Array.isArray(plan.blockers) ||
+        plan.blockers.length !== 0 ||
+        !Array.isArray(plan.workspaceIds) ||
+        plan.workspaceIds.length !== 1 ||
+        !Number.isInteger(Number(plan.workspaceIds[0])) ||
+        Number(plan.workspaceIds[0]) <= 0 ||
+        plan.productionWritePerformed !== false ||
+        plan.outboundContactPerformed !== false ||
+        plan.smsSent !== false ||
+        plan.deploymentPerformed !== false ||
+        plan.deletionPerformed !== false
+      ) {
+        throw new Error("Replay preview did not contain a complete exact-scope plan.");
+      }
+      setWebhookReplayPlan(plan);
+      addToast({
+        type: "info",
+        message: "Exact replay plan prepared. No production write occurred.",
+      });
+    } catch (err: any) {
+      setWebhookReplayError(err?.message || "Replay preview failed.");
+    } finally {
+      setWebhookReplayBusy(false);
+    }
+  };
+
+  const copyWebhookReplayApproval = async () => {
+    if (!webhookReplayPlan?.approvalPhrase) return;
+    try {
+      await navigator.clipboard.writeText(webhookReplayPlan.approvalPhrase);
+      addToast({ type: "success", message: "Exact replay approval copied" });
+    } catch {
+      addToast({ type: "error", message: "The browser could not copy the approval." });
+    }
+  };
+
+  const applyWebhookReplay = async () => {
+    const plan = webhookReplayPlan;
+    if (!plan?.approvalPhrase || webhookReplayApproval !== plan.approvalPhrase) {
+      setWebhookReplayError("Paste the exact approval phrase generated for this plan.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Replay ${plan.selected} selected inbound event${plan.selected === 1 ? "" : "s"}? This reconciles buffered call records only. It does not call, text, email, deploy, or delete.`
+    );
+    if (!confirmed) return;
+    setWebhookReplayBusy(true);
+    setWebhookReplayError(null);
+    try {
+      const result = await api<OwnerWebhookReplayApply>(
+        "/api/admin/webhook-buffer-replay",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            apply: true,
+            selectedIds: plan.requestedIds,
+            requestDigest: plan.requestDigest,
+            approval: webhookReplayApproval,
+          }),
+        }
+      );
+      const expectedIds = [...plan.requestedIds].sort((left, right) => left - right);
+      const processedIds = Array.isArray(result.processedIds)
+        ? [...result.processedIds].map(Number).sort((left, right) => left - right)
+        : [];
+      const expectedWriteClaim = result.mode === "apply-verified"
+        ? true
+        : result.mode === "apply-idempotent-replay"
+          ? false
+          : null;
+      if (
+        result.ok !== true ||
+        result.contractVersion !== OWNER_WEBHOOK_REPLAY_CONTRACT ||
+        result.apply !== true ||
+        result.requestDigest !== plan.requestDigest ||
+        expectedWriteClaim === null ||
+        result.productionWritePerformed !== expectedWriteClaim ||
+        JSON.stringify(processedIds) !== JSON.stringify(expectedIds) ||
+        !Number.isInteger(Number(result.auditId)) ||
+        Number(result.auditId) <= 0 ||
+        !Number.isFinite(new Date(result.appliedAt).getTime()) ||
+        result.outboundContactPerformed !== false ||
+        result.smsSent !== false ||
+        result.deploymentPerformed !== false ||
+        result.deletionPerformed !== false
+      ) {
+        throw new Error("Replay response did not contain a complete exact-scope receipt.");
+      }
+      addToast({
+        type: "success",
+        message: result.mode === "apply-idempotent-replay"
+          ? "Replay was already applied; the existing audit receipt was returned."
+          : `${result.processedIds.length} buffered inbound event${result.processedIds.length === 1 ? "" : "s"} reconciled.`,
+      });
+      setSelectedWebhookIds([]);
+      setWebhookReplayPlan(null);
+      setWebhookReplayApproval("");
+      await refresh();
+    } catch (err: any) {
+      setWebhookReplayError(err?.message || "Replay apply failed without a write receipt.");
+    } finally {
+      setWebhookReplayBusy(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl space-y-5 p-3 sm:p-5">
       <header className="flex flex-col gap-4 border-b border-[#3b4b3d] pb-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#00e479]">
-            <ShieldCheck size={14} /> Owner access surface
+            <ShieldCheck size={14} /> Full-admin workspace
           </div>
-          <h2 className="font-mono text-2xl font-black uppercase tracking-[0.03em] text-[#f1ffef]">Owner Control</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#b9cbb9]">Full-operator visibility across connections, usage, business operations, and the controls that protect spend.</p>
+          <h2 className="font-mono text-2xl font-black uppercase tracking-[0.03em] text-[#f1ffef]">Admin Settings</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#b9cbb9]">Connection health, credential posture, provider usage, costs, repair paths, and the controls that protect spend.</p>
         </div>
         <div className="flex items-center gap-3 self-start md:self-auto">
           <div className="text-right font-mono text-[10px] uppercase tracking-[0.08em] text-[#849585]">
@@ -12319,6 +21086,621 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
         ))}
       </section>
 
+      <section aria-label="Operational requirements" className="border border-[#3b4b3d] bg-[#131313]">
+        <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[#00e479]">What still has to be true</div>
+            <h3 className="mt-1 text-base font-bold text-[#f1ffef]">Operational requirements</h3>
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-[#849585]">A connection is not called active unless a provider probe or durable application evidence supports it. Unknown proof stays unknown.</p>
+          </div>
+          <div className={`self-start border px-3 py-2 font-mono text-[9px] font-bold uppercase ${overview?.settingsStorage.durableInAppWrites ? ownerChecklistClass("ready") : ownerChecklistClass("attention")}`}>
+            {overview?.settingsStorage.durableInAppWrites ? "Durable in-app writes" : "Provider env required for durability"}
+          </div>
+        </div>
+        {overview?.settingsStorage && (
+          <div className="border-b border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3 text-xs leading-5 text-[#b9cbb9]">
+            <span className="font-semibold text-[#f1ffef]">Secret storage:</span> {overview.settingsStorage.detail}
+          </div>
+        )}
+        <div className="grid bg-[#3b4b3d] md:grid-cols-2 xl:grid-cols-4">
+          {(overview?.operationalChecklist || []).map((item) => (
+            <div key={item.id} className="min-h-[170px] bg-[#131313] px-4 py-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-sm font-semibold text-[#f1ffef]">{item.label}</div>
+                <span className={`shrink-0 border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerChecklistClass(item.state)}`}>{item.state}</span>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-[#b9cbb9]">{item.detail}</p>
+              <div className="mt-3 border-l-2 border-[#526053] pl-3 text-[11px] leading-4 text-[#849585]">{item.next}</div>
+              {item.actions && item.actions.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {item.actions.map((action) => action.href ? (
+                    <a
+                      key={action.id}
+                      href={action.href}
+                      target={action.external ? "_blank" : undefined}
+                      rel={action.external ? "noreferrer" : undefined}
+                      className="inline-flex min-h-8 items-center justify-center gap-1.5 border border-[#526053] px-2.5 py-1.5 font-mono text-[8px] font-bold uppercase text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef]"
+                    >
+                      <ExternalLink size={11} />
+                      {action.label}
+                    </a>
+                  ) : action.copyText ? (
+                    <button
+                      key={action.id}
+                      type="button"
+                      onClick={() => void copyOperationalCommand(
+                        action.label,
+                        action.copyText || ""
+                      )}
+                      className="inline-flex min-h-8 items-center justify-center gap-1.5 border border-[#00e479]/50 bg-[#00e479]/10 px-2.5 py-1.5 font-mono text-[8px] font-bold uppercase text-[#00e479] hover:bg-[#00e479]/15"
+                    >
+                      <Copy size={11} />
+                      {action.label}
+                    </button>
+                  ) : null)}
+                </div>
+              )}
+            </div>
+          ))}
+          {!loading && overview && overview.operationalChecklist.length === 0 && <div className="bg-[#131313] px-4 py-8 text-sm text-[#849585]">No operational checklist is available.</div>}
+        </div>
+      </section>
+
+      <section aria-label="Inbound event recovery" className="border border-[#3b4b3d] bg-[#131313]">
+        <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[#ffba20]/35 bg-[#ffba20]/10 text-[#ffba20]">
+              <RotateCcw size={17} />
+            </div>
+            <div className="min-w-0">
+              <div className="font-mono text-[10px] font-bold uppercase text-[#ffba20]">Guarded maintenance</div>
+              <h3 className="mt-1 text-base font-bold text-[#f1ffef]">Inbound event recovery</h3>
+              <p className="mt-1 max-w-3xl text-xs leading-5 text-[#849585]">Review stale buffered inbound events, prepare a digest-bound plan, and reconcile only the selected call records. Preview is read-only. Apply requires the exact generated phrase and creates a durable receipt.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <span className={`border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerChecklistClass(webhookLag === null ? "unverified" : webhookLag.staleCount > 0 ? "attention" : "ready")}`}>
+              {webhookLag === null ? "Telemetry unavailable" : `${webhookLag.staleCount} stale`}
+            </span>
+            <span className="border border-[#526053] bg-[#201f1f] px-2 py-1 font-mono text-[9px] font-bold uppercase text-[#b9cbb9]">Full admin only</span>
+          </div>
+        </div>
+
+        <div className="grid border-b border-[#3b4b3d] bg-[#3b4b3d] sm:grid-cols-3">
+          <div className="bg-[#0e0e0e] px-4 py-3">
+            <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Pending events</div>
+            <div className="mt-2 font-mono text-xl font-black tabular-nums text-[#f1ffef]">{webhookLag?.pendingCount ?? "-"}</div>
+          </div>
+          <div className="bg-[#0e0e0e] px-4 py-3">
+            <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Lag threshold</div>
+            <div className="mt-2 font-mono text-xl font-black tabular-nums text-[#f1ffef]">{webhookLag ? `${webhookLag.thresholdMinutes} min` : "-"}</div>
+          </div>
+          <div className="bg-[#0e0e0e] px-4 py-3">
+            <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Oldest pending</div>
+            <div className="mt-2 text-xs font-semibold text-[#f1ffef]">{webhookLag?.oldestPendingReceivedAt ? new Date(webhookLag.oldestPendingReceivedAt).toLocaleString() : "None reported"}</div>
+          </div>
+        </div>
+
+        <div className="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+          <div className="border-b border-[#3b4b3d] lg:border-b-0 lg:border-r">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#3b4b3d] px-4 py-3">
+              <div>
+                <div className="text-sm font-semibold text-[#f1ffef]">Stale inbound buffer</div>
+                <div className="mt-1 text-[11px] text-[#849585]">Provider IDs are redacted; phone numbers and payloads are never returned here.</div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateWebhookSelection(
+                    selectedWebhookIds.length === (webhookLag?.staleRows.length || 0)
+                      ? []
+                      : (webhookLag?.staleRows || []).map((row) => row.id)
+                  )}
+                  disabled={!webhookLag?.staleRows.length || webhookReplayBusy}
+                  className="inline-flex min-h-8 items-center gap-1.5 border border-[#526053] px-2.5 py-1.5 font-mono text-[9px] font-bold uppercase text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Check size={12} /> {selectedWebhookIds.length === (webhookLag?.staleRows.length || 0) && selectedWebhookIds.length > 0 ? "Clear" : "Select all"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void prepareWebhookReplay()}
+                  disabled={selectedWebhookIds.length === 0 || webhookReplayBusy}
+                  className="inline-flex min-h-8 items-center gap-1.5 border border-[#ffba20]/50 bg-[#ffba20]/10 px-2.5 py-1.5 font-mono text-[9px] font-bold uppercase text-[#ffba20] hover:bg-[#ffba20]/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {webhookReplayBusy ? <Loader2 size={12} className="animate-spin" /> : <Microscope size={12} />}
+                  Prepare exact replay
+                </button>
+              </div>
+            </div>
+            <div className="divide-y divide-[#2a342b]">
+              {(webhookLag?.staleRows || []).map((row) => (
+                <label key={row.id} className="grid cursor-pointer grid-cols-[24px_minmax(0,1fr)] gap-3 px-4 py-3 hover:bg-[#181918]">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select webhook buffer row ${row.id}`}
+                    checked={selectedWebhookIds.includes(row.id)}
+                    onChange={(event) => updateWebhookSelection(
+                      event.target.checked
+                        ? [...selectedWebhookIds, row.id]
+                        : selectedWebhookIds.filter((id) => id !== row.id)
+                    )}
+                    disabled={webhookReplayBusy}
+                    className="mt-1 h-4 w-4 accent-[#00e479]"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="font-mono text-xs font-bold text-[#f1ffef]">Event #{row.id}</span>
+                      <span className="font-mono text-[10px] text-[#849585]">Call ···{row.callSidSuffix || "unknown"}</span>
+                      <span className="border border-[#526053] px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase text-[#b9cbb9]">{row.processStatus}</span>
+                    </span>
+                    <span className="mt-1 block text-[11px] leading-4 text-[#849585]">Workspace {row.workspaceId ?? "unresolved"} · {row.webhookType} · {row.receivedAt ? new Date(row.receivedAt).toLocaleString() : "time unavailable"}</span>
+                  </span>
+                </label>
+              ))}
+              {webhookLag && webhookLag.staleRows.length === 0 && (
+                <div className="px-4 py-8 text-sm text-[#849585]">No stale inbound events are waiting for operator review.</div>
+              )}
+              {!webhookLag && (
+                <div className="px-4 py-8 text-sm text-[#849585]">Maintenance telemetry could not be loaded. No replay plan can be prepared from this page.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="border-b border-[#3b4b3d] px-4 py-3">
+              <div className="text-sm font-semibold text-[#f1ffef]">Approval gate</div>
+              <div className="mt-1 text-[11px] leading-4 text-[#849585]">Changing a selection or refreshing invalidates the displayed plan.</div>
+            </div>
+            {!webhookReplayPlan ? (
+              <div className="px-4 py-8 text-sm leading-6 text-[#849585]">Select only the intended rows and prepare a read-only plan. The server binds the exact payload hashes, workspace, row state, and deployed commit into one digest.</div>
+            ) : (
+              <div className="space-y-3 px-4 py-4">
+                <div className="grid grid-cols-2 gap-3 text-[11px]">
+                  <div><div className="font-mono text-[8px] font-bold uppercase text-[#849585]">Rows</div><div className="mt-1 font-semibold text-[#f1ffef]">{webhookReplayPlan.requestedIds.join(", ")}</div></div>
+                  <div><div className="font-mono text-[8px] font-bold uppercase text-[#849585]">Workspace</div><div className="mt-1 font-semibold text-[#f1ffef]">{webhookReplayPlan.workspaceIds.join(", ")}</div></div>
+                  <div className="col-span-2"><div className="font-mono text-[8px] font-bold uppercase text-[#849585]">Request digest</div><div className="mt-1 break-all font-mono text-[10px] text-[#b9cbb9]">{webhookReplayPlan.requestDigest}</div></div>
+                  <div className="col-span-2"><div className="font-mono text-[8px] font-bold uppercase text-[#849585]">Runtime commit</div><div className="mt-1 break-all font-mono text-[10px] text-[#b9cbb9]">{webhookReplayPlan.runtimeCommit}</div></div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void copyWebhookReplayApproval()}
+                  className="inline-flex min-h-8 items-center gap-1.5 border border-[#526053] px-2.5 py-1.5 font-mono text-[9px] font-bold uppercase text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef]"
+                >
+                  <Copy size={12} /> Copy exact approval
+                </button>
+                <label className="block">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Paste exact approval to apply</span>
+                  <textarea
+                    value={webhookReplayApproval}
+                    onChange={(event) => setWebhookReplayApproval(event.target.value)}
+                    rows={5}
+                    spellCheck={false}
+                    className="mt-2 w-full resize-y border border-[#526053] bg-[#0e0e0e] px-3 py-2 font-mono text-[10px] leading-4 text-[#f1ffef] outline-none focus:border-[#ffba20]"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void applyWebhookReplay()}
+                  disabled={webhookReplayBusy || webhookReplayApproval !== webhookReplayPlan.approvalPhrase}
+                  className="inline-flex min-h-9 w-full items-center justify-center gap-2 border border-red-400/50 bg-red-500/10 px-3 py-2 font-mono text-[9px] font-bold uppercase text-red-200 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {webhookReplayBusy ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                  Replay selected inbound events
+                </button>
+              </div>
+            )}
+            {webhookReplayError && (
+              <div className="border-t border-red-500/30 bg-red-500/10 px-4 py-3 text-xs leading-5 text-red-100" role="alert">{webhookReplayError}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t border-[#3b4b3d]">
+          <div className="flex flex-col gap-1 border-b border-[#3b4b3d] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm font-semibold text-[#f1ffef]">Durable replay receipts</div>
+            <div className="font-mono text-[9px] uppercase text-[#849585]">Shared full-admin credential principal + request ID</div>
+          </div>
+          <div className="divide-y divide-[#2a342b]">
+            {(webhookAudit?.receipts || []).map((receipt) => (
+              <div key={receipt.id} className="grid gap-2 px-4 py-3 text-[11px] sm:grid-cols-[90px_minmax(0,1fr)_auto] sm:items-center">
+                <div className="font-mono font-bold text-[#f1ffef]">Receipt #{receipt.id}</div>
+                <div className="min-w-0 text-[#849585]"><span className="font-mono text-[#b9cbb9]">{receipt.requestDigest.slice(0, 12)}…</span> · rows {receipt.targetIds.join(", ")} · workspace {receipt.workspaceIds.join(", ")}</div>
+                <div className="text-[#849585]">{new Date(receipt.appliedAt).toLocaleString()}</div>
+              </div>
+            ))}
+            {webhookAudit && webhookAudit.receipts.length === 0 && <div className="px-4 py-5 text-xs text-[#849585]">No replay receipts exist.</div>}
+            {!webhookAudit && <div className="px-4 py-5 text-xs text-[#849585]">Replay audit telemetry is unavailable.</div>}
+          </div>
+        </div>
+
+        <div className="flex items-start gap-2 border-t border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3 text-[11px] leading-5 text-[#b9cbb9]">
+          <ShieldCheck size={14} className="mt-0.5 shrink-0 text-[#00e479]" />
+          <span>This control grants no authority to call, text, email, deploy, delete production data, or spend money. It only reconciles exact buffered inbound call records after full-admin approval.</span>
+        </div>
+      </section>
+
+      {prospect && (
+        <section aria-label="Prospect acquisition control plane" className="border border-[#3b4b3d] bg-[#131313]">
+          <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[#00e479]/30 bg-[#00e479]/10 text-[#00e479]">
+                <Network size={17} />
+              </div>
+              <div className="min-w-0">
+                <div className="font-mono text-[10px] font-bold uppercase text-[#00e479]">SMIRK + Velvet revenue plumbing</div>
+                <h3 className="mt-1 text-base font-bold text-[#f1ffef]">Prospect acquisition control plane</h3>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-[#849585]">Redacted production configuration, workspace boundaries, cost ceilings, and proof gates. This surface cannot enable a switch, contact a prospect, or authorize spend.</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              <span className={`border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerProspectStatusClass(prospect.stagedConfigurationReady ? "ready" : "blocked")}`}>
+                {prospect.stagedConfigurationReady ? "Configuration staged" : `${prospect.blockers.length} config blockers`}
+              </span>
+              <span className={`border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerProspectStatusClass(prospect.safeStagingState ? "ready" : prospect.activation.allExecutionSwitchesDisabled ? "blocked" : "enabled")}`}>
+                {prospect.safeStagingState ? "Safe staging" : prospect.activation.allExecutionSwitchesDisabled ? "Staging incomplete" : "Switch review required"}
+              </span>
+              <span className="border border-[#526053] bg-[#201f1f] px-2 py-1 font-mono text-[9px] font-bold uppercase text-[#b9cbb9]">No action authorized</span>
+            </div>
+          </div>
+
+          <div className="grid border-b border-[#3b4b3d] bg-[#3b4b3d] sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              {
+                label: "Workspace boundary",
+                value: prospect.workspaceBoundary.aligned ? `Aligned · ${prospect.workspaceBoundary.workspaceId}` : "Not aligned",
+                detail: "Every scoped connection must bind the same workspace",
+                ready: prospect.workspaceBoundary.aligned,
+              },
+              {
+                label: "Email ceiling",
+                value: `${prospect.emailCaps.dailyRecipientCap ?? "-"}/day · ${formatCents(prospect.emailCaps.dailySpendCapCents)}`,
+                detail: `${formatCents(prospect.emailCaps.unitCostCents)} reserved per recipient`,
+                ready: prospect.emailCaps.dailyRecipientCap !== null && prospect.emailCaps.dailySpendCapCents !== null,
+              },
+              {
+                label: "Advisory QC ceiling",
+                value: `${prospect.qcCaps.dailyReviewCap ?? "-"}/day · ${formatCents(prospect.qcCaps.dailySpendCapCents)}`,
+                detail: prospect.qcCaps.requiredForApproval ? "Receipt required before human approval" : "Required-for-approval gate is missing",
+                ready: prospect.qcCaps.requiredForApproval && prospect.qcCaps.dailyReviewCap !== null,
+              },
+              {
+                label: "Manual-call ceiling",
+                value: `${prospect.manualCallCaps.dailyApprovalCap ?? "-"}/day`,
+                detail: "Operator tel link only; provider and automated dialing blocked",
+                ready:
+                  prospect.manualCallCaps.dailyApprovalCap !== null &&
+                  prospect.manualCallCaps.manualDialOnly &&
+                  !prospect.manualCallCaps.providerExecutionAllowed &&
+                  !prospect.manualCallCaps.automatedDialingAllowed,
+              },
+              {
+                label: "Execution authority",
+                value: prospect.activation.allExecutionSwitchesDisabled ? `${prospect.executionSwitches.length} switches disabled` : `${prospect.executionSwitches.filter((item) => item.enabled).length} enabled`,
+                detail: "Contact and spend authorization remain false",
+                ready: prospect.activation.allExecutionSwitchesDisabled,
+              },
+            ].map((metric) => (
+              <div key={metric.label} className="min-h-[104px] bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">{metric.label}</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${metric.ready ? "bg-[#00e479]" : "bg-[#ffba20]"}`} />
+                </div>
+                <div className="mt-2 font-mono text-sm font-bold text-[#f1ffef]">{metric.value}</div>
+                <div className="mt-1 text-[11px] leading-4 text-[#849585]">{metric.detail}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-b border-[#3b4b3d]">
+            <div className="flex flex-col gap-2 border-b border-[#3b4b3d] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Rolling 24-hour controlled usage</div>
+                <div className="mt-1 text-xs text-[#849585]">Durable reservations and provider attempts, scoped to this workspace. Provider acceptance is not delivery proof.</div>
+              </div>
+              <span className={`self-start border px-2 py-1 font-mono text-[9px] font-bold uppercase sm:self-auto ${ownerProspectStatusClass(prospect.usage.availability === "available" ? "ready" : "blocked")}`}>
+                {prospect.usage.availability}
+              </span>
+            </div>
+            <div className="grid bg-[#3b4b3d] md:grid-cols-2 xl:grid-cols-4">
+              <div className="min-h-[142px] min-w-0 bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Prospect email</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${prospect.usage.email.available ? "bg-[#00e479]" : "bg-red-400"}`} />
+                </div>
+                <div className="mt-2 font-mono text-base font-bold text-[#f1ffef]">
+                  {prospect.usage.email.available ? `${formatNumber(prospect.usage.email.recipientsReserved ?? 0)} / ${prospect.emailCaps.dailyRecipientCap ?? "-"} recipients` : "Usage unavailable"}
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-[#b9cbb9]">
+                  {prospect.usage.email.available
+                    ? `${formatCents(prospect.usage.email.reservedSpendCents)} reserved of ${formatCents(prospect.emailCaps.dailySpendCapCents)} · ${formatNumber(prospect.usage.email.providerAttempts ?? 0)} provider attempts`
+                    : "The email ledger could not be read; zero usage is not assumed."}
+                </div>
+                {prospect.usage.email.available && <div className="mt-1 text-[10px] leading-4 text-[#849585]">{formatNumber(prospect.usage.email.providerAccepted ?? 0)} provider accepted, not delivery proven · {formatNumber(prospect.usage.email.providerFailed ?? 0)} failed</div>}
+              </div>
+              <div className="min-h-[142px] min-w-0 bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Advisory QC</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${prospect.usage.qc.available ? "bg-[#00e479]" : "bg-red-400"}`} />
+                </div>
+                <div className="mt-2 font-mono text-base font-bold text-[#f1ffef]">
+                  {prospect.usage.qc.available ? `${formatNumber(prospect.usage.qc.reviewsReserved ?? 0)} / ${prospect.qcCaps.dailyReviewCap ?? "-"} reviews` : "Usage unavailable"}
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-[#b9cbb9]">
+                  {prospect.usage.qc.available
+                    ? `${formatCents(prospect.usage.qc.reservedSpendCents)} reserved of ${formatCents(prospect.qcCaps.dailySpendCapCents)} · ${formatNumber(prospect.usage.qc.totalTokens ?? 0)} tokens`
+                    : "The QC ledger could not be read; zero tokens or spend are not assumed."}
+                </div>
+                {prospect.usage.qc.available && <div className="mt-1 text-[10px] leading-4 text-[#849585]">{formatNumber(prospect.usage.qc.completed ?? 0)} completed · {formatNumber(prospect.usage.qc.failedOrUnknown ?? 0)} failed or unknown</div>}
+              </div>
+              <div className="min-h-[142px] min-w-0 bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Velvet discovery</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${prospect.usage.discovery.available ? "bg-[#00e479]" : "bg-red-400"}`} />
+                </div>
+                <div className="mt-2 font-mono text-base font-bold text-[#f1ffef]">
+                  {prospect.usage.discovery.available ? `${formatNumber(prospect.usage.discovery.requests ?? 0)} requests` : "Usage unavailable"}
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-[#b9cbb9]">
+                  {prospect.usage.discovery.available
+                    ? `${formatNumber(prospect.usage.discovery.providerRequests ?? 0)} provider requests · ${formatCents(prospect.usage.discovery.approvedMaxSpendCents)} approved maximum exposure`
+                    : "The discovery ledger could not be read; zero usage is not assumed."}
+                </div>
+                {prospect.usage.discovery.available && <div className="mt-1 text-[10px] leading-4 text-[#849585]">{formatNumber(prospect.usage.discovery.approved ?? 0)} approved · {formatNumber(prospect.usage.discovery.completed ?? 0)} completed · maximum is not actual spend</div>}
+              </div>
+              <div className="min-h-[142px] min-w-0 bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Manual prospect calls</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${prospect.usage.manualCall.available ? "bg-[#00e479]" : "bg-red-400"}`} />
+                </div>
+                <div className="mt-2 font-mono text-base font-bold text-[#f1ffef]">
+                  {prospect.usage.manualCall.available ? `${formatNumber(prospect.usage.manualCall.approvals ?? 0)} / ${prospect.manualCallCaps.dailyApprovalCap ?? "-"} approvals` : "Usage unavailable"}
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-[#b9cbb9]">
+                  {prospect.usage.manualCall.available
+                    ? `${formatNumber(prospect.usage.manualCall.recordedCompleted ?? 0)} operator-recorded complete · ${formatNumber(prospect.usage.manualCall.openApproved ?? 0)} approved and open`
+                    : "The manual-call ledger could not be read; zero activity is not assumed."}
+                </div>
+                {prospect.usage.manualCall.available && <div className="mt-1 text-[10px] leading-4 text-[#849585]">{formatNumber(prospect.usage.manualCall.closedWithoutExecution ?? 0)} closed without execution · {prospect.usage.manualCall.providerRequests} provider requests · {prospect.usage.manualCall.automatedDials} automated dials</div>}
+              </div>
+            </div>
+            {prospect.usage.issues.length > 0 && (
+              <div className="break-words border-t border-[#3b4b3d] bg-red-500/5 px-4 py-2 font-mono text-[9px] leading-4 text-red-200">
+                Telemetry issues: {prospect.usage.issues.join(" · ")}
+              </div>
+            )}
+          </div>
+
+          <div className="border-b border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3">
+            <div className="flex items-start gap-3">
+              <Crosshair size={15} className="mt-0.5 shrink-0 text-[#00e479]" />
+              <div>
+                <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Next configuration action · {prospect.nextAction.code.replaceAll("_", " ")}</div>
+                <div className="mt-1 text-sm font-semibold text-[#f1ffef]">{prospect.nextAction.title}</div>
+                <div className="mt-1 text-xs leading-5 text-[#b9cbb9]">{prospect.nextAction.detail}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-b border-[#3b4b3d]">
+            <div className="border-b border-[#3b4b3d] px-4 py-3">
+              <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Seven-phase release sequence</div>
+              <div className="mt-1 text-xs text-[#849585]">Select a phase for its redacted variable inventory, provider repair paths, and remaining proof gates.</div>
+            </div>
+            <div className="grid bg-[#3b4b3d] sm:grid-cols-2 xl:grid-cols-3">
+              {prospect.phases.map((phase, index) => (
+                <button
+                  key={phase.id}
+                  type="button"
+                  onClick={() => setSelectedProspectPhaseId(phase.id)}
+                  aria-pressed={selectedProspectPhase?.id === phase.id}
+                  className={`min-h-[132px] bg-[#131313] px-4 py-3 text-left transition-colors hover:bg-[#181818] ${selectedProspectPhase?.id === phase.id ? "ring-1 ring-inset ring-[#00e479]" : ""}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Phase {index + 1}</div>
+                      <div className="mt-1 text-sm font-semibold text-[#f1ffef]">{phase.label}</div>
+                    </div>
+                    <span className={`shrink-0 border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerProspectStatusClass(phase.configurationReady ? "ready" : "blocked")}`}>
+                      {phase.configurationReady ? "Configured" : `${phase.blockers.length} blocked`}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-[11px] leading-4 text-[#849585]">{phase.externalActionScope.replaceAll("-", " ")}</div>
+                  <div className="mt-2 break-all font-mono text-[9px] leading-4 text-[#b9cbb9]">{phase.blockers[0] || `${phase.proofsStillRequired.length} external proofs remain`}</div>
+                </button>
+              ))}
+            </div>
+            {selectedProspectPhase && (
+              <div className="border-t border-[#3b4b3d] bg-[#0e0e0e]">
+                <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="font-mono text-[9px] font-bold uppercase text-[#00e479]">Selected configuration phase</div>
+                    <div className="mt-1 text-base font-bold text-[#f1ffef]">{selectedProspectPhase.label}</div>
+                    <div className="mt-1 text-xs leading-5 text-[#849585]">{selectedProspectPhase.requiredVariables.length} required variables · {selectedProspectPhase.blockers.length} current blockers · values remain server-side</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedProspectPhase.setupLinks.map((link) => (
+                      <a
+                        key={link.id}
+                        href={link.href}
+                        target={link.external ? "_blank" : undefined}
+                        rel={link.external ? "noreferrer" : undefined}
+                        className="inline-flex min-h-9 items-center justify-center gap-1.5 border border-[#526053] px-3 py-2 font-mono text-[9px] font-bold uppercase text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef]"
+                      >
+                        <ExternalLink size={12} />
+                        {link.label}
+                      </a>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => void copyProspectPhaseTemplate(selectedProspectPhase)}
+                      className="inline-flex min-h-9 items-center justify-center gap-1.5 border border-[#00e479]/50 bg-[#00e479]/10 px-3 py-2 font-mono text-[9px] font-bold uppercase text-[#00e479] hover:bg-[#00e479]/15"
+                    >
+                      <Copy size={12} />
+                      Copy redacted template
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
+                  <div className="border-b border-[#3b4b3d] xl:border-b-0 xl:border-r">
+                    <div className="hidden grid-cols-[minmax(220px,0.8fr)_130px_minmax(0,1.4fr)] gap-3 border-b border-[#3b4b3d] bg-[#201f1f] px-4 py-2 font-mono text-[9px] font-bold uppercase text-[#849585] md:grid">
+                      <span>Variable</span><span>State</span><span>Requirement</span>
+                    </div>
+                    <div className="divide-y divide-[#3b4b3d]">
+                      {selectedProspectPhase.requiredVariables.map((variable) => {
+                        const invalid = variable.state === "invalid-switch-value" || variable.state === "drifted-from-fixed-value";
+                        const ready = variable.state === "present-redacted" || variable.state === "matches-fixed-value" || variable.state === "safely-disabled";
+                        const enabled = variable.state === "enabled-requires-separate-approval";
+                        return (
+                          <div key={variable.name} className="grid gap-2 px-4 py-3 md:grid-cols-[minmax(220px,0.8fr)_130px_minmax(0,1.4fr)] md:gap-3">
+                            <div className="min-w-0">
+                              <div className="break-all font-mono text-[10px] font-bold text-[#e5e2e1]">{variable.name}</div>
+                              <div className="mt-1 font-mono text-[9px] uppercase text-[#849585]">{variable.kind.replaceAll("-", " ")}{variable.sensitive ? " · write only" : ""}</div>
+                            </div>
+                            <div>
+                              <span className={`inline-flex border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerProspectStatusClass(invalid ? "invalid" : enabled ? "enabled" : ready ? "ready" : "blocked")}`}>
+                                {variable.state.replaceAll("-", " ")}
+                              </span>
+                            </div>
+                            <div className="min-w-0 text-[11px] leading-5 text-[#b9cbb9]">
+                              {variable.expected}
+                              {!variable.sensitive && variable.fixedValue !== undefined && (
+                                <div className="mt-1 break-all font-mono text-[9px] text-[#00e479]">Required value: {variable.fixedValue}</div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="border-b border-[#3b4b3d] px-4 py-3">
+                      <div className="font-mono text-[9px] font-bold uppercase text-[#e5e2e1]">External prerequisites</div>
+                    </div>
+                    <ul className="space-y-3 px-4 py-4">
+                      {selectedProspectPhase.externalPrerequisites.map((item) => (
+                        <li key={item} className="flex items-start gap-2 text-[11px] leading-5 text-[#b9cbb9]">
+                          <ShieldCheck size={13} className="mt-0.5 shrink-0 text-[#ffba20]" />
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="border-t border-[#3b4b3d] px-4 py-3">
+                      <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Read-only verification command</div>
+                      <code className="mt-2 block overflow-x-auto whitespace-nowrap border border-[#3b4b3d] bg-[#131313] px-3 py-2 font-mono text-[9px] text-[#b9cbb9]">{selectedProspectPhase.nextCheckCommand}</code>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="grid border-b border-[#3b4b3d] xl:grid-cols-2 xl:divide-x xl:divide-[#3b4b3d]">
+            <div>
+              <div className="border-b border-[#3b4b3d] px-4 py-3">
+                <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Revenue-loop connections</div>
+                <div className="mt-1 text-xs text-[#849585]">Status and missing variable names only. Secret values stay server-side.</div>
+              </div>
+              <div className="divide-y divide-[#3b4b3d]">
+                {prospect.connections.map((connection) => {
+                  const state = connection.available ? "ready" : connection.configured && !connection.enabled ? "disabled" : "blocked";
+                  return (
+                    <div key={connection.id} className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_110px] sm:items-start">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-[#e5e2e1]">{connection.label}</div>
+                        <div className="mt-1 break-all font-mono text-[9px] leading-4 text-[#849585]">
+                          {connection.missing.length > 0 ? connection.missing.join(" · ") : connection.workspaceId ? `workspace ${connection.workspaceId}` : "No named configuration blockers"}
+                        </div>
+                      </div>
+                      <span className={`justify-self-start border px-2 py-1 font-mono text-[9px] font-bold uppercase sm:justify-self-end ${ownerProspectStatusClass(state)}`}>
+                        {connection.available ? "Available" : connection.configured && !connection.enabled ? "Disabled" : "Blocked"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="border-t border-[#3b4b3d] xl:border-t-0">
+              <div className="border-b border-[#3b4b3d] px-4 py-3">
+                <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Execution switches</div>
+                <div className="mt-1 text-xs text-[#849585]">Enabled is not approval. Every external action still needs its exact gate.</div>
+              </div>
+              <div className="divide-y divide-[#3b4b3d]">
+                {prospect.executionSwitches.map((item) => {
+                  const invalid = item.state === "invalid-switch-value";
+                  return (
+                    <div key={item.key} className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_110px] sm:items-start">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-[#e5e2e1]">{item.label}</div>
+                        <div className="mt-1 break-all font-mono text-[9px] leading-4 text-[#849585]">{item.key}</div>
+                      </div>
+                      <span className={`justify-self-start border px-2 py-1 font-mono text-[9px] font-bold uppercase sm:justify-self-end ${ownerProspectStatusClass(invalid ? "invalid" : item.enabled ? "enabled" : "disabled")}`}>
+                        {invalid ? "Invalid" : item.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid xl:grid-cols-2 xl:divide-x xl:divide-[#3b4b3d]">
+            <div>
+              <div className="border-b border-[#3b4b3d] px-4 py-3">
+                <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Credential separation</div>
+                <div className="mt-1 text-xs text-[#849585]">Equality checks only; credential bytes never leave the server.</div>
+              </div>
+              <div className="grid divide-x divide-y divide-[#3b4b3d] sm:grid-cols-2">
+                {prospect.credentialSeparation.map((item) => (
+                  <div key={item.id} className="flex min-h-[68px] items-center justify-between gap-3 px-4 py-3">
+                    <span className="text-xs leading-4 text-[#b9cbb9]">{item.label}</span>
+                    <span className={`inline-flex shrink-0 items-center gap-1.5 font-mono text-[9px] font-bold uppercase ${item.passed ? "text-[#00e479]" : "text-red-300"}`}>
+                      {item.passed ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                      {item.passed ? "Passed" : "Blocked"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-[#3b4b3d] xl:border-t-0">
+              <div className="grid sm:grid-cols-2">
+                <div>
+                  <div className="border-b border-[#3b4b3d] px-4 py-3">
+                    <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Configuration blockers</div>
+                    <div className="mt-1 text-xs text-[#849585]">{prospect.blockers.length} redacted blocker names.</div>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto px-4 py-3">
+                    {prospect.blockers.length > 0 ? (
+                      <ul className="space-y-2">
+                        {prospect.blockers.map((blocker) => <li key={blocker} className="break-all font-mono text-[9px] leading-4 text-[#ffba20]">{blocker}</li>)}
+                      </ul>
+                    ) : <div className="text-xs text-[#00e479]">No staged-configuration blockers.</div>}
+                  </div>
+                </div>
+                <div className="border-t border-[#3b4b3d] sm:border-l sm:border-t-0">
+                  <div className="border-b border-[#3b4b3d] px-4 py-3">
+                    <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">External evidence unproven</div>
+                    <div className="mt-1 text-xs text-[#849585]">Configuration cannot establish these facts.</div>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto px-4 py-3">
+                    <ul className="space-y-2">
+                      {prospect.unproven.map((item) => <li key={item} className="text-[11px] leading-4 text-[#b9cbb9]">{item}</li>)}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3 font-mono text-[9px] leading-4 text-[#849585]">
+            <span className="font-bold text-[#b9cbb9]">Redacted plan digest:</span> <span className="break-all">{prospect.redactedPlanDigest}</span>. The digest binds configuration presence and shape, not secret bytes or external proof.
+          </div>
+        </section>
+      )}
+
       <section className="grid gap-5 xl:grid-cols-[1.55fr_0.9fr]">
         <div className="border border-[#3b4b3d] bg-[#131313]">
           <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -12331,6 +21713,7 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
                 ["all", "All"],
                 ["provider", "Providers"],
                 ["control", "Controls"],
+                ["action", "Needs action"],
               ] as const).map(([id, label]) => (
                 <button
                   key={id}
@@ -12345,35 +21728,55 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
               ))}
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <div className="min-w-[690px] divide-y divide-[#3b4b3d]">
-              <div className="grid grid-cols-[1.25fr_100px_1.3fr_130px] gap-4 bg-[#201f1f] px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[#849585]">
-                <span>Connection</span><span>Status</span><span>Evidence</span><span className="text-right">Telemetry</span>
-              </div>
-              {connections.map((connection) => (
-                <div key={connection.id} className="grid grid-cols-[1.25fr_100px_1.3fr_130px] gap-4 px-4 py-3 text-sm">
-                  <div>
-                    <div className="font-semibold text-[#f1ffef]">{connection.label}</div>
-                    <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.category}</div>
-                  </div>
-                  <div>
-                    <span className={`inline-flex border px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.08em] ${ownerStatusClass(connection.status)}`}>{connection.status}</span>
-                  </div>
-                  <div>
-                    <div className="text-xs leading-5 text-[#b9cbb9]">{connection.detail}</div>
-                    <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{ownerVerificationLabel(connection.verification)}</div>
-                  </div>
-                  <div className="text-right">
-                    {connection.balanceValue ? <div className="font-mono text-sm font-bold text-[#e5e2e1]">{connection.balanceValue}</div> : null}
-                    {connection.balanceLabel ? <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.balanceLabel}</div> : null}
-                    {connection.latencyMs ? <div className="mt-1 font-mono text-[10px] text-[#849585]">{connection.latencyMs}ms</div> : null}
-                  </div>
-                </div>
-              ))}
-              {connections.length === 0 && (
-                <div className="px-4 py-8 text-sm text-[#849585]">{loading ? "Refreshing provider inventory..." : "No provider inventory is available."}</div>
-              )}
+          <div className="divide-y divide-[#3b4b3d]">
+            <div className="hidden grid-cols-[1fr_120px_1.35fr_120px_230px] gap-4 bg-[#201f1f] px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[#849585] xl:grid">
+              <span>Connection</span><span>State</span><span>Evidence</span><span>Telemetry</span><span>Actions</span>
             </div>
+            {connections.map((connection) => (
+              <div key={connection.id} className="grid min-w-0 gap-4 px-4 py-4 xl:grid-cols-[1fr_120px_1.35fr_120px_230px] xl:items-start">
+                <div className="min-w-0">
+                  <div className="font-semibold text-[#f1ffef]">{connection.label}</div>
+                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.category}</div>
+                </div>
+                <div className="flex min-w-0 flex-wrap items-center gap-2 xl:block">
+                  <span className={`inline-flex border px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.08em] ${ownerStatusClass(connection.status)}`}>{connection.status}</span>
+                  <div className={`font-mono text-[9px] font-bold uppercase xl:mt-2 ${ownerCredentialClass(connection.credentialState)}`}>{ownerCredentialLabel(connection.credentialState)}</div>
+                </div>
+                <div className="min-w-0">
+                  <div className="break-words text-xs leading-5 text-[#b9cbb9]">{connection.detail}</div>
+                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{ownerVerificationLabel(connection.verification)}</div>
+                </div>
+                <div>
+                  {connection.balanceValue ? <div className="font-mono text-sm font-bold text-[#e5e2e1]">{connection.balanceValue}</div> : <div className="font-mono text-[9px] uppercase text-[#526053]">No balance feed</div>}
+                  {connection.balanceLabel ? <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.balanceLabel}</div> : null}
+                  {connection.latencyMs ? <div className="mt-1 font-mono text-[10px] text-[#849585]">{connection.latencyMs}ms</div> : null}
+                </div>
+                <div className="flex min-w-0 flex-wrap gap-2 pr-16 sm:pr-0 xl:justify-start">
+                  {connection.actions.map((action) => (
+                    <a
+                      key={action.id}
+                      href={action.href}
+                      target={action.external ? "_blank" : undefined}
+                      rel={action.external ? "noreferrer" : undefined}
+                      className={`inline-flex min-h-9 items-center justify-center gap-1.5 border px-3 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.06em] transition-colors ${
+                        action.id === "billing"
+                          ? "border-[#ffba20]/50 bg-[#ffba20]/10 text-[#ffba20] hover:bg-[#ffba20]/15"
+                          : action.id === "configure"
+                            ? "border-[#00e479]/50 bg-[#00e479]/10 text-[#00e479] hover:bg-[#00e479]/15"
+                            : "border-[#526053] text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef]"
+                      }`}
+                    >
+                      {action.id === "configure" ? <Settings size={12} /> : action.id === "billing" ? <CreditCard size={12} /> : <ExternalLink size={12} />}
+                      {action.label}
+                    </a>
+                  ))}
+                  {connection.actions.length === 0 && <span className="font-mono text-[9px] uppercase text-[#526053]">Observed only</span>}
+                </div>
+              </div>
+            ))}
+            {connections.length === 0 && (
+              <div className="px-4 py-8 text-sm text-[#849585]">{loading ? "Refreshing provider inventory..." : connectionFilter === "action" ? "No connections currently require action." : "No provider inventory is available."}</div>
+            )}
           </div>
         </div>
 
@@ -12432,7 +21835,7 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
               <div key={credential.key} className="flex min-h-[74px] items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm text-[#e5e2e1]">{credential.label}</div>
-                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{credential.critical ? "required" : "optional"}</div>
+                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{credential.category} · {credential.critical ? "required" : "optional"}</div>
                 </div>
                 <span className={`shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.08em] ${credential.configured ? "text-[#00e479]" : credential.critical ? "text-red-300" : "text-[#ffba20]"}`}>
                   {credential.configured ? "set" : credential.critical ? "missing" : "not set"}
@@ -13147,13 +22550,18 @@ export default function App() {
     { id: "compliance",     label: "Compliance",     icon: <ShieldCheck size={14} /> },
     { id: "workspaces",     label: "Workspaces",     icon: <Gauge size={14} /> },
     { id: "system_health",  label: "System Health",  icon: <Microscope size={14} /> },
-    { id: "owner_control",  label: "Owner Control",  icon: <Shield size={14} /> },
+    { id: "owner_control",  label: "Admin Settings", icon: <Shield size={14} /> },
     { id: "logs",           label: "Logs",           icon: <FileText size={14} /> },
   ];
   const overflowTabs = allOverflowTabs
     .filter((t) => visibleForSession(t.id))
     .filter((t) => !visiblePrimaryTabs.some((primary) => primary.id === t.id));
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
+  if (pathname === "/admin") {
+    window.location.replace("/dashboard?admin=1");
+    return null;
+  }
+
   if (pathname === "/app") {
     window.location.replace("/dashboard");
     return null;
@@ -13583,6 +22991,20 @@ export default function App() {
               >
                 <PhoneOutgoing size={13} /> <span className="hidden sm:inline">Call</span>
               </button>}
+              {isCustomerView && googleConfig.adminEnabled && <button
+                onClick={() => window.location.assign('/dashboard?admin=1')}
+                className="inline-flex h-8 items-center justify-center gap-1.5 border border-[#3b4b3d] bg-[#201f1f] px-2 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-[#b9cbb9] transition-colors hover:border-[#00e479] hover:text-[#00e479] sm:px-3"
+                title="Sign in with an allowlisted full-admin account"
+              >
+                <ShieldCheck size={13} /> <span className="hidden sm:inline">Admin sign-in</span>
+              </button>}
+              {!isCustomerView && !isDemoOperator && <button
+                onClick={() => navigateToTab('owner_control')}
+                className="inline-flex h-8 items-center justify-center gap-1.5 border border-[#3b4b3d] bg-[#201f1f] px-2 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-[#b9cbb9] transition-colors hover:border-[#00e479] hover:text-[#00e479] sm:px-3"
+                title="Open Admin Settings"
+              >
+                <Shield size={13} /> <span className="hidden sm:inline">Admin Settings</span>
+              </button>}
               {!isCustomerView && configStatus && (
                 <button onClick={() => navigateToTab('settings')}
                   title={configStatus.missingRequired.length > 0 ? `Setup needed: ${configStatus.missingRequired.join(', ')}` : 'System healthy'}
@@ -13674,7 +23096,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            <div className="flex-1 space-y-4 overflow-y-auto p-4 pb-24">
               <div className="border border-[#3b4b3d] bg-[#2a2a2a] p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#00e479]">SMIRK Insight</span>
@@ -13749,7 +23171,7 @@ export default function App() {
           </aside>}
 
           {/* Main Content */}
-          <main data-smirk-page={activeTab} className={`smirk-ops-main fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-2 transition-[left,right] duration-200 sm:p-4 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
+          <main data-smirk-page={activeTab} className={`smirk-ops-main fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-2 pr-14 transition-[left,right] duration-200 sm:p-4 sm:pr-20 xl:pr-4 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
             <ActiveCallBar calls={activeCalls} />
 
             {!isCustomerView && configStatus && configStatus.missingRequired.length > 0 && (
@@ -13829,7 +23251,12 @@ export default function App() {
 
           {/* SMIRK Chat Bubble */}
           {(operatorSession || workspaceSession) && (
-            <SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession && !isDemoOperator} />
+            <SmirkChatBubble
+              activeCalls={activeCalls}
+              canWhisper={!!operatorSession && !isDemoOperator}
+              dockToCommandRail={!isCustomerView}
+              commandRailCollapsed={commandRailCollapsed}
+            />
           )}
         </div>
       </ToastContext.Provider>
@@ -13867,7 +23294,17 @@ const TOOL_LABELS: Record<string, string> = {
   update_setting: "⚙️ Updating setting",
 };
 
-function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls?: ActiveCall[]; canWhisper?: boolean }) {
+function SmirkChatBubble({
+  activeCalls = [],
+  canWhisper = false,
+  dockToCommandRail = false,
+  commandRailCollapsed = false,
+}: {
+  activeCalls?: ActiveCall[];
+  canWhisper?: boolean;
+  dockToCommandRail?: boolean;
+  commandRailCollapsed?: boolean;
+}) {
   const { dark } = useContext(ThemeContext);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'chat' | 'whisper'>('chat');
@@ -13880,13 +23317,16 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
       id: "welcome",
       role: "assistant",
       content: canWhisper
-        ? "Hey — I'm SMIRK. I can take real action: call contacts, create callback tasks, capture requested follow-up times, update settings, and tune agent prompts. What do you need?"
-        : "Hey — I'm SMIRK. I can help with calls, contacts, and callback tasks. Operator-only actions like outbound dialing, settings changes, prompt edits, and live call injection require operator access.",
+        ? "Hey — I'm SMIRK. I can inspect calls, leads, contacts, tasks, team state, settings, and the active agent. I can update local CRM records and tasks. Calls, messaging, billing, settings changes, prompt edits, and calendar actions stay in their guarded workflows."
+        : "Hey — I'm SMIRK. I can help with calls, contacts, and callback tasks. Calls, messaging, billing, settings changes, prompt edits, and calendar actions stay in their guarded workflows.",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTools, setActiveTools] = useState<string[]>([]);
+  const [chatStatus, setChatStatus] = useState<
+    "unchecked" | "ready" | "degraded"
+  >("unchecked");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Auto-select first active call when switching to whisper mode
@@ -13951,6 +23391,7 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
         }),
       });
       const data = await res.json();
+      setChatStatus(res.ok ? "ready" : "degraded");
       if (data.toolsUsed && data.toolsUsed.length > 0) {
         setActiveTools(data.toolsUsed.map((t: { name: string }) => t.name));
       }
@@ -13964,8 +23405,14 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
     } catch (e) {
       setMessages((m) => [
         ...m,
-        { id: (Date.now() + 1).toString(), role: "assistant", content: "Error reaching SMIRK agent." },
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content:
+            "SMIRK chat is temporarily unavailable. Check AI provider status and try again.",
+        },
       ]);
+      setChatStatus("degraded");
     } finally {
       setLoading(false);
       setActiveTools([]);
@@ -13981,7 +23428,15 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
   const aiText = dark ? "#e2e8f0" : "#1e293b";
 
   return (
-    <div className="fixed bottom-4 right-4 z-[9999] sm:bottom-6 sm:right-6 xl:right-[344px]">
+    <div
+      className={`fixed bottom-4 right-4 z-[60] sm:bottom-6 sm:right-6 ${
+        dockToCommandRail
+          ? commandRailCollapsed
+            ? "xl:right-1"
+            : "xl:right-6"
+          : "xl:right-6"
+      }`}
+    >
       {/* Chat Window */}
       {open && (
         <div
@@ -14028,7 +23483,23 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
               </div>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: textColor }}>SMIRK Agent</div>
-                <div style={{ fontSize: 11, color: "#6366f1" }}>● Online</div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color:
+                      chatStatus === "ready"
+                        ? "#10b981"
+                        : chatStatus === "degraded"
+                          ? "#f59e0b"
+                          : "#94a3b8",
+                  }}
+                >
+                  {chatStatus === "ready"
+                    ? "● Ready"
+                    : chatStatus === "degraded"
+                      ? "● Provider check needed"
+                      : "● Not checked"}
+                </div>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -14238,7 +23709,7 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
-              placeholder="Ask about calls, leads, tasks, or settings…"
+              placeholder="Ask about calls, leads, tasks, or team state…"
               style={{
                 flex: 1,
                 padding: "8px 12px",
@@ -14274,18 +23745,16 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
       {/* Bubble Button */}
       <button
         onClick={() => setOpen((o) => !o)}
+        className={`flex h-10 w-10 items-center justify-center rounded-full text-base sm:h-14 sm:w-14 sm:text-[22px] ${
+          dockToCommandRail && commandRailCollapsed
+            ? "xl:h-10 xl:w-10 xl:text-base"
+            : ""
+        }`}
         style={{
-          width: 56,
-          height: 56,
-          borderRadius: "50%",
           border: "none",
           background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
           boxShadow: "0 4px 20px rgba(99,102,241,0.5)",
           cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 22,
           color: "#fff",
           transition: "transform 0.2s",
         }}
@@ -14306,11 +23775,6 @@ function LeadHunterPage() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [scoreboard, setScoreboard] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searching, setSearching] = useState(false);
-  const [searchMode, setSearchMode] = useState<"maps" | "apollo">("maps");
-  const [searchForm, setSearchForm] = useState({ query: "", location: "", industry: "", limit: "20" });
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [savingLeads, setSavingLeads] = useState<Set<number>>(new Set());
 
   const muted = dark ? "text-gray-500" : "text-gray-400";
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
@@ -14334,34 +23798,6 @@ function LeadHunterPage() {
 
   useEffect(() => { load(); }, []);
 
-  const search = async () => {
-    if (!searchForm.query) { addToast({ type: "error", message: "Enter a search query" }); return; }
-    setSearching(true);
-    setSearchResults([]);
-    try {
-      const endpoint = searchMode === "maps" ? "/api/leads/search/maps" : "/api/leads/search/apollo";
-      const payload = searchMode === "maps"
-        ? { query: searchForm.query, location: searchForm.location, limit: parseInt(searchForm.limit) || 20 }
-        : { query: searchForm.query, industry: searchForm.industry, location: searchForm.location, limit: parseInt(searchForm.limit) || 20 };
-      const res = await api<any>(endpoint, { method: "POST", body: JSON.stringify(payload) });
-      setSearchResults(Array.isArray(res) ? res : res.leads || []);
-      addToast({ type: "success", message: `Found ${(Array.isArray(res) ? res : res.leads || []).length} leads` });
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Search failed" });
-    }
-    setSearching(false);
-  };
-
-  const saveLead = async (lead: any, idx: number) => {
-    setSavingLeads((s) => new Set(s).add(idx));
-    try {
-      await api("/api/leads", { method: "POST", body: JSON.stringify(lead) });
-      addToast({ type: "success", message: `Saved ${lead.business_name || lead.name}` });
-      load();
-    } catch (e: any) { addToast({ type: "error", message: e.message }); }
-    finally { setSavingLeads((s) => { const n = new Set(s); n.delete(idx); return n; }); }
-  };
-
   const updateLeadStatus = async (id: number, status: string) => {
     try {
       await api(`/api/leads/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
@@ -14382,8 +23818,8 @@ function LeadHunterPage() {
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h2 className="text-base font-bold text-white mb-1">Lead Hunter</h2>
-        <p className={`text-xs ${muted}`}>Secondary outbound module. Search Google Maps or Apollo for local businesses, score them, and push them into outbound campaigns after the missed-call recovery proof loop is working.</p>
+        <h2 className="text-base font-bold text-white mb-1">Lead Research</h2>
+        <p className={`text-xs ${muted}`}>Workspace-scoped prospect records for review. External contact and paid research remain separately gated.</p>
       </div>
 
       {/* Funnel stats */}
@@ -14419,64 +23855,14 @@ function LeadHunterPage() {
         </div>
       )}
 
-      {/* Search */}
-      <div className={`rounded-2xl border ${card} p-5 space-y-4`}>
-        <div className="flex items-center justify-between">
-          <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Find Leads</p>
-          <div className="flex gap-1">
-            {(["maps", "apollo"] as const).map((m) => (
-              <button key={m} onClick={() => setSearchMode(m)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${searchMode === m ? "bg-violet-700 text-white" : dark ? "bg-gray-800 text-gray-400 hover:text-white" : "bg-gray-100 text-gray-600"}`}>
-                {m === "maps" ? "Google Maps" : "Apollo.io"}
-              </button>
-            ))}
+      <div className={`rounded-2xl border ${card} p-5`}>
+        <div className="flex items-center gap-3">
+          <ShieldCheck size={16} className="text-amber-400 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-white">External research paused</p>
+            <p className={`text-xs ${muted}`}>Google Maps, Apollo, and AI personalization require a bounded spend approval. Existing and imported records remain available below.</p>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <input value={searchForm.query} onChange={(e) => setSearchForm((f) => ({ ...f, query: e.target.value }))}
-            placeholder={searchMode === "maps" ? "plumber, HVAC, electrician…" : "job title, company type…"}
-            className={`col-span-2 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
-          <input value={searchForm.location} onChange={(e) => setSearchForm((f) => ({ ...f, location: e.target.value }))}
-            placeholder="City, State"
-            className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
-          <div className="flex gap-2">
-            <input value={searchForm.limit} onChange={(e) => setSearchForm((f) => ({ ...f, limit: e.target.value }))}
-              placeholder="20" type="number" min="1" max="100"
-              className={`w-20 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
-            <button onClick={search} disabled={searching}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
-              {searching ? <Loader2 size={14} className="animate-spin" /> : <Crosshair size={14} />}
-              {searching ? "Searching…" : "Search"}
-            </button>
-          </div>
-        </div>
-
-        {/* Search results */}
-        {searchResults.length > 0 && (
-          <div className="space-y-2 max-h-80 overflow-y-auto">
-            <p className={`text-xs ${muted}`}>{searchResults.length} results — click Save to add to your lead database</p>
-            {searchResults.map((lead: any, idx: number) => (
-              <div key={idx} className={`flex items-center gap-3 p-3 rounded-xl border ${dark ? "border-gray-800 bg-gray-950" : "border-gray-100 bg-gray-50"}`}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-white truncate">{lead.business_name || lead.name || "Unknown"}</span>
-                    {lead.score != null && <span className="text-xs text-violet-400">{lead.score}pts</span>}
-                  </div>
-                  <div className={`text-xs ${muted} flex gap-3 mt-0.5`}>
-                    {lead.phone && <span>{fmt.phone(lead.phone)}</span>}
-                    {lead.city && <span>{lead.city}{lead.state ? `, ${lead.state}` : ""}</span>}
-                    {lead.industry && <span>{lead.industry}</span>}
-                  </div>
-                </div>
-                <button onClick={() => saveLead(lead, idx)} disabled={savingLeads.has(idx)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700/20 border border-emerald-700/30 text-emerald-300 text-xs font-semibold hover:bg-emerald-700/40 transition-colors disabled:opacity-50">
-                  {savingLeads.has(idx) ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
-                  Save
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Lead database */}
@@ -14486,7 +23872,7 @@ function LeadHunterPage() {
           <button onClick={load} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><RefreshCw size={13} className={muted} /></button>
         </div>
         {leads.length === 0 ? (
-          <p className={`text-sm ${muted} text-center py-8`}>No leads yet. Use the search above to find and save leads.</p>
+          <p className={`text-sm ${muted} text-center py-8`}>No reviewed prospects have been imported into this workspace.</p>
         ) : (
           <div className="space-y-2">
             {leads.map((lead: any) => (
@@ -15788,9 +25174,15 @@ function CompliancePage() {
   const removeFromDNC = async (phone: string) => {
     try {
       const reason = prompt("Removal reason or consent note");
+      if (reason === null) return;
+      const normalizedReason = reason.trim();
+      if (normalizedReason.length < 8) {
+        addToast({ type: "warning", message: "Add a consent or correction note before removing DNC." });
+        return;
+      }
       await api(`/api/compliance/dnc/${encodeURIComponent(phone)}`, {
         method: "DELETE",
-        body: JSON.stringify({ reason: reason || "manual removal" }),
+        body: JSON.stringify({ reason: normalizedReason }),
       });
       setDncList((l) => l.filter((x) => x.phone !== phone));
       addToast({ type: "success", message: `${phone} removed from DNC list` });

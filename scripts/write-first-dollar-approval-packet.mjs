@@ -8,6 +8,7 @@ import {
   REAL_PROOF_CALL_APPROVAL_TOKEN,
   realProofCallApprovalCommand,
 } from "./lib/real-proof-call-approval.mjs";
+import { selectDeployCommandFromBundle } from "./lib/deploy-command.mjs";
 
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
@@ -68,7 +69,7 @@ const stripeApprovalPhrase = `${stripeApprovalToken}: ${stripeCommand}`;
 const cleanupApplyCommand = stripeApproval.cleanup?.applyCommand || "APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply";
 const cleanupApprovalToken = stripeApproval.cleanupApprovalToken || "APPROVE_SMIRK_SMOKE_CLEANUP_APPLY";
 const cleanupApprovalPhrase = `${cleanupApprovalToken}: ${cleanupApplyCommand}`;
-const deployCommand = deployBundle.approvalSteps?.find((step) => step.includes("npm run deploy:post-call-fix")) || deployBundle.nextAction || "See deploy approval note.";
+const deployCommand = selectDeployCommandFromBundle(deployBundle);
 const deployApprovalToken = deployBundle.deployApprovalToken || "APPROVE_SMIRK_POST_CALL_FIX_DEPLOY";
 const deployApprovalMeaning = deployBundle.deployApprovalMeaning || "Production deploy approval only. This does not authorize a Git push, Stripe smoke, cleanup apply, proof calls, secret access, paid spend, outreach, or activation of a staged first-dollar environment manifest; pending activation requires the exact staged digest plus distinct activation-deploy and real Starter checkout authority.";
 const firstDollarBootstrapDeployRequired = deployBundle.firstDollarBootstrapDeployRequired === true;
@@ -367,7 +368,7 @@ const packet = [
   "",
   "- webhook response returns `received=true`",
   "- checkout-status finds the synthetic paid provisioning row",
-  "- provisioning status is `workspace_created`, `workspace_and_line_created`, or `manual_fallback_required`",
+  "- provisioning status is `PENDING_MANUAL_TELEPHONY`, `workspace_created`, `workspace_and_line_created`, or `manual_fallback_required`; pending telephony is explicitly incomplete",
   "- checkout-status returns public activation labels: `request_summary.status_label` and `next_step_label`",
   "- checkout-status acknowledges the checkout reference without exposing the raw Stripe checkout session ID",
   "- cleanup dry-run sees the created provisioning row before any cleanup apply",

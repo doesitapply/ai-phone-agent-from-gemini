@@ -5,6 +5,7 @@ const surfaces = [
   "src/components/SetupWizard.tsx",
   "src/routes/workspace-profile-routes.ts",
   "src/db.ts",
+  "scripts/build-smirk-collateral.mjs",
 ];
 
 const bannedClaims = [
@@ -13,6 +14,8 @@ const bannedClaims = [
   ["multi-plan ladder in default prompt", /\bStarter,\s*Pro,\s*Agency\b|\bPro is \$397\b|\bAgency is \$697\b/i],
   ["advanced integrations as first-dollar promise", /\bCRM\/webhook\b|\badvanced routing\b|\bmulti-agent\b|\bpriority deployment\b/i],
   ["smart voicemail positioning in default prompt", /\bSmart Voicemail\b|\bsmart voicemail\b/i],
+  ["inactive founders pricing", /\bfounders? (?:deal|rate)\b|\$99(?:\/month|\/mo|\s+a month)?|locked for life/i],
+  ["unsupported recovered-revenue claim", /one recovered job pays|typical missed call costs/i],
 ];
 
 const requiredClaims = [
@@ -41,6 +44,16 @@ for (const [label, pattern] of requiredClaims) {
 }
 
 const buyerRoutes = readFileSync("src/routes/buyer-routes.ts", "utf8");
+const collateralSource = readFileSync("scripts/build-smirk-collateral.mjs", "utf8");
+if (!collateralSource.includes('const demoPhone = "(775) 420-3005";')) {
+  failures.push("collateral must identify (775) 420-3005 as the live SMIRK demo line");
+}
+if (!collateralSource.includes('const ownerPhone = "(775) 420-4485";')) {
+  failures.push("collateral must identify (775) 420-4485 as Cameron's owner contact line");
+}
+if (!collateralSource.includes("Cameron / Google Voice: ${ownerPhone}")) {
+  failures.push("collateral must label the personal Google Voice number separately from the SMIRK demo line");
+}
 if (!buyerRoutes.includes('const FIRST_DOLLAR_SELF_SERVE_PLAN: StripeCheckoutPlan = "starter";')) {
   failures.push("buyer checkout route missing server-owned Starter-only launch plan");
 }

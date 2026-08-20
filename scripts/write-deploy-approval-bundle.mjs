@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { collectDeployChangeSet, resolveAuthoritativeLiveDeployReviewBase } from './lib/deploy-change-set.mjs';
 import {
   DEPLOY_APPROVAL_ONE_DECISION_PATH,
+  isDeployApprovalOneDecisionReady,
   renderDeployApprovalOneDecisionCard,
   validateDeployApprovalOneDecisionCard,
 } from './lib/deploy-approval-one-decision-card.mjs';
@@ -200,6 +201,8 @@ const bundle = {
   firstDollarBootstrapDeployRequired: handoffData?.firstDollarBootstrapDeployRequired === true,
   firstDollarBootstrapDeployMode: handoffData?.firstDollarBootstrapDeployMode || null,
   firstDollarBootstrapDeployMeaning: handoffData?.firstDollarBootstrapDeployMeaning || null,
+  productionBackupReady: handoffData?.productionBackupReady === true,
+  productionBackupEvidence: handoffData?.productionBackupEvidence || null,
   approvalSteps: branchReconcileRequired
     ? [
       'Get explicit APPROVE_SMIRK_BRANCH_RECONCILE approval from Cameron.',
@@ -298,16 +301,23 @@ const finalBundleWithPacket = {
     firstDollarApprovalPacket: stat(firstDollarApprovalPacket?.path),
   },
 };
-const deployApprovalOneDecisionCard = renderDeployApprovalOneDecisionCard(finalBundleWithPacket);
+const bundleForDeployApprovalCard = {
+  ...finalBundleWithPacket,
+  ok: finalBundleWithPacket.ok
+    && isDeployApprovalOneDecisionReady(finalBundleWithPacket),
+};
+const deployApprovalOneDecisionCard = renderDeployApprovalOneDecisionCard(
+  bundleForDeployApprovalCard,
+);
 fs.writeFileSync(deployApprovalOneDecisionPath, deployApprovalOneDecisionCard);
 const deployApprovalOneDecisionValidation = validateDeployApprovalOneDecisionCard(
   deployApprovalOneDecisionCard,
-  finalBundleWithPacket,
+  bundleForDeployApprovalCard,
 );
 const deployApprovalOneDecisionArtifact = stat(deployApprovalOneDecisionPath);
 const finalBundleWithCard = {
-  ...finalBundleWithPacket,
-  ok: finalBundleWithPacket.ok
+  ...bundleForDeployApprovalCard,
+  ok: bundleForDeployApprovalCard.ok
     && deployApprovalOneDecisionArtifact.exists
     && Number(deployApprovalOneDecisionArtifact.bytes || 0) > 0
     && deployApprovalOneDecisionValidation.ok
@@ -319,7 +329,7 @@ const finalBundleWithCard = {
     deployApprovalOneDecisionPath,
   },
   artifacts: {
-    ...finalBundleWithPacket.artifacts,
+    ...bundleForDeployApprovalCard.artifacts,
     deployApprovalOneDecision: deployApprovalOneDecisionArtifact,
   },
 };

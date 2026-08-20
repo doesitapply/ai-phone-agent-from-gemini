@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { buildExactDeployCommand } from './lib/deploy-command.mjs';
+import {
+  PROSPECT_SCHEMA_BACKUP_CONFIRMATION,
+  PROSPECT_SCHEMA_CHANGE_CONFIRMATION,
+  buildExactDeployCommand,
+  hasProspectSchemaDeployApproval,
+} from './lib/deploy-command.mjs';
 
 const expected = 'deploy-post-call-fix';
 const actual = String(process.env.CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY || '').trim();
@@ -48,6 +53,22 @@ if (commitConfirmation !== commit) {
   process.exit(1);
 }
 
+if (!hasProspectSchemaDeployApproval()) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'missing-prospect-schema-deploy-approval',
+    required: {
+      CONFIRM_SMIRK_PROSPECT_SCHEMA_CHANGE:
+        PROSPECT_SCHEMA_CHANGE_CONFIRMATION,
+      CONFIRM_SMIRK_PROSPECT_SCHEMA_BACKUP:
+        PROSPECT_SCHEMA_BACKUP_CONFIRMATION,
+    },
+    nextAction:
+      'Review the exact prospect schema DDL and verify a restorable production backup under a separate owner approval before regenerating the deploy packet.',
+  }, null, 2));
+  process.exit(1);
+}
+
 if (status.length > 0) {
   console.error(JSON.stringify({
     ok: false,
@@ -84,6 +105,41 @@ if (
   process.exit(1);
 }
 
+let productionBackupEvidence = null;
+try {
+  productionBackupEvidence = JSON.parse(execFileSync(
+    'npm',
+    ['run', '-s', 'check:production-backup'],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  ).trim());
+} catch (error) {
+  const raw = String(error?.stdout || error?.stderr || '').trim();
+  try {
+    productionBackupEvidence = JSON.parse(raw);
+  } catch {
+    productionBackupEvidence = {
+      ok: false,
+      error: 'production-backup-check-unavailable',
+      detail: raw || null,
+    };
+  }
+}
+if (
+  productionBackupEvidence?.ok !== true
+  || productionBackupEvidence?.databaseBindingVerified !== true
+  || productionBackupEvidence?.providerListedBackupReady !== true
+  || !productionBackupEvidence?.selectedBackup?.id
+) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'production-backup-not-ready',
+    evidence: productionBackupEvidence,
+    nextAction: productionBackupEvidence?.nextAction
+      || 'Create and retain a fresh provider backup for the exact bound production database, then regenerate the exact deploy approval bundle.',
+  }, null, 2));
+  process.exit(1);
+}
+
 console.log(JSON.stringify({
   ok: true,
   confirmation: 'pass',
@@ -93,5 +149,13 @@ console.log(JSON.stringify({
   branchConfirmation: branch === 'main' ? 'not-required' : 'pass',
   commit,
   commitConfirmation: 'pass',
+  prospectSchemaReview: 'pass',
+  productionBackupVerification: 'pass',
+  productionBackup: {
+    volumeInstanceId: productionBackupEvidence.database?.volumeInstanceId || null,
+    backupId: productionBackupEvidence.selectedBackup.id,
+    createdAt: productionBackupEvidence.selectedBackup.createdAt,
+    restoreTested: productionBackupEvidence.restoreTested === true,
+  },
   approvalBundle: 'exact-clean-commit',
 }, null, 2));

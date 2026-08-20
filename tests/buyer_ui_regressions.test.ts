@@ -156,3 +156,24 @@ test("buyer components wire the guards into the rendered flows", () => {
   assert.match(wizardSource, /const validation = validateBusinessSetupStep\(\{/);
   assert.match(wizardSource, /if \(!validation\.valid\) \{ flash\(validation\.errors\[0\], true\); return; \}/);
 });
+
+test("call details stay open through inner clicks and same-workspace refreshes", () => {
+  const appSource = fs.readFileSync("src/App.tsx", "utf8");
+
+  assert.match(
+    appSource,
+    /const closeOnBackdropClick = \([\s\S]*?if \(event\.target !== event\.currentTarget\) return;[\s\S]*?onClose\(\);[\s\S]*?\};/,
+  );
+  assert.match(
+    appSource,
+    /smirk-call-detail-backdrop[\s\S]*?closeOnBackdropClick\(event, onClose\)[\s\S]*?smirk-call-detail-panel[\s\S]*?event\.stopPropagation\(\)/,
+  );
+  assert.match(
+    appSource,
+    /if \(nextWorkspaceId && nextWorkspaceId === currentWorkspaceId\) \{[\s\S]*?setCurrentWorkspace[\s\S]*?return;[\s\S]*?\}[\s\S]*?clearWorkspaceData\(\);/,
+  );
+  assert.match(
+    appSource,
+    /const callSid = call\.call_sid \|\| call\.sid \|\| "";[\s\S]*?\/api\/calls\/\$\{encodeURIComponent\(sid\)\}\/messages/,
+  );
+});

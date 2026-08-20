@@ -1,0 +1,38 @@
+{
+  "date": "2026-07-31",
+  "product": "SMIRK Starter missed-call recovery",
+  "price_usd_monthly": 197,
+  "proof": {
+    "status": "PASS",
+    "mode": "signed synthetic local checkout plus executable post-call fixtures",
+    "real_charge": false,
+    "external_message": false,
+    "webhook_http": [200, 200],
+    "workspace_count": 1,
+    "activation_task_count": 1,
+    "fulfillment_receipt_count": 1,
+    "manual_telephony_event_count": 1,
+    "replay_idempotent": true,
+    "activation_status": "PENDING_MANUAL_TELEPHONY",
+    "activation_complete_claimed": false
+  },
+  "buyer": {
+    "name": "Master Service Plumbing",
+    "source_url": "https://masterserviceplumbing.com/",
+    "contact_url": "https://masterserviceplumbing.com/contact-us/",
+    "ledger_state": "researched",
+    "touch_count": 0,
+    "prior_send_found": false,
+    "suppression_match_found": false
+  },
+  "outreach": {
+    "status": "HOLD_EXPLICIT_WEBSITE_FORM_APPROVAL_REQUIRED",
+    "standing_authorization_covers_channel": false,
+    "recommended_next_decision": "SEND",
+    "sent": false,
+    "quoted_price": null,
+    "public_starter_price_usd_monthly": 197,
+    "invite_only_founders_price_usd_monthly": 99,
+    "decision_artifact": "MASTER_SERVICE_PLUMBING_FIRST_TOUCH_DECISION.md"
+  }
+}

@@ -66,7 +66,7 @@ export const SETTINGS_GROUPS = [
     id: "gemini",
     label: "AI Brain (Gemini)",
     description: "Use Google Gemini directly as the AI brain (no OpenRouter required)",
-    required: true,
+    required: false,
     fields: [
       { key: "GEMINI_API_KEY", label: "Gemini API Key", type: "password", placeholder: "AIza...", help: "Create in Google AI Studio. Required if you want Gemini as the AI brain.", required: true },
       { key: "GEMINI_MODEL", label: "Gemini Model", type: "text", placeholder: "gemini-2.5-flash", help: "Recommended: gemini-2.5-flash" },
@@ -82,6 +82,17 @@ export const SETTINGS_GROUPS = [
       { key: "GOOGLE_TTS_VOICE", label: "Default Voice", type: "text", placeholder: "en-US-Neural2-C", help: "Neural2 voices are highest quality. Options: en-US-Neural2-C (female), en-US-Neural2-D (male), en-US-Neural2-F (bright female), en-US-Neural2-J (professional male)" },
       { key: "GOOGLE_TTS_LANGUAGE", label: "Language Code", type: "text", placeholder: "en-US", help: "BCP-47 language code. Default: en-US" },
       { key: "GOOGLE_TTS_SPEED", label: "Speaking Rate", type: "text", placeholder: "1.0", help: "0.25–4.0. Default 1.0. Try 1.05–1.1 for a slightly more energetic feel." },
+    ],
+  },
+  {
+    id: "cartesia",
+    label: "Voice Engine (Cartesia)",
+    description: "Low-latency streaming voice for live phone conversations",
+    required: false,
+    fields: [
+      { key: "CARTESIA_API_KEY", label: "Cartesia API Key", type: "password", placeholder: "sk_car_...", help: "Create a restricted key in the Cartesia dashboard." },
+      { key: "CARTESIA_VOICE_ID", label: "Voice ID", type: "text", placeholder: "voice UUID", help: "Optional voice override. Leave blank to use the application default." },
+      { key: "CARTESIA_MODEL_ID", label: "Model", type: "text", placeholder: "sonic-2", help: "Streaming model used for live calls." },
     ],
   },
   {
@@ -141,6 +152,47 @@ export const SETTINGS_GROUPS = [
     ],
   },
   {
+    id: "google_places",
+    label: "Lead Discovery (Google Places)",
+    description: "Optional Google Places credential for bounded, operator-reviewed prospect discovery",
+    required: false,
+    fields: [
+      { key: "GOOGLE_PLACES_API_KEY", label: "Google Places API Key", type: "password", placeholder: "AIza...", help: "Use a key restricted to the Places API and the production service. This does not authorize contact." },
+    ],
+  },
+  {
+    id: "lead_providers",
+    label: "Lead Data Providers",
+    description: "Optional sources for bounded lead research. Adding a key does not authorize outreach, SMS, or automated dialing.",
+    required: false,
+    fields: [
+      { key: "APOLLO_API_KEY", label: "Apollo API Key", type: "password", placeholder: "Apollo API key", help: "Used only by an operator-started lead search. Provider usage can incur charges." },
+      { key: "GOOGLE_MAPS_API_KEY", label: "Google Maps API Key", type: "password", placeholder: "AIza...", help: "Used by the existing Google Maps lead-search adapter. Restrict the key to the required API and this service." },
+      { key: "BRAVE_API_KEY", label: "Brave Search API Key", type: "password", placeholder: "BSA...", help: "Optional business-research search provider." },
+      { key: "SERPER_API_KEY", label: "Serper API Key", type: "password", placeholder: "Serper API key", help: "Optional search fallback used by workspace research tools." },
+    ],
+  },
+  {
+    id: "crm",
+    label: "CRM Connections",
+    description: "Optional destinations for contacts and call outcomes. Configuration alone does not perform a CRM write.",
+    required: false,
+    fields: [
+      { key: "HUBSPOT_ACCESS_TOKEN", label: "HubSpot Private-App Token", type: "password", placeholder: "pat-...", help: "Create a least-privilege private-app token for contact and activity access." },
+      { key: "SALESFORCE_INSTANCE_URL", label: "Salesforce Instance URL", type: "text", placeholder: "https://your-domain.my.salesforce.com", help: "Your organization-specific Salesforce base URL." },
+      { key: "SALESFORCE_ACCESS_TOKEN", label: "Salesforce Access Token", type: "password", placeholder: "Access token", help: "Current OAuth access token." },
+      { key: "SALESFORCE_CLIENT_ID", label: "Salesforce Client ID", type: "text", placeholder: "Connected-app client ID", help: "Required with the client secret and refresh token for automatic token refresh." },
+      { key: "SALESFORCE_CLIENT_SECRET", label: "Salesforce Client Secret", type: "password", placeholder: "Connected-app secret", help: "Store as a write-only secret." },
+      { key: "SALESFORCE_REFRESH_TOKEN", label: "Salesforce Refresh Token", type: "password", placeholder: "Refresh token", help: "Allows the server to replace an expired Salesforce access token." },
+      { key: "AIRTABLE_API_KEY", label: "Airtable Personal-Access Token", type: "password", placeholder: "pat...", help: "Use a token scoped only to the selected base." },
+      { key: "AIRTABLE_BASE_ID", label: "Airtable Base ID", type: "text", placeholder: "app...", help: "Base that receives SMIRK contacts and call activity." },
+      { key: "AIRTABLE_CONTACTS_TABLE", label: "Airtable Contacts Table", type: "text", placeholder: "Contacts", help: "Optional contacts table override." },
+      { key: "AIRTABLE_CALLS_TABLE", label: "Airtable Calls Table", type: "text", placeholder: "Calls", help: "Optional calls table override." },
+      { key: "NOTION_API_KEY", label: "Notion Integration Secret", type: "password", placeholder: "secret_...", help: "Integration must be explicitly shared with the selected database." },
+      { key: "NOTION_DATABASE_ID", label: "Notion Database ID", type: "text", placeholder: "Database ID", help: "Database that receives SMIRK contact records." },
+    ],
+  },
+  {
     id: "business",
     label: "Business Settings",
     description: "Timezone and behavior configuration",
@@ -159,17 +211,21 @@ export const SETTINGS_GROUPS = [
     required: false,
     fields: [
       { key: "BOOKING_LINK", label: "Setup Help Link", type: "text", placeholder: "https://calendly.com/smirkcalls/smirk-setup", help: "Handled setup-help link for activation fallback and owner follow-up. For SMIRK first-dollar, do not present it as booking or scheduling.", required: true },
+      { key: "CALENDLY_URL", label: "Calendly Event URL", type: "text", placeholder: "https://calendly.com/smirkcalls/demo", help: "Optional customer-facing scheduling URL." },
+      { key: "CALENDLY_SIGNING_SECRET", label: "Calendly Webhook Secret", type: "password", placeholder: "Webhook signing secret", help: "Required to authenticate Calendly webhook events." },
     ],
   },
   {
     id: "email_outreach",
-    label: "Email Outreach",
-    description: "Resend API for automated email follow-up sequences in Lead Hunter campaigns",
+    label: "Owner Email Alerts",
+    description: "Resend settings for transactional owner notifications",
     required: false,
     fields: [
-      { key: "RESEND_API_KEY", label: "Resend API Key", type: "password", placeholder: "re_...", help: "Get a free key at resend.com. Required for email follow-up sequences in Lead Hunter campaigns.", required: true },
-      { key: "FROM_EMAIL", label: "From Email Address", type: "text", placeholder: "alerts@smirkcalls.com", help: "Use a verified smirkcalls.com sender in Resend before turning on owner alerts or outreach email.", required: true },
-      { key: "FROM_NAME", label: "From Name", type: "text", placeholder: "Mike at Smith HVAC", help: "Display name shown in outreach emails. Use a real person's name for better open rates." },
+      { key: "RESEND_API_KEY", label: "Resend API Key", type: "password", placeholder: "re_...", help: "Transactional delivery key for owner alerts. Prospect email uses a separate, deployment-only key and cannot be enabled here.", required: true },
+      { key: "FROM_EMAIL", label: "From Email Address", type: "text", placeholder: "alerts@smirkcalls.com", help: "Use a verified smirkcalls.com sender for transactional owner alerts.", required: true },
+      { key: "FROM_NAME", label: "From Name", type: "text", placeholder: "SMIRK", help: "Display name shown on transactional owner alerts." },
+      { key: "OWNER_EMAIL", label: "Owner Alert Email", type: "text", placeholder: "owner@example.com", help: "Primary recipient for call summaries and callback-ready alerts." },
+      { key: "NOTIFICATION_EMAIL", label: "Notification Test Email", type: "text", placeholder: "ops@example.com", help: "Optional destination used only when a full operator deliberately runs the email connection test." },
     ],
   },
 ];
@@ -268,6 +324,16 @@ export function getRawSettings(): Record<string, string> {
   return result;
 }
 
+export function hasConfiguredDashboardAi(
+  raw: Record<string, string | undefined>
+): boolean {
+  return Boolean(
+    (raw.OPENROUTER_ENABLED === "true" &&
+      raw.OPENROUTER_API_KEY) ||
+      raw.GEMINI_API_KEY
+  );
+}
+
 // ── Configuration status check ────────────────────────────────────────────────
 export function getConfigStatus(): {
   isConfigured: boolean;
@@ -293,10 +359,14 @@ export function getConfigStatus(): {
   if (raw.OPENROUTER_ENABLED === "true" && !raw.OPENROUTER_API_KEY) {
     warnings.push("OpenRouter is enabled but API key is not set");
   }
-  // Warn if no AI brain is configured at all
-  const hasAI = raw.OPENROUTER_API_KEY || raw.GEMINI_API_KEY || raw.OPENCLAW_ENABLED === "true";
-  if (!hasAI) {
-    warnings.push("No AI configured: add an OpenRouter API key (recommended) or Gemini API key");
+  const hasDashboardAi = hasConfiguredDashboardAi(raw);
+  if (!hasDashboardAi) {
+    missingRequired.push(
+      "AI provider (enabled OpenRouter or Gemini)"
+    );
+    warnings.push(
+      "No dashboard AI configured: enable OpenRouter with a key (recommended) or add a Gemini key"
+    );
   }
   // Warn if no voice engine is configured
   const hasVoice = raw.GOOGLE_TTS_API_KEY || raw.OPENAI_API_KEY || raw.ELEVENLABS_API_KEY;

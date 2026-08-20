@@ -34,6 +34,8 @@ const packageJson = read("package.json");
 const packageManifest = JSON.parse(packageJson);
 const npmTestScript = String(packageManifest?.scripts?.test || "");
 const marketStatusScript = read("scripts/check-market-validation-status.mjs");
+const marketValidationActionsHelper = read("scripts/lib/market-validation-actions.mjs");
+const marketValidationActionsFixtures = read("scripts/check-market-validation-actions-fixtures.mjs");
 const launchSegmentDecisionScript = read("scripts/check-launch-segment-decisions.mjs");
 const analyticsSmokeScript = read("scripts/check-launch-analytics-smoke.mjs");
 const importScript = read("scripts/import-launch-ledger-csv.mjs");
@@ -150,6 +152,11 @@ expect("market validation status script checks failed deploys", marketStatusScri
 expect("market validation status script reads launch summary", marketStatusScript.includes("/api/launch/summary"));
 expect("market validation status script reads launch ledger", marketStatusScript.includes("/api/launch/ledger"));
 expect("market validation status script avoids printing ledger rows", marketStatusScript.includes("Ledger row details are intentionally omitted"));
+expect("market validation status audits historical provider attempts without treating them as canonical or causal", marketStatusScript.includes("check:legacy-outbound-archive") && marketStatusScript.includes("historical_outbound_archive") && marketStatusScript.includes("NOT_RECONCILED") && marketStatusScript.includes("never enroll those recipients as untouched experiment subjects"));
+expect("market validation status exactly reconciles selected ready prospects against live ledger", marketStatusScript.includes("reconcileSelectedProspectsWithProductionLedger") && marketStatusScript.includes("selectedReadyRows") && marketStatusScript.includes("selected_prospect_alignment"));
+expect("market validation status redacts selected prospect row details", marketStatusScript.includes("Selected prospect alignment reports blocker codes and a state hash only") && marketStatusScript.includes("countBlockerCodes"));
+expect("market validation actions fail closed on stale production and selection drift", marketValidationActionsHelper.includes("production is not running the current guarded Velvet -> SMIRK loop") && marketValidationActionsHelper.includes("count parity alone does not authorize outreach") && marketValidationActionsHelper.includes("After exact owner approval"));
+expect("market validation action fixtures cover stale live, drift, aligned, and zero-ready states", ["staleProduction", "liveWithDrift", "liveAndAligned", "noReadyProspects"].every((needle) => marketValidationActionsFixtures.includes(needle)));
 expect("market validation status script writes snapshot", marketStatusScript.includes("market-validation-status.json"));
 expect("market validation status script requires provider verification for reported paid activation", marketStatusScript.includes("provider_verification_required") && marketStatusScript.includes("check:qualifying-revenue-live") && marketStatusScript.includes("success_interaction") && marketStatusScript.includes("negative_signal"));
 expect("launch summary does not treat operator-edited activation as provider revenue", launchRoutes.includes("revenue: false") && launchRoutes.includes("reported_paid_activation: paidActivations >= 1"));
@@ -170,7 +177,7 @@ expect("protected launch asset capture package script exists", packageJson.inclu
 expect("protected launch asset check package script exists", packageJson.includes('"check:launch-protected-assets": "node scripts/capture-launch-protected-assets.mjs --check-existing"'));
 expect("launch walkthrough capture package script exists", packageJson.includes('"capture:launch-walkthrough": "node scripts/capture-launch-walkthrough.mjs"'));
 expect("launch walkthrough check package script exists", packageJson.includes('"check:launch-walkthrough": "node scripts/capture-launch-walkthrough.mjs --check-existing"'));
-expect("market validation gate verifies readiness and actual current launch assets", packageJson.includes('"check:market-validation-launch": "node scripts/check-market-validation-launch.mjs && npm run -s check:launch-prospect-readiness && npm run -s check:launch-ledger-reconciliation && npm run -s check:launch-touch-approval-integrity && npm run -s check:launch-asset-provenance && npm run -s check:launch-assets && npm run -s check:launch-protected-assets && npm run -s check:launch-walkthrough"'));
+expect("market validation gate verifies readiness, action steering, and actual current launch assets", packageJson.includes('"check:market-validation-launch": "node scripts/check-market-validation-launch.mjs && npm run -s check:launch-prospect-readiness && npm run -s check:launch-ledger-reconciliation && npm run -s check:market-validation-actions && npm run -s check:launch-touch-approval-integrity && npm run -s check:launch-asset-provenance && npm run -s check:launch-assets && npm run -s check:launch-protected-assets && npm run -s check:launch-walkthrough"'));
 expect("platform submission tracker check package script exists", packageJson.includes('"check:platform-submissions": "node scripts/check-platform-submission-tracker.mjs"'));
 expect("paid test plan check package script exists", packageJson.includes('"check:paid-test-plan": "node scripts/check-paid-test-tracker.mjs"'));
 expect("launch asset capture writes to output/playwright", launchAssetScript.includes("output/playwright/launch-assets") && launchAssetScript.includes("manifest.json"));
@@ -194,11 +201,13 @@ expect("launch touch packet write script exists", packageJson.includes('"write:l
 expect("launch touch packet check script exists", packageJson.includes('"check:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs --check"'));
 expect("launch prospect readiness scripts exist", packageJson.includes('"check:launch-prospect-readiness":') && packageJson.includes('"check:launch-prospect-readiness:fixtures":'));
 expect("launch ledger reconciliation fixture script exists", packageJson.includes('"check:launch-ledger-reconciliation": "node scripts/check-launch-ledger-reconciliation-fixtures.mjs"'));
-expect("market validation launch runs offline prospect and live-ledger contracts", packageJson.includes("check:launch-prospect-readiness && npm run -s check:launch-ledger-reconciliation && npm run -s check:launch-touch-approval-integrity"));
+expect("market validation action fixture script exists", packageJson.includes('"check:market-validation-actions": "node scripts/check-market-validation-actions-fixtures.mjs"'));
+expect("market validation launch runs offline prospect, live-ledger, and action-steering contracts", packageJson.includes("check:launch-prospect-readiness && npm run -s check:launch-ledger-reconciliation && npm run -s check:market-validation-actions && npm run -s check:launch-touch-approval-integrity"));
 expect(
-  "npm test protects prospect readiness and ledger reconciliation fixtures",
+  "npm test protects prospect readiness, ledger reconciliation, and action steering fixtures",
   npmTestScript.includes("npm run -s check:launch-prospect-readiness:fixtures")
-    && npmTestScript.includes("npm run -s check:launch-ledger-reconciliation"),
+    && npmTestScript.includes("npm run -s check:launch-ledger-reconciliation")
+    && npmTestScript.includes("npm run -s check:market-validation-actions"),
 );
 expect("launch touch approval integrity fixture script exists", packageJson.includes('"check:launch-touch-approval-integrity": "node scripts/check-launch-touch-approval-integrity-fixtures.mjs"'));
 expect("launch 200-touch packet scripts exist", packageJson.includes('"write:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200"') && packageJson.includes('"check:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200 --check"'));

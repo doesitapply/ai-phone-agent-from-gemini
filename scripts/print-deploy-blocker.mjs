@@ -108,6 +108,43 @@ try {
   }
 }
 
+let productionBackupEvidence = null;
+try {
+  productionBackupEvidence = JSON.parse(execFileSync(
+    'npm',
+    ['run', '-s', 'check:production-backup'],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  ).trim());
+} catch (error) {
+  const raw = String(error?.stdout || error?.stderr || '').trim();
+  try {
+    productionBackupEvidence = JSON.parse(raw);
+  } catch {
+    productionBackupEvidence = {
+      ok: false,
+      error: 'production-backup-check-unavailable',
+      detail: raw || null,
+    };
+  }
+}
+if (
+  productionBackupEvidence?.ok !== true
+  || productionBackupEvidence?.databaseBindingVerified !== true
+  || productionBackupEvidence?.providerListedBackupReady !== true
+) {
+  console.log(JSON.stringify({
+    ok: false,
+    blocker: 'production-backup-not-ready',
+    requiresApproval: false,
+    localBranch,
+    localCommit,
+    productionBackupEvidence,
+    nextAction: productionBackupEvidence?.nextAction
+      || 'Create and retain a fresh provider backup for the exact bound production database, then regenerate the deploy approval bundle.',
+  }, null, 2));
+  process.exit(1);
+}
+
 let detail = '';
 try {
   execFileSync('npm', ['run', '-s', 'check:live-is-current'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -133,6 +170,7 @@ try {
     liveReadinessHeader: fingerprintDetail?.readinessHeader || null,
     liveStatus: fingerprintDetail?.status ?? null,
     appUrl: parsedDetail?.appUrl || fingerprintDetail?.url || null,
+    productionBackupEvidence,
     nextAction: `Generate the approval bundle, get approval, then run ${deployCommand}`,
     approvalBundleCommand: "npm run write:deploy-approval-bundle",
     approvalBundlePath: "output/deploy-approval-bundle.json",

@@ -6,7 +6,9 @@ const files = {
   authRoutes: fs.readFileSync("src/routes/auth-routes.ts", "utf8"),
   operatorRoutes: fs.readFileSync("src/routes/operator-routes.ts", "utf8"),
   workspaceAdminRoutes: fs.readFileSync("src/routes/workspace-admin-routes.ts", "utf8"),
+  settingsRoutes: fs.readFileSync("src/routes/settings-routes.ts", "utf8"),
   chat: fs.readFileSync("src/smirk-chat.ts", "utf8"),
+  chatPolicy: fs.readFileSync("src/smirk-chat-policy.ts", "utf8"),
   app: fs.readFileSync("src/App.tsx", "utf8"),
   pkg: fs.readFileSync("package.json", "utf8"),
 };
@@ -50,6 +52,12 @@ expect("demo allowlist permits read-only chat", allowedRoutesBlock.includes('{ m
 expect("demo allowlist does not expose workspace API keys", !allowedRoutesBlock.includes("apikey"));
 expect("demo allowlist does not expose settings", !allowedRoutesBlock.includes("\\/api\\/settings"));
 expect("demo allowlist does not expose SMS safety or SMS test", !allowedRoutesBlock.includes("\\/api\\/sms"));
+expect(
+  "global settings require full operator at the route boundary",
+  files.settingsRoutes.includes('app.get("/api/settings", dashboardAuth, requireFullOperator')
+    && files.settingsRoutes.includes('app.post("/api/settings", dashboardAuth, requireFullOperator')
+    && files.settingsRoutes.includes('app.post("/api/settings/test/:service", dashboardAuth, requireFullOperator')
+);
 
 expect("auth routes accept DEMO_OPERATOR_API_KEY", files.authRoutes.includes("DEMO_OPERATOR_API_KEY?: string;"));
 expect("auth routes accept googleDemoOperatorEmails", files.authRoutes.includes("googleDemoOperatorEmails: () => string[];"));
@@ -60,13 +68,15 @@ expect("operator session advertises read_only_demo", files.operatorRoutes.includ
 expect("operator session lists blocked spend actions", files.operatorRoutes.includes("outbound_calls") && files.operatorRoutes.includes("sms") && files.operatorRoutes.includes("prospecting"));
 expect("workspace list treats demo as operator access", files.workspaceAdminRoutes.includes('(req as any).authMode === "operator" || (req as any).authMode === "demo_operator"'));
 
-expect("chat supports demo_operator access mode", files.chat.includes('export type ChatAccessMode = "operator" | "workspace" | "demo_operator";'));
-expect("chat defines demo operator allowed tools", files.chat.includes("const DEMO_OPERATOR_ALLOWED_TOOLS = new Set("));
-const demoChatBlock = files.chat.match(/const DEMO_OPERATOR_ALLOWED_TOOLS[\s\S]*?\n\]\);/)?.[0] || "";
+expect("chat supports demo_operator access mode", files.chatPolicy.includes('export type ChatAccessMode = "operator" | "workspace" | "demo_operator";'));
+expect("chat defines demo operator allowed tools", files.chatPolicy.includes("const DEMO_OPERATOR_ALLOWED_TOOLS = new Set("));
+const demoChatBlock = files.chatPolicy.match(/const DEMO_OPERATOR_ALLOWED_TOOLS[\s\S]*?\n\]\);/)?.[0] || "";
 expect("demo chat does not include make_call", !demoChatBlock.includes("make_call"));
 expect("demo chat does not include create_task", !demoChatBlock.includes("create_task"));
 expect("demo chat does not include update_setting", !demoChatBlock.includes("update_setting"));
-expect("demo chat policy is read-only", files.chat.includes("demo-operator mode") && files.chat.includes("read-only lookup tools only"));
+expect("demo chat policy is read-only", files.chatPolicy.includes("read-only demo mode"));
+expect("operator chat also blocks provider-spend tools", files.chatPolicy.includes("CHAT_GUARDED_WORKFLOW_TOOLS") && files.chatPolicy.includes('"make_call"'));
+expect("chat execution rechecks the server allowlist", files.chat.includes("isChatToolAllowed(input.accessMode, input.name)"));
 
 expect("frontend persists demo_operator role", files.app.includes('role: "operator" | "demo_operator";'));
 expect("frontend has demo default tabs", files.app.includes("const DEMO_OPERATOR_DEFAULT_TABS"));

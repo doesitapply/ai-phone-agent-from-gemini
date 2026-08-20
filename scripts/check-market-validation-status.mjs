@@ -7,6 +7,8 @@ import {
   loadLaunchProspectRows,
   summarizeLaunchProspectReadiness,
 } from "./lib/launch-prospect-readiness.mjs";
+import { reconcileSelectedProspectsWithProductionLedger } from "./lib/launch-ledger-reconciliation.mjs";
+import { buildMarketValidationNextActions } from "./lib/market-validation-actions.mjs";
 
 const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app").replace(/\/$/, "");
 const days = Math.min(Math.max(Number.parseInt(String(process.env.SMIRK_MARKET_VALIDATION_DAYS || "30"), 10) || 30, 1), 90);
@@ -55,10 +57,11 @@ function runCommand(command, args) {
 
 function parseJsonCommand(command, args) {
   const result = runCommand(command, args);
-  if (!result.ok) return result;
+  if (!result.stdout) return result;
   try {
-    return { ok: true, body: JSON.parse(result.stdout) };
+    return { ...result, body: JSON.parse(result.stdout) };
   } catch {
+    if (!result.ok) return result;
     return { ok: false, error: "invalid-json", sample: result.stdout.slice(0, 1000) };
   }
 }
@@ -165,39 +168,22 @@ function summarizeLedgerRows(rows) {
   };
 }
 
-function buildNextActions({ traction, ledgerSummary, prospectReadiness, spendGate }) {
-  const actions = [];
-  const checkoutStarts = asNumber(traction.checkout_starts);
-  const paidActivations = asNumber(traction.paid_activations);
-
-  if (ledgerSummary.blocked_activation_count > 0) {
-    actions.push("Pause promotion and fix the blocked self-serve activation rows before scaling launch channels.");
+function countBlockerCodes(blockers) {
+  const counts = new Map();
+  for (const blocker of Array.isArray(blockers) ? blockers : []) {
+    const code = String(blocker?.code || "unknown");
+    counts.set(code, (counts.get(code) || 0) + 1);
   }
-  if (checkoutStarts > paidActivations) {
-    actions.push("Investigate checkout starts without activation as product/onboarding defects before adding paid spend.");
-  }
-  if (paidActivations < 1) {
-    actions.push("Keep the self-serve claim gated until a paid or explicitly approved production activation proves checkout, workspace access, dashboard, proof call, owner alert, and callback task.");
-  }
-  if (asNumber(traction.companies) === 0) {
-    actions.push("Add the first researched home-service prospects to /dashboard/launch before reporting outreach progress.");
-  }
-  if (prospectReadiness.execution_ready_prospects === 0) {
-    actions.push("Verify a direct public contact path, current research date, and owner/operator or phone-demand evidence before preparing any outreach approval packet.");
-  } else if (asNumber(traction.touches) === 0) {
-    actions.push(`Prepare a narrow exact-approval packet from the ${prospectReadiness.execution_ready_prospects} execution-ready checked-in prospect(s); researched-only rows are not send-ready.`);
-  }
-  if (asNumber(traction.touches) < 200) {
-    actions.push("Work toward the first 200 human-reviewed manual touches using only execution-ready prospects and the approved no-SMS, no-auto-dial outreach playbook.");
-  }
-  if (spendGate?.paid_spend_allowed !== true) {
-    actions.push("Do not start paid spend until the approval phrase and self-serve proof gate are both satisfied.");
-  }
-  return actions.slice(0, 5);
+  return Object.fromEntries([...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
 }
 
 const live = parseJsonCommand("npm", ["run", "-s", "check:live-is-current"]);
 const failedDeploy = runCommand("npm", ["run", "-s", "check:latest-failed-deploy"]);
+const legacyOutboundArchive = parseJsonCommand("npm", [
+  "run",
+  "-s",
+  "check:legacy-outbound-archive",
+]);
 const { files: localProspectFiles, rows: localProspectRows } = loadLaunchProspectRows();
 const localProspectReadiness = summarizeLaunchProspectReadiness(localProspectRows);
 
@@ -235,6 +221,37 @@ if (!ledgerRes.ok || ledgerRes.body?.ok !== true) {
 const traction = summaryRes.body.traction || {};
 const ledgerRows = Array.isArray(ledgerRes.body.rows) ? ledgerRes.body.rows : [];
 const ledgerSummary = summarizeLedgerRows(ledgerRows);
+const liveCurrent = live.ok === true && live.body?.ok === true;
+const selectedReadyRows = localProspectReadiness.evaluations
+  .filter(({ readiness }) => readiness.execution_ready)
+  .map(({ row }) => row);
+const selectedReconciliation = reconcileSelectedProspectsWithProductionLedger({
+  selectedRows: selectedReadyRows,
+  liveRows: ledgerRows,
+  checkedAt: new Date().toISOString(),
+  source: `${appUrl}/api/launch/ledger?days=${days}&limit=${limit}`,
+  authSource: operator.source,
+  windowDays: days,
+});
+const selectedLedgerAlignment = {
+  ok: selectedReconciliation.ok,
+  live_current: liveCurrent,
+  outbound_preparation_ready:
+    liveCurrent
+    && selectedReconciliation.ok
+    && selectedReadyRows.length > 0,
+  selected_count: selectedReadyRows.length,
+  live_rows_received: ledgerRows.length,
+  blocker_count: selectedReconciliation.blockers.length,
+  blocker_counts: countBlockerCodes(selectedReconciliation.blockers),
+  selected_state_sha256: selectedReconciliation.snapshot.selected_state_sha256,
+  checked_at: selectedReconciliation.snapshot.checked_at,
+  source: selectedReconciliation.snapshot.source,
+  request_method: selectedReconciliation.snapshot.request_method,
+  write_performed: selectedReconciliation.snapshot.write_performed,
+  auth_source: selectedReconciliation.snapshot.auth_source,
+  note: "This is an exact selected-company state check. Count parity alone does not authorize packet generation, outreach, calls, SMS, or provider execution.",
+};
 const hardStops = traction.hard_stops || {};
 const status =
   hardStops.reported_paid_activation ? "provider_verification_required" :
@@ -244,7 +261,12 @@ const status =
   "continue";
 
 const output = {
-  ok: live.ok === true && live.body?.ok === true && failedDeploy.ok === true,
+  ok:
+    live.ok === true
+    && live.body?.ok === true
+    && failedDeploy.ok === true
+    && legacyOutboundArchive.ok === true
+    && legacyOutboundArchive.body?.ok === true,
   checked_at: new Date().toISOString(),
   app_url: appUrl,
   operator_auth_source: operator.source,
@@ -287,20 +309,43 @@ const output = {
     note: "Execution-ready means current evidence supports a direct public contact path and safe first-touch preparation. It does not mean outreach is approved or sent.",
   },
   spend_gate: summaryRes.body.spend_gate || null,
+  selected_prospect_alignment: selectedLedgerAlignment,
   launch_events: {
     by_event: summaryRes.body.by_event || [],
     by_source: summaryRes.body.by_source || [],
   },
   ledger_summary: ledgerSummary,
-  next_actions: buildNextActions({
-    traction,
-    ledgerSummary,
-    prospectReadiness: localProspectReadiness,
-    spendGate: summaryRes.body.spend_gate || {},
-  }),
+  historical_outbound_archive:
+    legacyOutboundArchive.body || {
+      ok: false,
+      error:
+        legacyOutboundArchive.stderr
+        || legacyOutboundArchive.stdout
+        || legacyOutboundArchive.message,
+      externalAction: "none",
+    },
+  next_actions: [
+    ...(legacyOutboundArchive.body?.counts?.providerAttempts > 0
+      && legacyOutboundArchive.body?.interpretation?.canonicalSmirkReconciliation
+        === "NOT_RECONCILED"
+      ? [
+          "Preserve and separately reconcile the hashed historical outbound archive as observational evidence before relying on canonical touch totals; never enroll those recipients as untouched experiment subjects.",
+        ]
+      : []),
+    ...buildMarketValidationNextActions({
+      traction,
+      ledgerSummary,
+      prospectReadiness: localProspectReadiness,
+      spendGate: summaryRes.body.spend_gate || {},
+      liveCurrent,
+      selectedLedgerAlignment,
+    }),
+  ],
   notes: [
     "Operator-edited paid activation is a reported milestone only. Run npm run check:qualifying-revenue-live for authoritative revenue proof.",
     "Ledger row details are intentionally omitted from this report to avoid printing owner/contact fields.",
+    "Selected prospect alignment reports blocker codes and a state hash only; company names and row details are intentionally omitted.",
+    "Historical provider attempts are reported separately from the canonical SMIRK ledger. They remain observational and cannot support a frozen-experiment or causal policy claim until separately reconciled.",
     "Researched prospect count and execution-ready prospect count are separate; neither count proves a touch, conversation, activation, or revenue.",
     "Cold SMS, automated phone spam, purchased-list blasting, and uncapped SMS/AI testing remain outside the sprint.",
   ],

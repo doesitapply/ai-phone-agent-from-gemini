@@ -1,0 +1,2313 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  assertProspectOutcomeMatchesChannel,
+  assertProspectOutreachApprovalAttestations,
+  assertRecordedExecutionWindow,
+  buildProspectOutreachPayload,
+  canTransitionProspectOutreach,
+  hashProspectEvidence,
+  hashProspectOutreachPayload,
+  isExactProspectOutcomeReplay,
+  isExactRecordedExecutionReplay,
+  isValidExecutionProofReference,
+  prospectOutcomeSchema,
+  prospectOutreachApprovalSchema,
+} from "../src/prospect-outreach.ts";
+import {
+  assertProspectCallComplianceForExecution,
+  buildProspectCallComplianceReceipt,
+} from "../src/prospect-call-compliance.ts";
+import {
+  buildProspectLearningScorecard,
+  evaluateProspectLearningCandidate,
+} from "../src/prospect-learning.ts";
+import {
+  PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+  buildProspectMessageContext,
+  findMatchingProspectMessageVariant,
+  renderProspectMessageVariant,
+} from "../src/prospect-message-variants.ts";
+import {
+  buildProspectMessageExperimentAssignment,
+  buildProspectMessageExperimentDefinition,
+  evaluateProspectMessageExperimentCoverage,
+  hashProspectMessageExperimentDefinition,
+  verifyProspectMessageExperimentAssignment,
+} from "../src/prospect-message-experiments.ts";
+import {
+  buildProspectMessagePolicyReceipt,
+  buildProspectMessagePolicyRelease,
+  hashProspectMessagePolicyValue,
+} from "../src/prospect-message-policy.ts";
+import {
+  buildVelvetOutcomePayload,
+  hashVelvetOutcomePayload,
+  signVelvetOutcomePayload,
+} from "../src/velvet-outcome.ts";
+import { classifyProspectEmailWebhookEvent } from "../src/prospect-email-webhook.ts";
+import {
+  PROSPECT_EMAIL_RECEIVING_CONFIRMATION,
+  buildProspectInboundReplyContentReceipt,
+  hashProspectInboundReplyContentReceipt,
+  retrieveProspectInboundReplyContentSchema,
+} from "../src/prospect-email-receiving.ts";
+import {
+  PROSPECT_INBOUND_REPLY_RESOLUTION_CONFIRMATION,
+  buildProspectInboundReplyResolutionReceipt,
+  buildProspectInboundReplyReviewPayload,
+  hashProspectInboundReplyResolutionReceipt,
+  hashProspectInboundReplyReviewPayload,
+  resolveProspectInboundReplySchema,
+} from "../src/prospect-inbound-reply-review.ts";
+import {
+  buildVelvetResearchPayloadHash,
+  velvetResearchPayloadSchema,
+} from "../src/velvet-research.ts";
+import {
+  buildVelvetLeadSourceRequest,
+  hashVelvetLeadSourceValue,
+  validateVelvetLeadSourceResponse,
+} from "../src/velvet-lead-source.ts";
+import {
+  buildVelvetDiscoveryRequest,
+  hashVelvetDiscoveryValue,
+  validateVelvetDiscoveryStatus,
+  velvetDiscoveryPreparedResponseSchema,
+} from "../src/velvet-discovery.ts";
+import {
+  assignmentMatchesVelvetRequest,
+  assignmentMatchesVelvetSourceBinding,
+  buildVelvetAcquisitionSourcingAssignmentBinding,
+  hashVelvetAcquisitionSourcingValue,
+  velvetAcquisitionSourcingActiveResponseSchema,
+  velvetAcquisitionSourcingAssignmentSchema,
+} from "../src/velvet-acquisition-experiment.ts";
+
+const SYNTHETIC_NOW = new Date("2026-07-30T16:20:00.000Z");
+const SYNTHETIC_PREPARED_AT = "2026-07-30T16:00:00.000Z";
+const SYNTHETIC_APPROVED_AT = "2026-07-30T16:10:00.000Z";
+const SYNTHETIC_EXECUTED_AT = "2026-07-30T16:15:00.000Z";
+const SYNTHETIC_OUTCOME_AT = "2026-07-30T16:18:00.000Z";
+const SYNTHETIC_SECRET =
+  "synthetic-cross-repository-signing-secret-0001";
+const SYNTHETIC_APPROVAL_ID =
+  "11111111-1111-4111-8111-111111111111";
+const SYNTHETIC_CALL_COMPLIANCE = {
+  checkedAt: "2026-07-30T16:05:00.000Z",
+  recipientTimezone: "America/Los_Angeles",
+  dncChecks: [
+    {
+      scope: "federal" as const,
+      status: "clear" as const,
+      source: "Synthetic federal registry fixture",
+      reference: "federal-cross-repo-fixture",
+    },
+    {
+      scope: "state" as const,
+      status: "clear" as const,
+      source: "Synthetic state registry fixture",
+      reference: "state-cross-repo-fixture",
+    },
+    {
+      scope: "internal" as const,
+      status: "clear" as const,
+      source: "Synthetic SMIRK suppression fixture",
+      reference: "internal-cross-repo-fixture",
+    },
+  ],
+};
+
+type GitState = {
+  path: string;
+  branch: string;
+  commit: string;
+  dirty: boolean;
+};
+
+function readArg(name: string): string | undefined {
+  const prefix = `--${name}=`;
+  return process.argv.find((value) => value.startsWith(prefix))?.slice(
+    prefix.length
+  );
+}
+
+function git(repo: string, args: string[]): string {
+  return execFileSync("git", ["-C", repo, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function readGitState(repo: string): GitState {
+  return {
+    path: repo,
+    branch: git(repo, ["branch", "--show-current"]),
+    commit: git(repo, ["rev-parse", "HEAD"]),
+    dirty: Boolean(git(repo, ["status", "--porcelain"])),
+  };
+}
+
+function requireModule(repo: string, relativePath: string): string {
+  const modulePath = path.join(repo, relativePath);
+  if (!existsSync(modulePath)) {
+    throw new Error(`Required cross-repository module is missing: ${modulePath}`);
+  }
+  return pathToFileURL(modulePath).href;
+}
+
+function observationsForVariant(
+  variantKey: string,
+  positives: number
+): Array<{
+  outreachJobId: string;
+  channel: "email";
+  variantKey: string;
+  outcome: "replied" | "delivered";
+  occurredAt: string;
+}> {
+  return Array.from({ length: 10 }, (_, index) => ({
+    outreachJobId: `${variantKey}-${index + 1}`,
+    channel: "email" as const,
+    variantKey,
+    outcome: index < positives ? ("replied" as const) : ("delivered" as const),
+    occurredAt: new Date(
+      Date.UTC(2026, 6, 1, 9, index)
+    ).toISOString(),
+  }));
+}
+
+function observationsForCategory(
+  category: string,
+  positives: number
+): Array<{
+  prospectId: string;
+  category: string;
+  city: string;
+  state: string;
+  channel: "email";
+  outcome: "replied" | "delivered";
+  occurredAt: string;
+}> {
+  return Array.from({ length: 10 }, (_, index) => ({
+    prospectId: `${category}-${index + 1}`,
+    category,
+    city: "Reno",
+    state: "NV",
+    channel: "email" as const,
+    outcome: index < positives ? ("replied" as const) : ("delivered" as const),
+    occurredAt: new Date(
+      Date.UTC(2026, 6, 2, 9, index)
+    ).toISOString(),
+  }));
+}
+
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+const smirkRepo = path.resolve(scriptDirectory, "..");
+const velvetRepo = path.resolve(
+  readArg("velvet-repo") ||
+    process.env.VELVET_REPO_PATH ||
+    path.join(smirkRepo, "..", "velvet-alchemy-landing")
+);
+const requireClean = process.argv.includes("--require-clean");
+const smirkGit = readGitState(smirkRepo);
+const velvetGit = readGitState(velvetRepo);
+
+if (requireClean && (smirkGit.dirty || velvetGit.dirty)) {
+  throw new Error(
+    `A clean source pair is required (SMIRK dirty=${smirkGit.dirty}, Velvet dirty=${velvetGit.dirty}).`
+  );
+}
+
+let networkAttempts = 0;
+const originalFetch = globalThis.fetch;
+globalThis.fetch = (async () => {
+  networkAttempts += 1;
+  throw new Error(
+    "Network access is forbidden in the synthetic closed-loop release gate."
+  );
+}) as typeof fetch;
+
+try {
+  const [
+    velvetResearch,
+    velvetOutcome,
+    velvetLearning,
+    velvetLeadBatch,
+    velvetDiscovery,
+    velvetSourcingExperiment,
+  ] = await Promise.all([
+    import(requireModule(velvetRepo, "server/lib/smirkResearch.ts")),
+    import(requireModule(velvetRepo, "server/lib/smirkOutcome.ts")),
+    import(requireModule(velvetRepo, "server/lib/acquisitionLearning.ts")),
+    import(requireModule(velvetRepo, "server/lib/smirkLeadBatch.ts")),
+    import(requireModule(velvetRepo, "server/lib/smirkDiscovery.ts")),
+    import(
+      requireModule(
+        velvetRepo,
+        "server/lib/acquisitionSourcingExperiment.ts"
+      )
+    ),
+  ]);
+
+  const lead = {
+    id: 42,
+    userId: 7,
+    companyName: "Silver State Home Services Demo",
+    websiteUrl: "https://example.com/silver-state-demo",
+    phone: "+12025550124",
+    verifiedOwnerEmail: "owner@example.com",
+    category: "plumbing",
+    address: "100 Example Way",
+    city: "Reno",
+    state: "NV",
+    screenshotUrl: null,
+    googleRating: null,
+    reviewCount: null,
+    googlePlaceId: null,
+    updatedAt: new Date(SYNTHETIC_PREPARED_AT),
+  };
+
+  const velvetResearchPayload = velvetResearch.buildSmirkResearchPayload(
+    lead,
+    1
+  );
+  const smirkResearchPayload =
+    velvetResearchPayloadSchema.parse(velvetResearchPayload);
+  assert.equal(
+    velvetResearch.SMIRK_RESEARCH_CONTRACT_VERSION,
+    smirkResearchPayload.contractVersion
+  );
+  assert.equal(
+    smirkResearchPayload.externalId,
+    "velvet-owner-7-lead-42"
+  );
+  assert.equal(
+    smirkResearchPayload.prospect.emailVerification,
+    "verified_owner_email"
+  );
+  assert.equal(
+    smirkResearchPayload.prospect.phoneContactMode,
+    "operator_review_only"
+  );
+
+  const velvetResearchHash =
+    velvetResearch.buildSmirkResearchPayloadHash(velvetResearchPayload);
+  const smirkResearchHash =
+    buildVelvetResearchPayloadHash(smirkResearchPayload);
+  assert.equal(velvetResearchHash, smirkResearchHash);
+  assert.deepEqual(
+    velvetResearch.buildSmirkResearchPayload(lead, 1),
+    velvetResearchPayload
+  );
+  const changedResearchPayload = velvetResearch.buildSmirkResearchPayload(
+    { ...lead, companyName: "Changed Synthetic Business" },
+    1
+  );
+  assert.notEqual(
+    velvetResearch.buildSmirkResearchPayloadHash(changedResearchPayload),
+    velvetResearchHash
+  );
+
+  const importedReceipt = velvetResearch.parseSmirkResearchResponse(201, {
+    ok: true,
+    state: "IMPORTED",
+    campaignId: 17,
+    prospectId: 23,
+    externalAction: "none",
+  });
+  const duplicateReceipt = velvetResearch.parseSmirkResearchResponse(200, {
+    ok: true,
+    state: "DUPLICATE",
+    campaignId: 17,
+    prospectId: 23,
+    externalAction: "none",
+  });
+  assert.equal(importedReceipt.success, true);
+  assert.equal(duplicateReceipt.success, true);
+  assert.equal(importedReceipt.externalAction, "none");
+  assert.equal(duplicateReceipt.externalAction, "none");
+
+  const evidenceHash = hashProspectEvidence(
+    smirkResearchPayload.prospect.evidence
+  );
+  const messageContext = buildProspectMessageContext({
+    businessName: smirkResearchPayload.prospect.companyName,
+    industry: smirkResearchPayload.prospect.industry,
+    researchEvidence: smirkResearchPayload.prospect.evidence,
+  });
+  const currentEmailStrategy = renderProspectMessageVariant(
+    "owner-language-v1",
+    messageContext
+  );
+  const approvedEmailStrategy = renderProspectMessageVariant(
+    "owner-language-v2",
+    messageContext
+  );
+  const manualCallStrategy = renderProspectMessageVariant(
+    "manual-owner-call-v1",
+    messageContext
+  );
+  assert.ok(currentEmailStrategy?.subject);
+  assert.ok(approvedEmailStrategy?.subject);
+  assert.ok(manualCallStrategy);
+  assert.notEqual(
+    currentEmailStrategy.subject,
+    approvedEmailStrategy.subject
+  );
+  assert.notEqual(
+    currentEmailStrategy.content,
+    approvedEmailStrategy.content
+  );
+  assert.equal(
+    findMatchingProspectMessageVariant({
+      channel: "email",
+      subject: approvedEmailStrategy.subject,
+      content: approvedEmailStrategy.content,
+      context: messageContext,
+    })?.key,
+    "owner-language-v2"
+  );
+  assert.equal(
+    findMatchingProspectMessageVariant({
+      channel: "email",
+      subject: approvedEmailStrategy.subject,
+      content: `${approvedEmailStrategy.content}\n\nOperator edit.`,
+      context: messageContext,
+    }),
+    null
+  );
+  assert.match(manualCallStrategy.content, /manual-dial-only/i);
+  assert.match(manualCallStrategy.content, /operator must dial manually/i);
+
+  const messageExperiment =
+    buildProspectMessageExperimentDefinition({
+      experimentId:
+        "55555555-5555-4555-8555-555555555555",
+      workspaceId: 1,
+      campaignId: 17,
+      channel: "email",
+      controlVariantKey: "owner-language-v1",
+      challengerVariantKey: "owner-language-v2",
+      preparedAt: SYNTHETIC_PREPARED_AT,
+      eligibleProspectIds: Array.from(
+        { length: 20 },
+        (_, index) => index + 23
+      ),
+      cohortSize: 20,
+    });
+  const assignmentProbe =
+    buildProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      prospectId: 23,
+      actualVariantKey: messageExperiment.controlVariantKey,
+    });
+  const messageAssignment =
+    buildProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      prospectId: 23,
+      actualVariantKey: assignmentProbe.assignedVariantKey,
+    });
+  assert.equal(
+    verifyProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      assignment: messageAssignment,
+    }),
+    true
+  );
+  assert.equal(messageAssignment.protocolCompliant, true);
+  const assignedEmailStrategy = renderProspectMessageVariant(
+    messageAssignment.assignedVariantKey,
+    messageContext
+  );
+  assert.ok(assignedEmailStrategy?.subject);
+
+  const emailPayload = buildProspectOutreachPayload({
+    workspaceId: 1,
+    campaignId: 17,
+    prospectId: 23,
+    recipient: smirkResearchPayload.prospect.email,
+    evidenceHash,
+    preparedAt: SYNTHETIC_PREPARED_AT,
+    qcContext: messageContext,
+    experimentAssignment: messageAssignment,
+    draft: {
+      channel: "email",
+      subject: assignedEmailStrategy.subject,
+      body: assignedEmailStrategy.content,
+      emailCompliance: {
+        senderIdentity: "SMIRK",
+        advertisementDisclosure:
+          "This is a commercial message from SMIRK.",
+        physicalPostalAddress: "100 Example Way, Reno, NV 89501",
+        optOutInstructions:
+          "If this is not relevant, reply no and I will not follow up.",
+      },
+      variantKey: assignedEmailStrategy.key,
+      maxCostCents: 2,
+      expiresInHours: 24,
+    },
+  });
+  const emailPayloadHash = hashProspectOutreachPayload(emailPayload);
+  assert.ok(emailPayload.qcReceipt);
+  assert.equal(
+    emailPayload.qcReceipt.verdict,
+    "ELIGIBLE_FOR_HUMAN_APPROVAL"
+  );
+  assert.equal(emailPayload.qcReceipt.humanApprovalRequired, true);
+  assert.equal(emailPayload.qcReceipt.contactAuthorized, false);
+  assert.equal(emailPayload.qcReceipt.executionAuthorized, false);
+  const emailApproval = prospectOutreachApprovalSchema.parse({
+    payloadHash: emailPayloadHash,
+    attestations: {
+      recipientReviewed: true,
+      suppressionChecked: true,
+      emailComplianceReviewed: true,
+    },
+  });
+  assertProspectOutreachApprovalAttestations(
+    "email",
+    emailApproval,
+    emailPayload.qcReceipt
+  );
+  assert.equal(emailPayload.controls.smsAllowed, false);
+  assert.equal(
+    emailPayload.experimentAssignment?.assignmentHash,
+    messageAssignment.assignmentHash
+  );
+  assert.equal(emailPayload.controls.bulkExecution, false);
+  assert.equal(
+    emailPayload.controls.providerExecution,
+    "operator-triggered-single-recipient"
+  );
+  assert.equal(canTransitionProspectOutreach("PREPARED", "APPROVED"), true);
+  assert.equal(canTransitionProspectOutreach("APPROVED", "SENDING"), true);
+  assert.equal(canTransitionProspectOutreach("SENDING", "SENT"), true);
+
+  const callPayload = buildProspectOutreachPayload({
+    workspaceId: 1,
+    campaignId: 17,
+    prospectId: 23,
+    recipient: smirkResearchPayload.prospect.phone,
+    evidenceHash,
+    preparedAt: SYNTHETIC_PREPARED_AT,
+    qcContext: messageContext,
+    draft: {
+      channel: "call",
+      callBrief: manualCallStrategy.content,
+      variantKey: "manual-owner-call-v1",
+      maxCostCents: 10,
+      expiresInHours: 8,
+    },
+  });
+  const callPayloadHash = hashProspectOutreachPayload(callPayload);
+  assert.ok(callPayload.qcReceipt);
+  assert.equal(
+    callPayload.qcReceipt.verdict,
+    "ELIGIBLE_FOR_HUMAN_APPROVAL"
+  );
+  assert.equal(callPayload.qcReceipt.humanApprovalRequired, true);
+  assert.equal(callPayload.qcReceipt.contactAuthorized, false);
+  assert.equal(callPayload.qcReceipt.executionAuthorized, false);
+  const callApproval = prospectOutreachApprovalSchema.parse({
+    payloadHash: callPayloadHash,
+    attestations: {
+      recipientReviewed: true,
+      suppressionChecked: true,
+      doNotCallChecked: true,
+      callingWindowChecked: true,
+      manualDialOnly: true,
+      callCompliance: SYNTHETIC_CALL_COMPLIANCE,
+    },
+  });
+  assertProspectOutreachApprovalAttestations(
+    "call",
+    callApproval,
+    callPayload.qcReceipt
+  );
+  assert.equal(callPayload.controls.smsAllowed, false);
+  assert.equal(callPayload.controls.providerExecution, "disabled");
+  assert.equal(
+    callPayload.controls.compliance.channel === "call" &&
+      callPayload.controls.compliance.automatedDialing,
+    false
+  );
+  const callCompliance = buildProspectCallComplianceReceipt({
+    workspaceId: 1,
+    approvalId: SYNTHETIC_APPROVAL_ID,
+    outreachJobId: 31,
+    leadId: 23,
+    recipient: callPayload.recipient,
+    evidence: SYNTHETIC_CALL_COMPLIANCE,
+    actor: "synthetic-operator",
+    approvedAt: SYNTHETIC_APPROVED_AT,
+    jobExpiresAt: callPayload.expiresAt,
+  });
+  const callComplianceExecution =
+    assertProspectCallComplianceForExecution({
+      receipt: callCompliance.receipt,
+      receiptHash: callCompliance.receiptHash,
+      workspaceId: 1,
+      approvalId: SYNTHETIC_APPROVAL_ID,
+      outreachJobId: 31,
+      leadId: 23,
+      recipient: callPayload.recipient,
+      occurredAt: SYNTHETIC_EXECUTED_AT,
+      approvedBy: "synthetic-operator",
+      approvedAt: SYNTHETIC_APPROVED_AT,
+      jobExpiresAt: callPayload.expiresAt,
+    });
+  assert.equal(callComplianceExecution.localTime, "2026-07-30 09:15");
+
+  const executionProof = "manual:synthetic-call-log-0001";
+  assert.equal(isValidExecutionProofReference(executionProof), true);
+  assertRecordedExecutionWindow({
+    approvedAt: SYNTHETIC_APPROVED_AT,
+    occurredAt: SYNTHETIC_EXECUTED_AT,
+    expiresAt: callPayload.expiresAt,
+    now: SYNTHETIC_NOW,
+  });
+  assert.equal(
+    isExactRecordedExecutionReplay(
+      {
+        sentAt: SYNTHETIC_EXECUTED_AT,
+        proofReference: executionProof,
+      },
+      {
+        occurredAt: SYNTHETIC_EXECUTED_AT,
+        proofReference: executionProof,
+      }
+    ),
+    true
+  );
+  assert.equal(
+    isExactRecordedExecutionReplay(
+      {
+        sentAt: SYNTHETIC_EXECUTED_AT,
+        proofReference: executionProof,
+      },
+      {
+        occurredAt: "2026-07-30T16:16:00.000Z",
+        proofReference: executionProof,
+      }
+    ),
+    false
+  );
+
+  const inboundProviderEventId = "evt_cross_repo_reply_0001";
+  const inboundMessageId = "email_cross_repo_reply_0001";
+  const inboundReplyEvent = {
+    type: "email.received",
+    created_at: SYNTHETIC_OUTCOME_AT,
+    data: {
+      email_id: inboundMessageId,
+      created_at: SYNTHETIC_OUTCOME_AT,
+      from: smirkResearchPayload.prospect.email,
+      to: ["reply@smirkcalls.com"],
+      received_for: ["reply@smirkcalls.com"],
+      bcc: [],
+      cc: [],
+      message_id: "message_cross_repo_reply_0001",
+      subject: `Re: ${assignedEmailStrategy.subject}`,
+      attachments: [],
+    },
+  };
+  const inboundClassification = classifyProspectEmailWebhookEvent(
+    inboundReplyEvent as any,
+    "outreach@smirkcalls.com",
+    "reply@smirkcalls.com"
+  );
+  assert.equal(inboundClassification.kind, "inbound_reply_candidate");
+  if (inboundClassification.kind !== "inbound_reply_candidate") {
+    throw new Error("The synthetic inbound email was not reviewable.");
+  }
+  assert.equal(
+    inboundClassification.sender,
+    smirkResearchPayload.prospect.email
+  );
+  assert.equal(inboundClassification.inboundMessageId, inboundMessageId);
+
+  const inboundReview = buildProspectInboundReplyReviewPayload({
+    reviewId: "66666666-6666-4666-8666-666666666666",
+    workspaceId: 1,
+    providerEventId: inboundProviderEventId,
+    inboundMessageId: inboundClassification.inboundMessageId,
+    webhookPayloadHash: createHash("sha256")
+      .update(JSON.stringify(inboundReplyEvent))
+      .digest("hex"),
+    sender: inboundClassification.sender,
+    occurredAt: inboundClassification.occurredAt,
+    candidates: [
+      {
+        outreachJobId: 31,
+        outreachApprovalId: SYNTHETIC_APPROVAL_ID,
+        prospectId: 23,
+        businessName: smirkResearchPayload.prospect.companyName,
+        sentAt: SYNTHETIC_EXECUTED_AT,
+      },
+    ],
+  });
+  const inboundReviewHash =
+    hashProspectInboundReplyReviewPayload(inboundReview);
+  assert.equal(inboundReview.matchState, "unique");
+  assert.equal(inboundReview.candidates.length, 1);
+
+  const inboundContentRequest =
+    retrieveProspectInboundReplyContentSchema.parse({
+      payloadHash: inboundReviewHash,
+      confirmation: PROSPECT_EMAIL_RECEIVING_CONFIRMATION,
+      attestations: {
+        noContactAuthorized: true,
+        noSendAuthorized: true,
+        attachmentsNotRequested: true,
+        htmlWillNotBeStored: true,
+      },
+    });
+  const inboundPlainText =
+    "Yes, I am interested in reviewing one SMIRK proof call.";
+  const inboundContent = {
+    inboundMessageId,
+    sender: inboundClassification.sender,
+    replyToAddress: "reply@smirkcalls.com",
+    subject: `Re: ${assignedEmailStrategy.subject}`,
+    providerCreatedAt: SYNTHETIC_OUTCOME_AT,
+    plainText: inboundPlainText,
+    contentHash: createHash("sha256")
+      .update(inboundPlainText)
+      .digest("hex"),
+    contentBytes: Buffer.byteLength(inboundPlainText, "utf8"),
+  };
+  const inboundContentReceipt =
+    buildProspectInboundReplyContentReceipt({
+      reviewId: inboundReview.reviewId,
+      workspaceId: 1,
+      providerEventId: inboundProviderEventId,
+      replyReviewPayloadHash: inboundReviewHash,
+      request: inboundContentRequest,
+      content: inboundContent,
+      retrievedBy: "synthetic-operator",
+      retrievedAt: SYNTHETIC_OUTCOME_AT,
+    });
+  const inboundContentReceiptHash =
+    hashProspectInboundReplyContentReceipt(inboundContentReceipt);
+  assert.equal(inboundContentReceipt.contactAuthorized, false);
+  assert.equal(inboundContentReceipt.sendAuthorized, false);
+  assert.equal(inboundContentReceipt.htmlStored, false);
+  assert.equal(inboundContentReceipt.attachmentsFetched, false);
+
+  const changedInboundPlainText = `${inboundPlainText} Changed.`;
+  const changedInboundContentReceipt =
+    buildProspectInboundReplyContentReceipt({
+      reviewId: inboundReview.reviewId,
+      workspaceId: 1,
+      providerEventId: inboundProviderEventId,
+      replyReviewPayloadHash: inboundReviewHash,
+      request: inboundContentRequest,
+      content: {
+        ...inboundContent,
+        plainText: changedInboundPlainText,
+        contentHash: createHash("sha256")
+          .update(changedInboundPlainText)
+          .digest("hex"),
+        contentBytes: Buffer.byteLength(
+          changedInboundPlainText,
+          "utf8"
+        ),
+      },
+      retrievedBy: "synthetic-operator",
+      retrievedAt: SYNTHETIC_OUTCOME_AT,
+    });
+  assert.notEqual(
+    hashProspectInboundReplyContentReceipt(
+      changedInboundContentReceipt
+    ),
+    inboundContentReceiptHash
+  );
+
+  const inboundResolutionRequest =
+    resolveProspectInboundReplySchema.parse({
+      payloadHash: inboundReviewHash,
+      contentReceiptHash: inboundContentReceiptHash,
+      confirmation:
+        PROSPECT_INBOUND_REPLY_RESOLUTION_CONFIRMATION,
+      resolution: "reply",
+      selectedOutreachApprovalId: SYNTHETIC_APPROVAL_ID,
+      notes:
+        "Synthetic operator classified the exact received text as a reply.",
+      attestations: {
+        messageContentReviewed: true,
+        senderIdentityMatched: true,
+        noContactExecutedByResolution: true,
+        followUpRemainsSeparate: true,
+      },
+    });
+  const inboundResolutionReceipt =
+    buildProspectInboundReplyResolutionReceipt({
+      reviewId: inboundReview.reviewId,
+      resolution: inboundResolutionRequest,
+      resultingOutcome: "replied",
+      suppressionRecorded: false,
+      resolvedBy: "synthetic-operator",
+      resolvedAt: SYNTHETIC_OUTCOME_AT,
+    });
+  const inboundResolutionReceiptHash =
+    hashProspectInboundReplyResolutionReceipt(
+      inboundResolutionReceipt
+    );
+  assert.equal(inboundResolutionReceipt.noContactExecuted, true);
+  assert.equal(inboundResolutionReceipt.resultingOutcome, "replied");
+  assert.throws(() =>
+    buildProspectInboundReplyResolutionReceipt({
+      reviewId: inboundReview.reviewId,
+      resolution: inboundResolutionRequest,
+      resultingOutcome: null,
+      suppressionRecorded: false,
+      resolvedBy: "synthetic-operator",
+      resolvedAt: SYNTHETIC_OUTCOME_AT,
+    })
+  );
+
+  const outcomeInput = prospectOutcomeSchema.parse({
+    externalEventId: `provider:${inboundProviderEventId}`,
+    outreachApprovalId: SYNTHETIC_APPROVAL_ID,
+    outcome: inboundResolutionReceipt.resultingOutcome,
+    occurredAt: SYNTHETIC_OUTCOME_AT,
+    notes: `Synthetic human-classified inbound reply receipt ${inboundResolutionReceiptHash}.`,
+  });
+  assertProspectOutcomeMatchesChannel("email", outcomeInput.outcome);
+  assert.equal(
+    isExactProspectOutcomeReplay(
+      {
+        lead_id: 23,
+        outreach_job_id: 31,
+        outcome: outcomeInput.outcome,
+        occurred_at: outcomeInput.occurredAt,
+        notes: outcomeInput.notes || null,
+      },
+      {
+        leadId: 23,
+        outreachJobId: 31,
+        outcome: outcomeInput.outcome,
+        occurredAt: outcomeInput.occurredAt,
+        notes: outcomeInput.notes,
+      }
+    ),
+    true
+  );
+  assert.equal(
+    isExactProspectOutcomeReplay(
+      {
+        lead_id: 23,
+        outreach_job_id: 31,
+        outcome: outcomeInput.outcome,
+        occurred_at: outcomeInput.occurredAt,
+        notes: outcomeInput.notes || null,
+      },
+      {
+        leadId: 23,
+        outreachJobId: 31,
+        outcome: "converted",
+        occurredAt: outcomeInput.occurredAt,
+        notes: outcomeInput.notes,
+      }
+    ),
+    false
+  );
+
+  const smirkOutcomePayload = buildVelvetOutcomePayload({
+    workspaceId: 1,
+    externalProspectId: smirkResearchPayload.externalId,
+    externalEventId: outcomeInput.externalEventId,
+    outreachApprovalId: SYNTHETIC_APPROVAL_ID,
+    channel: "email",
+    outcome: outcomeInput.outcome,
+    occurredAt: outcomeInput.occurredAt,
+    evidenceHash,
+    outreachPayloadHash: emailPayloadHash,
+    notes: outcomeInput.notes,
+  });
+  const velvetParsedOutcome =
+    velvetOutcome.smirkOutcomePayloadSchema.parse(smirkOutcomePayload);
+  const smirkOutcomeHash = hashVelvetOutcomePayload(smirkOutcomePayload);
+  const velvetOutcomeHash =
+    velvetOutcome.hashSmirkOutcomePayload(velvetParsedOutcome);
+  assert.equal(smirkOutcomeHash, velvetOutcomeHash);
+
+  const timestamp = String(Math.floor(SYNTHETIC_NOW.getTime() / 1_000));
+  const smirkSignature = signVelvetOutcomePayload(
+    smirkOutcomePayload,
+    timestamp,
+    SYNTHETIC_SECRET
+  );
+  const velvetSignature = velvetOutcome.signSmirkOutcome(
+    velvetParsedOutcome,
+    timestamp,
+    SYNTHETIC_SECRET
+  );
+  assert.equal(smirkSignature, velvetSignature);
+  assert.deepEqual(
+    velvetOutcome.verifySmirkOutcomeSignature({
+      payload: velvetParsedOutcome,
+      timestamp,
+      signature: smirkSignature,
+      secret: SYNTHETIC_SECRET,
+      now: SYNTHETIC_NOW,
+    }),
+    { ok: true }
+  );
+  assert.deepEqual(
+    velvetOutcome.verifySmirkOutcomeSignature({
+      payload: velvetParsedOutcome,
+      timestamp,
+      signature: `${smirkSignature.slice(0, -1)}${
+        smirkSignature.endsWith("0") ? "1" : "0"
+      }`,
+      secret: SYNTHETIC_SECRET,
+      now: SYNTHETIC_NOW,
+    }),
+    { ok: false, code: "SMIRK_OUTCOME_SIGNATURE_INVALID" }
+  );
+
+  const researchReceipt = JSON.stringify({
+    externalId: smirkResearchPayload.externalId,
+    workspaceId: 1,
+    state: "IMPORTED",
+    campaignId: 17,
+    prospectId: 23,
+    externalAction: "none",
+  });
+  assert.deepEqual(
+    velvetOutcome.validateSmirkOutcomeResearchReceipt(
+      researchReceipt,
+      velvetParsedOutcome
+    ),
+    { ok: true }
+  );
+  assert.deepEqual(
+    velvetOutcome.validateSmirkOutcomeResearchReceipt(
+      JSON.stringify({
+        ...JSON.parse(researchReceipt),
+        externalId: "velvet-owner-7-lead-999",
+      }),
+      velvetParsedOutcome
+    ),
+    { ok: false, code: "SMIRK_OUTCOME_RESEARCH_RECEIPT_MISMATCH" }
+  );
+
+  const variantObservations = [
+    ...observationsForVariant("owner-language-v1", 1),
+    ...observationsForVariant("owner-language-v2", 6),
+    {
+      outreachJobId: "owner-language-v1-1",
+      channel: "email" as const,
+      variantKey: "owner-language-v1",
+      outcome: "qualified" as const,
+      occurredAt: "2026-07-01T10:00:00.000Z",
+    },
+  ];
+  const variantScorecard =
+    buildProspectLearningScorecard(variantObservations);
+  const currentVariantScore = variantScorecard.find(
+    (score) => score.variantKey === "owner-language-v1"
+  );
+  assert.equal(currentVariantScore?.sampleSize, 10);
+  assert.equal(currentVariantScore?.eventCount, 11);
+  assert.equal(currentVariantScore?.outcomes.qualified, 1);
+  const variantCandidate = evaluateProspectLearningCandidate({
+    channel: "email",
+    currentVariant: "owner-language-v1",
+    challengerVariant: "owner-language-v2",
+    observations: variantObservations,
+  });
+  assert.equal(variantCandidate.ready, true);
+  assert.equal("policyChanged" in variantCandidate, false);
+
+  const assignedProspects = {
+    control: messageExperiment.cohort
+      .filter(entry => entry.arm === "control")
+      .map(entry => entry.prospectId),
+    challenger: messageExperiment.cohort
+      .filter(entry => entry.arm === "challenger")
+      .map(entry => entry.prospectId),
+  };
+  assert.equal(assignedProspects.control.length, 10);
+  assert.equal(assignedProspects.challenger.length, 10);
+  const assignedCohortObservations = (
+    ["control", "challenger"] as const
+  ).flatMap((arm) =>
+    assignedProspects[arm].map((prospectId, index) => {
+      const assignedVariantKey =
+        arm === "control"
+          ? messageExperiment.controlVariantKey
+          : messageExperiment.challengerVariantKey;
+      const assignment =
+        buildProspectMessageExperimentAssignment({
+          definition: messageExperiment,
+          prospectId,
+          actualVariantKey: assignedVariantKey,
+        });
+      assert.equal(assignment.arm, arm);
+      assert.equal(assignment.protocolCompliant, true);
+      assert.equal(
+        verifyProspectMessageExperimentAssignment({
+          definition: messageExperiment,
+          assignment,
+        }),
+        true
+      );
+      return {
+        outreachJobId: `assigned-${prospectId}`,
+        channel: "email" as const,
+        variantKey: assignedVariantKey,
+        outcome:
+          index < (arm === "control" ? 1 : 6)
+            ? ("replied" as const)
+            : ("delivered" as const),
+        occurredAt: new Date(
+          Date.UTC(2026, 6, arm === "control" ? 3 : 4, 9, index)
+        ).toISOString(),
+      };
+    })
+  );
+  const assignedMessageCandidate =
+    evaluateProspectLearningCandidate({
+      channel: "email",
+      currentVariant: messageExperiment.controlVariantKey,
+      challengerVariant:
+        messageExperiment.challengerVariantKey,
+      observations: assignedCohortObservations,
+    });
+  assert.equal(assignedMessageCandidate.ready, true);
+  if (!assignedMessageCandidate.ready) {
+    throw new Error("Synthetic assigned message candidate was not ready.");
+  }
+  const assignedCohortCoverage = {
+    armStats: {
+      control: {
+        assigned: assignedProspects.control.length,
+        executed: assignedProspects.control.length,
+        measured: assignedProspects.control.length,
+        outcomeEvents: assignedCohortObservations.filter(
+          observation =>
+            observation.variantKey ===
+            messageExperiment.controlVariantKey
+        ).length,
+      },
+      challenger: {
+        assigned: assignedProspects.challenger.length,
+        executed: assignedProspects.challenger.length,
+        measured: assignedProspects.challenger.length,
+        outcomeEvents: assignedCohortObservations.filter(
+          observation =>
+            observation.variantKey ===
+            messageExperiment.challengerVariantKey
+        ).length,
+      },
+    },
+    assignedProspects: messageExperiment.cohort.length,
+    executedProspects: assignedCohortObservations.length,
+    measuredProspects: assignedCohortObservations.length,
+    outcomeEventCount: assignedCohortObservations.length,
+  };
+  const assignedCohortCoverageEvaluation =
+    evaluateProspectMessageExperimentCoverage({
+      definition: messageExperiment,
+      coverage: assignedCohortCoverage,
+    });
+  assert.equal(assignedCohortCoverageEvaluation.eligible, true);
+  const attritionCoverageEvaluation =
+    evaluateProspectMessageExperimentCoverage({
+      definition: messageExperiment,
+      coverage: {
+        ...assignedCohortCoverage,
+        armStats: {
+          ...assignedCohortCoverage.armStats,
+          challenger: {
+            ...assignedCohortCoverage.armStats.challenger,
+            executed:
+              assignedCohortCoverage.armStats.challenger.executed - 1,
+            measured:
+              assignedCohortCoverage.armStats.challenger.measured - 1,
+            outcomeEvents:
+              assignedCohortCoverage.armStats.challenger.outcomeEvents - 1,
+          },
+        },
+        executedProspects:
+          assignedCohortCoverage.executedProspects - 1,
+        measuredProspects:
+          assignedCohortCoverage.measuredProspects - 1,
+        outcomeEventCount:
+          assignedCohortCoverage.outcomeEventCount - 1,
+      },
+    });
+  assert.deepEqual(attritionCoverageEvaluation, {
+    eligible: false,
+    code: "COHORT_ATTRITION",
+  });
+  const deterministicMessageProposal = {
+    ...assignedMessageCandidate.proposal,
+    studyDesign: "deterministic-eligible-cohort-v1" as const,
+    experimentId: messageExperiment.experimentId,
+    experimentDefinitionHash:
+      hashProspectMessageExperimentDefinition(messageExperiment),
+    registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+    runtimePolicyChange: false as const,
+  };
+  const messageProposalHash = hashProspectMessagePolicyValue(
+    deterministicMessageProposal
+  );
+  const messagePolicyRelease = buildProspectMessagePolicyRelease({
+    releaseId: "77777777-7777-4777-8777-777777777777",
+    workspaceId: 1,
+    campaignId: 17,
+    channel: "email",
+    version: 1,
+    action: "PROMOTE",
+    championVariantKey:
+      assignedMessageCandidate.proposal.promoteVariant,
+    previousChampionVariantKey:
+      assignedMessageCandidate.proposal.replaceVariant,
+    sourceCandidate: {
+      id: 91,
+      candidateKey: `experiment:${messageExperiment.experimentId}`,
+      version: 1,
+      experimentId: messageExperiment.experimentId,
+      experimentDefinitionHash:
+        deterministicMessageProposal.experimentDefinitionHash,
+      proposalHash: messageProposalHash,
+      sampleSize: assignedMessageCandidate.sampleSize,
+    },
+    rollbackOfReleaseId: null,
+    reason: null,
+    appliedBy: "synthetic_full_operator",
+    appliedAt: "2026-07-30T16:19:00.000Z",
+    attestations: {
+      approvedCandidateReviewed: true,
+      measuredEvidenceReviewed: true,
+      futureExperimentsOnly: true,
+      noContactOrSpendAuthorized: true,
+    },
+    controls: {
+      nextExperimentControlOnly: true,
+      existingJobsChanged: false,
+      contactAuthorized: false,
+      executionAuthorized: false,
+      spendAuthorized: false,
+    },
+  });
+  const messagePolicyReleaseHash =
+    hashProspectMessagePolicyValue(messagePolicyRelease);
+  const messagePolicyReceipt = buildProspectMessagePolicyReceipt({
+    release: messagePolicyRelease,
+    releaseHash: messagePolicyReleaseHash,
+  });
+  const nextMessageExperiment =
+    buildProspectMessageExperimentDefinition({
+      experimentId:
+        "88888888-8888-4888-8888-888888888888",
+      workspaceId: 1,
+      campaignId: 17,
+      channel: "email",
+      controlVariantKey:
+        messagePolicyRelease.championVariantKey,
+      challengerVariantKey: "micro-after-hours-v1",
+      preparedAt: "2026-07-30T16:19:30.000Z",
+      eligibleProspectIds: Array.from(
+        { length: 20 },
+        (_, index) => index + 100
+      ),
+      cohortSize: 20,
+      appliedPolicy: messagePolicyReceipt,
+    });
+  assert.equal(
+    nextMessageExperiment.controlVariantKey,
+    assignedMessageCandidate.proposal.promoteVariant
+  );
+  assert.equal(
+    nextMessageExperiment.appliedPolicy?.releaseHash,
+    messagePolicyReleaseHash
+  );
+  const messagePolicyRollback = buildProspectMessagePolicyRelease({
+    releaseId: "99999999-9999-4999-8999-999999999999",
+    workspaceId: 1,
+    campaignId: 17,
+    channel: "email",
+    version: 2,
+    action: "ROLLBACK",
+    championVariantKey:
+      messagePolicyRelease.previousChampionVariantKey,
+    previousChampionVariantKey:
+      messagePolicyRelease.championVariantKey,
+    sourceCandidate: null,
+    rollbackOfReleaseId: messagePolicyRelease.releaseId,
+    reason: "Synthetic reversible-release proof.",
+    appliedBy: "synthetic_full_operator",
+    appliedAt: "2026-07-30T16:19:45.000Z",
+    attestations: {
+      currentPolicyReviewed: true,
+      rollbackTargetReviewed: true,
+      futureExperimentsOnly: true,
+      noContactOrSpendAuthorized: true,
+    },
+    controls: {
+      nextExperimentControlOnly: true,
+      existingJobsChanged: false,
+      contactAuthorized: false,
+      executionAuthorized: false,
+      spendAuthorized: false,
+    },
+  });
+  assert.equal(
+    messagePolicyRollback.championVariantKey,
+    messageExperiment.controlVariantKey
+  );
+  const offProtocolAssignment =
+    buildProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      prospectId: 23,
+      actualVariantKey:
+        messageAssignment.assignedVariantKey ===
+        messageExperiment.controlVariantKey
+          ? messageExperiment.challengerVariantKey
+          : messageExperiment.controlVariantKey,
+    });
+  assert.equal(
+    verifyProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      assignment: offProtocolAssignment,
+    }),
+    true
+  );
+  assert.equal(offProtocolAssignment.protocolCompliant, false);
+  assert.equal(
+    verifyProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      assignment: {
+        ...messageAssignment,
+        assignmentHash: "0".repeat(64),
+      },
+    }),
+    false
+  );
+
+  const acquisitionObservations = [
+    ...observationsForCategory("plumbing", 6),
+    ...observationsForCategory("hvac", 1),
+    {
+      prospectId: "plumbing-1",
+      category: "plumbing",
+      city: "Reno",
+      state: "NV",
+      channel: "call" as const,
+      outcome: "qualified" as const,
+      occurredAt: "2026-07-02T10:00:00.000Z",
+    },
+  ];
+  const acquisitionScorecard =
+    velvetLearning.buildAcquisitionSegmentScorecard(
+      acquisitionObservations,
+      "category"
+    );
+  const plumbingAcquisitionScore = acquisitionScorecard.find(
+    (score) => score.value === "plumbing"
+  );
+  assert.equal(plumbingAcquisitionScore?.sampleSize, 10);
+  assert.equal(plumbingAcquisitionScore?.eventCount, 11);
+  assert.equal(plumbingAcquisitionScore?.positive, 6);
+  const acquisitionCandidate =
+    velvetLearning.evaluateAcquisitionLearningCandidate({
+      observations: acquisitionObservations,
+      dimension: "category",
+      value: "plumbing",
+    });
+  assert.equal(acquisitionCandidate.ready, true);
+  assert.equal("policyChanged" in acquisitionCandidate, false);
+
+  if (!acquisitionCandidate.ready) {
+    throw new Error("Synthetic acquisition candidate was not ready.");
+  }
+  const releasedSourcingCandidate =
+    velvetLeadBatch.parseApprovedSourcingCandidate({
+      id: 71,
+      candidateKey: "category:plumbing",
+      version: 1,
+      proposal: JSON.stringify(acquisitionCandidate.proposal),
+      policyReleaseId: "6356e39c-217c-43a5-8058-9262837aeb97",
+      policyReleaseReceiptHash: "f".repeat(64),
+    });
+  assert.ok(releasedSourcingCandidate);
+  const smirkLeadSourceRequest = buildVelvetLeadSourceRequest({
+    requestId:
+      "smirk-source-22222222-2222-4222-8222-222222222222",
+    workspaceId: 1,
+    criteria: {
+      limit: 12,
+      learningMode: "latest_released",
+    },
+  });
+  const velvetLeadSourceRequest =
+    velvetLeadBatch.smirkLeadBatchRequestSchema.parse(
+      smirkLeadSourceRequest
+    );
+  assert.equal(
+    velvetLeadBatch.SMIRK_LEAD_BATCH_REQUEST_CONTRACT,
+    smirkLeadSourceRequest.contractVersion
+  );
+  assert.equal(
+    velvetLeadBatch.hashSmirkLeadBatchValue(
+      velvetLeadSourceRequest
+    ),
+    hashVelvetLeadSourceValue(smirkLeadSourceRequest)
+  );
+  const learnedFilters = velvetLeadBatch.sourcingFiltersForRequest(
+    velvetLeadSourceRequest,
+    releasedSourcingCandidate
+  );
+  assert.deepEqual(learnedFilters, {
+    category: "plumbing",
+    limit: 12,
+  });
+  const sourcedProspect = velvetResearch.buildSmirkResearchPayload(
+    lead,
+    1,
+    null,
+    {
+      externalId: smirkLeadSourceRequest.requestId,
+      name: "Velvet learned segment: plumbing",
+      targetIndustry: learnedFilters.category,
+    }
+  );
+  const sourcedProspects = [sourcedProspect];
+  const leadSourceResponse = {
+    ok: true,
+    contractVersion:
+      velvetLeadBatch.SMIRK_LEAD_BATCH_RESPONSE_CONTRACT,
+    state: "EXPORTED",
+    originalState: "EXPORTED",
+    requestId: smirkLeadSourceRequest.requestId,
+    requestPayloadHash: hashVelvetLeadSourceValue(
+      smirkLeadSourceRequest
+    ),
+    batchId: 91,
+    prospectsHash:
+      velvetLeadBatch.hashSmirkLeadBatchValue(sourcedProspects),
+    prospects: sourcedProspects,
+    appliedLearningCandidate: releasedSourcingCandidate,
+    contactActionAllowed: false,
+    spendAuthorized: false,
+    externalAction: "research_export_only",
+  };
+  velvetLeadBatch.smirkLeadBatchResponseSchema.parse(
+    leadSourceResponse
+  );
+  const acceptedLeadSourceResponse =
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body: leadSourceResponse,
+      request: smirkLeadSourceRequest,
+    });
+  assert.equal(acceptedLeadSourceResponse.success, true);
+  assert.equal(leadSourceResponse.contactActionAllowed, false);
+  assert.equal(leadSourceResponse.spendAuthorized, false);
+
+  const sourceExperimentDefinition =
+    velvetSourcingExperiment.buildAcquisitionSourcingExperimentDefinition({
+      experimentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      workspaceId: 1,
+      dimension: "category",
+      control: {
+        label: "Reno plumbing",
+        criteria: {
+          category: "plumbing",
+          city: "Reno",
+          state: "NV",
+        },
+      },
+      challenger: {
+        label: "Reno HVAC",
+        criteria: {
+          category: "hvac",
+          city: "Reno",
+          state: "NV",
+        },
+      },
+      requestsPerArm: 1,
+      leadsPerRequest: 10,
+      preparedAt: new Date(SYNTHETIC_PREPARED_AT),
+    });
+  const sourceExperimentDefinitionHash =
+    velvetSourcingExperiment.hashAcquisitionSourcingValue(
+      sourceExperimentDefinition
+    );
+  const sourceExperimentBinding =
+    velvetSourcingExperiment.acquisitionSourcingExperimentBindingSchema.parse({
+      contractVersion:
+        velvetSourcingExperiment.ACQUISITION_SOURCING_BINDING_CONTRACT,
+      experimentId: sourceExperimentDefinition.experimentId,
+      definitionHash: sourceExperimentDefinitionHash,
+    });
+  const sourceExperimentActiveResponse = {
+    ok: true,
+    contractVersion:
+      velvetSourcingExperiment.ACQUISITION_SOURCING_ACTIVE_RESPONSE_CONTRACT,
+    state: "ACTIVE",
+    workspaceId: 1,
+    experiment: {
+      binding: sourceExperimentBinding,
+      dimension: sourceExperimentDefinition.dimension,
+      arms: sourceExperimentDefinition.arms,
+      requestsPerArm: sourceExperimentDefinition.requestsPerArm,
+      leadsPerRequest: sourceExperimentDefinition.leadsPerRequest,
+      totalRequestSlots: sourceExperimentDefinition.totalRequestSlots,
+      assignedRequests: 0,
+    },
+    contactActionAllowed: false,
+    spendAuthorized: false,
+    policyChanged: false,
+    externalAction: "experiment_status_only",
+  } as const;
+  velvetSourcingExperiment.acquisitionSourcingActiveResponseSchema.parse(
+    sourceExperimentActiveResponse
+  );
+  velvetAcquisitionSourcingActiveResponseSchema.parse(
+    sourceExperimentActiveResponse
+  );
+
+  const sourceExperimentRuns =
+    sourceExperimentDefinition.assignmentSchedule.map(
+      (slot: { slotOrdinal: number; arm: "control" | "challenger" }) => {
+        const requestId =
+          `smirk-source-experiment-${slot.slotOrdinal}-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+        const velvetAssignment =
+          velvetSourcingExperiment.buildAcquisitionSourcingExperimentAssignment({
+            definition: sourceExperimentDefinition,
+            definitionHash: sourceExperimentDefinitionHash,
+            requestId,
+            slotOrdinal: slot.slotOrdinal,
+          });
+        const smirkAssignment =
+          velvetAcquisitionSourcingAssignmentSchema.parse(velvetAssignment);
+        assert.equal(
+          velvetSourcingExperiment.hashAcquisitionSourcingValue(
+            velvetAssignment
+          ),
+          hashVelvetAcquisitionSourcingValue(smirkAssignment)
+        );
+        assert.deepEqual(
+          velvetSourcingExperiment.buildAcquisitionSourcingExperimentAssignment({
+            definition: sourceExperimentDefinition,
+            definitionHash: sourceExperimentDefinitionHash,
+            requestId,
+            slotOrdinal: slot.slotOrdinal,
+          }),
+          velvetAssignment
+        );
+        assert.throws(() =>
+          velvetAcquisitionSourcingAssignmentSchema.parse({
+            ...smirkAssignment,
+            arm:
+              smirkAssignment.arm === "control"
+                ? "challenger"
+                : "control",
+          })
+        );
+        assert.throws(() =>
+          velvetSourcingExperiment.verifyAcquisitionSourcingExperimentAssignment({
+            definition: sourceExperimentDefinition,
+            definitionHash: sourceExperimentDefinitionHash,
+            assignment: {
+              ...velvetAssignment,
+              arm:
+                velvetAssignment.arm === "control"
+                  ? "challenger"
+                  : "control",
+            },
+          })
+        );
+
+        const smirkRequest = buildVelvetDiscoveryRequest({
+          requestId,
+          workspaceId: 1,
+          criteria: {
+            limit: sourceExperimentDefinition.leadsPerRequest,
+            learningMode: "experiment",
+          },
+          acquisitionExperiment: sourceExperimentBinding,
+        });
+        const velvetRequest =
+          velvetDiscovery.smirkDiscoveryRequestSchema.parse(smirkRequest);
+        assert.equal(
+          assignmentMatchesVelvetRequest({
+            assignment: smirkAssignment,
+            binding: smirkRequest.acquisitionExperiment,
+            requestId: smirkRequest.requestId,
+          }),
+          true
+        );
+        const effectiveCriteria =
+          velvetDiscovery.buildSmirkDiscoveryEffectiveCriteria({
+            request: velvetRequest,
+            candidate: null,
+            experimentAssignment: velvetAssignment,
+          });
+        assert.deepEqual(
+          effectiveCriteria,
+          velvetAssignment.effectiveCriteria
+        );
+        const quote = velvetDiscovery.buildSmirkDiscoveryQuote(
+          effectiveCriteria,
+          {
+            ENABLE_MAPS_RESEARCH: "true",
+            MAPS_COST_CENTS_PER_REQUEST: "1",
+            ENABLE_HUNTER_OWNER_ENRICHMENT: "true",
+            HUNTER_API_KEY: "synthetic-hunter-key",
+            HUNTER_COST_CENTS_PER_CREDIT: "1",
+          },
+          SYNTHETIC_NOW
+        );
+        const requestPayloadHash =
+          hashVelvetDiscoveryValue(smirkRequest);
+        assert.equal(
+          requestPayloadHash,
+          velvetDiscovery.hashSmirkDiscoveryValue(velvetRequest)
+        );
+        const quotePayloadHash =
+          velvetDiscovery.hashSmirkDiscoveryValue(quote);
+        const preparedResponse = {
+          ok: true,
+          contractVersion:
+            velvetDiscovery.SMIRK_DISCOVERY_RESPONSE_CONTRACT,
+          state: "PREPARED",
+          originalState: "PREPARED",
+          currentState: "PREPARED",
+          requestId,
+          requestPayloadHash,
+          quotePayloadHash,
+          discoveryId: 200 + slot.slotOrdinal,
+          effectiveCriteria,
+          appliedLearningCandidate: null,
+          acquisitionExperimentAssignment: velvetAssignment,
+          quote,
+          approvalRequired: true,
+          executionStarted: false,
+          contactActionAllowed: false,
+          spendAuthorized: false,
+          externalAction: "discovery_approval_required",
+        } as const;
+        velvetDiscovery.smirkDiscoveryPreparedResponseSchema.parse(
+          preparedResponse
+        );
+        velvetDiscoveryPreparedResponseSchema.parse(preparedResponse);
+
+        const statusResponse = {
+          ok: true,
+          contractVersion:
+            velvetDiscovery.SMIRK_DISCOVERY_STATUS_CONTRACT,
+          requestId,
+          requestPayloadHash,
+          quotePayloadHash,
+          discoveryId: preparedResponse.discoveryId,
+          state: "COMPLETED",
+          effectiveCriteria,
+          appliedLearningCandidate: null,
+          acquisitionExperimentAssignment: velvetAssignment,
+          quote,
+          createdLeadCount: 10,
+          readyLeadCount: 10,
+          skippedLeadCount: 0,
+          failedLeadCount: 0,
+          providerRequests: quote.maximumRequests,
+          approvedMaxSpendCents: quote.maximumCostCents,
+          error: null,
+          contactActionAllowed: false,
+          externalAction: "discovery_status_only",
+        } as const;
+        velvetDiscovery.smirkDiscoveryStatusResponseSchema.parse(
+          statusResponse
+        );
+        assert.equal(
+          validateVelvetDiscoveryStatus({
+            body: statusResponse,
+            request: smirkRequest,
+          }).success,
+          true
+        );
+
+        const sourceAssignmentBinding =
+          buildVelvetAcquisitionSourcingAssignmentBinding(smirkAssignment);
+        assert.deepEqual(
+          sourceAssignmentBinding,
+          velvetSourcingExperiment.buildAcquisitionSourcingExperimentAssignmentBinding(
+            velvetAssignment
+          )
+        );
+        assert.equal(
+          assignmentMatchesVelvetSourceBinding({
+            assignment: smirkAssignment,
+            binding: sourceAssignmentBinding,
+          }),
+          true
+        );
+        assert.equal(
+          velvetSourcingExperiment.assignmentMatchesSourceBinding({
+            assignment: velvetAssignment,
+            binding: sourceAssignmentBinding,
+          }),
+          true
+        );
+
+        const sourceRequest = buildVelvetLeadSourceRequest({
+          requestId:
+            `smirk-source-experiment-pull-${slot.slotOrdinal}-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
+          workspaceId: 1,
+          sourceDiscoveryRequestId: requestId,
+          sourceAcquisitionExperimentAssignment:
+            sourceAssignmentBinding,
+          criteria: {
+            limit: 10,
+            category: effectiveCriteria.category,
+            city: effectiveCriteria.city,
+            state: effectiveCriteria.state,
+            learningMode: "none",
+          },
+        });
+        const velvetSourceRequest =
+          velvetLeadBatch.smirkLeadBatchRequestSchema.parse(sourceRequest);
+        const readyLeadIds = Array.from(
+          { length: 10 },
+          (_, index) => slot.slotOrdinal * 100 + index + 1
+        );
+        const prospects = readyLeadIds.map((leadId) =>
+          velvetResearch.buildSmirkResearchPayload(
+            {
+              ...lead,
+              id: leadId,
+              companyName:
+                `Synthetic ${velvetAssignment.arm} source ${leadId}`,
+              websiteUrl:
+                `https://example.com/source-${leadId}`,
+              verifiedOwnerEmail:
+                `source-${leadId}@example.com`,
+            },
+            1,
+            null,
+            {
+              externalId: sourceRequest.requestId,
+              name:
+                `Velvet source experiment: ${effectiveCriteria.category}`,
+              targetIndustry: effectiveCriteria.category,
+              targetLocation:
+                `${effectiveCriteria.city}, ${effectiveCriteria.state}`,
+            }
+          )
+        );
+        const sourceResponse = {
+          ok: true,
+          contractVersion:
+            velvetLeadBatch.SMIRK_LEAD_BATCH_RESPONSE_CONTRACT,
+          state: "EXPORTED",
+          originalState: "EXPORTED",
+          requestId: sourceRequest.requestId,
+          requestPayloadHash:
+            hashVelvetLeadSourceValue(sourceRequest),
+          batchId: 300 + slot.slotOrdinal,
+          prospectsHash:
+            velvetLeadBatch.hashSmirkLeadBatchValue(prospects),
+          prospects,
+          appliedLearningCandidate: null,
+          acquisitionExperimentAssignment: velvetAssignment,
+          sourceDiscoveryRequestId: requestId,
+          contactActionAllowed: false,
+          spendAuthorized: false,
+          externalAction: "research_export_only",
+        } as const;
+        velvetLeadBatch.smirkLeadBatchResponseSchema.parse(sourceResponse);
+        assert.equal(
+          validateVelvetLeadSourceResponse({
+            httpStatus: 201,
+            body: sourceResponse,
+            request: sourceRequest,
+          }).success,
+          true
+        );
+        assert.equal(
+          validateVelvetLeadSourceResponse({
+            httpStatus: 201,
+            body: {
+              ...sourceResponse,
+              acquisitionExperimentAssignment: {
+                ...sourceResponse.acquisitionExperimentAssignment,
+                assignmentHash: "f".repeat(64),
+              },
+            },
+            request: sourceRequest,
+          }).success,
+          false
+        );
+        assert.equal(
+          velvetLeadBatch.hashSmirkLeadBatchValue(velvetSourceRequest),
+          hashVelvetLeadSourceValue(sourceRequest)
+        );
+
+        return {
+          assignment: velvetAssignment,
+          discoveryState: "COMPLETED" as const,
+          readyLeadIds,
+          sourceRequest,
+          sourceResponse,
+        };
+      }
+    );
+  const sourceExperimentObservations = sourceExperimentRuns.flatMap(
+    (run: (typeof sourceExperimentRuns)[number]) =>
+      run.readyLeadIds.map((leadId: number, index: number) => ({
+        prospectId: String(leadId),
+        category: run.assignment.effectiveCriteria.category,
+        city: run.assignment.effectiveCriteria.city,
+        state: run.assignment.effectiveCriteria.state,
+        channel: "email" as const,
+        outcome:
+          run.assignment.arm === "challenger"
+            ? ("replied" as const)
+            : ("delivered" as const),
+        occurredAt: new Date(
+          Date.UTC(2026, 6, 3, 9, index)
+        ).toISOString(),
+      }))
+  );
+  const incompleteSourceExperiment =
+    velvetSourcingExperiment.evaluateAcquisitionSourcingExperiment({
+      definition: sourceExperimentDefinition,
+      definitionHash: sourceExperimentDefinitionHash,
+      runs: sourceExperimentRuns,
+      observations: sourceExperimentObservations.slice(0, -1),
+    });
+  assert.equal(incompleteSourceExperiment.status, "INCOMPLETE");
+  assert.equal(
+    incompleteSourceExperiment.code,
+    "OUTCOME_COVERAGE_INCOMPLETE"
+  );
+  const attritedSourceExperiment =
+    velvetSourcingExperiment.evaluateAcquisitionSourcingExperiment({
+      definition: sourceExperimentDefinition,
+      definitionHash: sourceExperimentDefinitionHash,
+      runs: sourceExperimentRuns.map(
+        (run: (typeof sourceExperimentRuns)[number], index: number) => ({
+          ...run,
+          discoveryState:
+            index === 0 ? ("CANCELLED" as const) : run.discoveryState,
+        })
+      ),
+      observations: sourceExperimentObservations,
+    });
+  assert.equal(attritedSourceExperiment.status, "INCOMPLETE");
+  assert.equal(attritedSourceExperiment.code, "PROTOCOL_ATTRITION");
+  const completedSourceExperiment =
+    velvetSourcingExperiment.evaluateAcquisitionSourcingExperiment({
+      definition: sourceExperimentDefinition,
+      definitionHash: sourceExperimentDefinitionHash,
+      runs: sourceExperimentRuns,
+      observations: sourceExperimentObservations,
+    });
+  assert.equal(completedSourceExperiment.status, "RECOMMENDATION_READY");
+  assert.equal(completedSourceExperiment.code, "READY");
+  assert.equal(completedSourceExperiment.winner, "challenger");
+  assert.equal(completedSourceExperiment.proposal?.value, "hvac");
+  assert.equal("policyChanged" in completedSourceExperiment, false);
+  const sourceExperimentLearningSnapshot =
+    velvetSourcingExperiment.buildAcquisitionLearningSnapshotFromSourcingExperiment(
+      {
+        definition: sourceExperimentDefinition,
+        definitionHash: sourceExperimentDefinitionHash,
+        evaluation: completedSourceExperiment,
+      }
+    );
+  assert.equal(sourceExperimentLearningSnapshot.sampleSize, 20);
+  assert.equal(
+    sourceExperimentLearningSnapshot.evidence.studyDesign,
+    "deterministic-balanced-source-allocation-v1"
+  );
+  assert.equal("policyChanged" in sourceExperimentLearningSnapshot, false);
+
+  const smirkDiscoveryRequest = buildVelvetDiscoveryRequest({
+    requestId:
+      "smirk-discovery-33333333-3333-4333-8333-333333333333",
+    workspaceId: 1,
+    criteria: {
+      limit: 5,
+      category: "plumbing",
+      city: "Reno",
+      state: "NV",
+      learningMode: "none",
+    },
+  });
+  const velvetDiscoveryRequest =
+    velvetDiscovery.smirkDiscoveryRequestSchema.parse(
+      smirkDiscoveryRequest
+    );
+  const smirkDiscoveryRequestHash =
+    hashVelvetDiscoveryValue(smirkDiscoveryRequest);
+  const velvetDiscoveryRequestHash =
+    velvetDiscovery.hashSmirkDiscoveryValue(
+      velvetDiscoveryRequest
+    );
+  assert.equal(
+    velvetDiscovery.SMIRK_DISCOVERY_REQUEST_CONTRACT,
+    smirkDiscoveryRequest.contractVersion
+  );
+  assert.equal(
+    smirkDiscoveryRequestHash,
+    velvetDiscoveryRequestHash
+  );
+  assert.equal(smirkDiscoveryRequest.contactActionAllowed, false);
+  assert.equal(smirkDiscoveryRequest.spendAuthorized, false);
+
+  const effectiveDiscoveryCriteria =
+    velvetDiscovery.buildSmirkDiscoveryEffectiveCriteria({
+      request: velvetDiscoveryRequest,
+      candidate: null,
+    });
+  const discoveryQuote =
+    velvetDiscovery.buildSmirkDiscoveryQuote(
+      effectiveDiscoveryCriteria,
+      {
+        ENABLE_MAPS_RESEARCH: "true",
+        MAPS_COST_CENTS_PER_REQUEST: "2",
+        ENABLE_HUNTER_OWNER_ENRICHMENT: "true",
+        HUNTER_API_KEY: "synthetic-hunter-key",
+        HUNTER_COST_CENTS_PER_CREDIT: "3",
+      },
+      SYNTHETIC_NOW
+    );
+  assert.deepEqual(effectiveDiscoveryCriteria, {
+    limit: 5,
+    category: "plumbing",
+    city: "Reno",
+    state: "NV",
+  });
+  assert.equal(discoveryQuote.maximumRequests, 11);
+  assert.equal(discoveryQuote.maximumCostCents, 27);
+  let discoveryProviderCounts = {
+    maps: 0,
+    ownerEmailEnrichment: 0,
+  };
+  for (let index = 0; index < 6; index += 1) {
+    discoveryProviderCounts =
+      velvetDiscovery.nextSmirkDiscoveryProviderRequestCounts({
+        quote: discoveryQuote,
+        approvedMaxSpendCents: discoveryQuote.maximumCostCents,
+        provider: "maps",
+        current: discoveryProviderCounts,
+      });
+  }
+  for (let index = 0; index < 5; index += 1) {
+    discoveryProviderCounts =
+      velvetDiscovery.nextSmirkDiscoveryProviderRequestCounts({
+        quote: discoveryQuote,
+        approvedMaxSpendCents: discoveryQuote.maximumCostCents,
+        provider: "ownerEmailEnrichment",
+        current: discoveryProviderCounts,
+      });
+  }
+  assert.deepEqual(discoveryProviderCounts, {
+    maps: 6,
+    ownerEmailEnrichment: 5,
+  });
+  assert.throws(() =>
+    velvetDiscovery.nextSmirkDiscoveryProviderRequestCounts({
+      quote: discoveryQuote,
+      approvedMaxSpendCents:
+        discoveryQuote.maximumCostCents + 1,
+      provider: "maps",
+      current: { maps: 0, ownerEmailEnrichment: 0 },
+    })
+  );
+
+  const discoveryQuoteHash =
+    velvetDiscovery.hashSmirkDiscoveryValue(discoveryQuote);
+  const discoveryPreparedResponse = {
+    ok: true,
+    contractVersion:
+      velvetDiscovery.SMIRK_DISCOVERY_RESPONSE_CONTRACT,
+    state: "PREPARED",
+    originalState: "PREPARED",
+    currentState: "PREPARED",
+    requestId: smirkDiscoveryRequest.requestId,
+    requestPayloadHash: smirkDiscoveryRequestHash,
+    quotePayloadHash: discoveryQuoteHash,
+    discoveryId: 101,
+    effectiveCriteria: effectiveDiscoveryCriteria,
+    appliedLearningCandidate: null,
+    quote: discoveryQuote,
+    approvalRequired: true,
+    executionStarted: false,
+    contactActionAllowed: false,
+    spendAuthorized: false,
+    externalAction: "discovery_approval_required",
+  } as const;
+  velvetDiscovery.smirkDiscoveryPreparedResponseSchema.parse(
+    discoveryPreparedResponse
+  );
+  velvetDiscoveryPreparedResponseSchema.parse(
+    discoveryPreparedResponse
+  );
+
+  const discoveryStatusResponse = {
+    ok: true,
+    contractVersion:
+      velvetDiscovery.SMIRK_DISCOVERY_STATUS_CONTRACT,
+    requestId: smirkDiscoveryRequest.requestId,
+    requestPayloadHash: smirkDiscoveryRequestHash,
+    quotePayloadHash: discoveryQuoteHash,
+    discoveryId: 101,
+    state: "COMPLETED",
+    effectiveCriteria: effectiveDiscoveryCriteria,
+    appliedLearningCandidate: null,
+    quote: discoveryQuote,
+    createdLeadCount: 5,
+    readyLeadCount: 4,
+    skippedLeadCount: 1,
+    failedLeadCount: 0,
+    providerRequests: discoveryQuote.maximumRequests,
+    approvedMaxSpendCents: discoveryQuote.maximumCostCents,
+    error: null,
+    contactActionAllowed: false,
+    externalAction: "discovery_status_only",
+  } as const;
+  velvetDiscovery.smirkDiscoveryStatusResponseSchema.parse(
+    discoveryStatusResponse
+  );
+  const acceptedDiscoveryStatus =
+    validateVelvetDiscoveryStatus({
+      body: discoveryStatusResponse,
+      request: smirkDiscoveryRequest,
+    });
+  assert.equal(acceptedDiscoveryStatus.success, true);
+
+  const discoveryBoundSourceRequest =
+    buildVelvetLeadSourceRequest({
+      requestId:
+        "smirk-source-44444444-4444-4444-8444-444444444444",
+      workspaceId: 1,
+      sourceDiscoveryRequestId:
+        smirkDiscoveryRequest.requestId,
+      criteria: {
+        limit: discoveryStatusResponse.readyLeadCount,
+        category: effectiveDiscoveryCriteria.category,
+        city: effectiveDiscoveryCriteria.city,
+        state: effectiveDiscoveryCriteria.state,
+        learningMode: "none",
+      },
+    });
+  const velvetDiscoveryBoundSourceRequest =
+    velvetLeadBatch.smirkLeadBatchRequestSchema.parse(
+      discoveryBoundSourceRequest
+    );
+  assert.equal(
+    velvetDiscoveryBoundSourceRequest.sourceDiscoveryRequestId,
+    smirkDiscoveryRequest.requestId
+  );
+  assert.equal(
+    velvetLeadBatch.hashSmirkLeadBatchValue(
+      velvetDiscoveryBoundSourceRequest
+    ),
+    hashVelvetLeadSourceValue(discoveryBoundSourceRequest)
+  );
+  const discoveryBoundProspect =
+    velvetResearch.buildSmirkResearchPayload(
+      lead,
+      1,
+      null,
+      {
+        externalId: discoveryBoundSourceRequest.requestId,
+        name: "Velvet discovery: plumbing / Reno, NV",
+        targetIndustry: "plumbing",
+        targetLocation: "Reno, NV",
+      }
+    );
+  const discoveryBoundProspects = [discoveryBoundProspect];
+  const discoveryBoundSourceResponse = {
+    ok: true,
+    contractVersion:
+      velvetLeadBatch.SMIRK_LEAD_BATCH_RESPONSE_CONTRACT,
+    state: "EXPORTED",
+    originalState: "EXPORTED",
+    requestId: discoveryBoundSourceRequest.requestId,
+    requestPayloadHash: hashVelvetLeadSourceValue(
+      discoveryBoundSourceRequest
+    ),
+    batchId: 102,
+    prospectsHash:
+      velvetLeadBatch.hashSmirkLeadBatchValue(
+        discoveryBoundProspects
+      ),
+    prospects: discoveryBoundProspects,
+    appliedLearningCandidate: null,
+    sourceDiscoveryRequestId:
+      smirkDiscoveryRequest.requestId,
+    contactActionAllowed: false,
+    spendAuthorized: false,
+    externalAction: "research_export_only",
+  } as const;
+  velvetLeadBatch.smirkLeadBatchResponseSchema.parse(
+    discoveryBoundSourceResponse
+  );
+  const acceptedDiscoveryBoundSourceResponse =
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body: discoveryBoundSourceResponse,
+      request: discoveryBoundSourceRequest,
+    });
+  assert.equal(
+    acceptedDiscoveryBoundSourceResponse.success,
+    true
+  );
+  const changedDiscoveryProvenance =
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body: {
+        ...discoveryBoundSourceResponse,
+        sourceDiscoveryRequestId:
+          "smirk-discovery-99999999-9999-4999-8999-999999999999",
+      },
+      request: discoveryBoundSourceRequest,
+    });
+  assert.equal(changedDiscoveryProvenance.success, false);
+  assert.equal(networkAttempts, 0);
+
+  const report = {
+    ok: true,
+    mode: "synthetic-local-no-network",
+    sourcePair: {
+      smirk: smirkGit,
+      velvet: velvetGit,
+    },
+    research: {
+      contractVersion: smirkResearchPayload.contractVersion,
+      externalProspectId: smirkResearchPayload.externalId,
+      payloadHashAgreement: true,
+      stableReplayHash: true,
+      changedPayloadHashDetected: true,
+      importedReceiptAccepted: true,
+      duplicateReceiptAccepted: true,
+      contactProvenance: {
+        email: smirkResearchPayload.prospect.emailVerification,
+        phone: smirkResearchPayload.prospect.phoneContactMode,
+      },
+      externalAction: "none",
+    },
+    sourcing: {
+      requestContract: smirkLeadSourceRequest.contractVersion,
+      responseContract: leadSourceResponse.contractVersion,
+      requestHashAgreement: true,
+      responseHashAgreement: true,
+      maximumRequested: smirkLeadSourceRequest.criteria.limit,
+      appliedLearningCandidate: {
+        id: releasedSourcingCandidate.id,
+        policyReleaseId: releasedSourcingCandidate.policyReleaseId,
+        policyReleaseReceiptHash:
+          releasedSourcingCandidate.policyReleaseReceiptHash,
+        dimension:
+          releasedSourcingCandidate.proposal.dimension,
+        value: releasedSourcingCandidate.proposal.value,
+      },
+      learnedFilters,
+      exportedProspects: sourcedProspects.length,
+      contactActionAllowed: false,
+      spendAuthorized: false,
+      externalAction: "research_export_only",
+    },
+    frozenSourcingExperiment: {
+      studyDesign: sourceExperimentDefinition.studyDesign,
+      experimentId: sourceExperimentDefinition.experimentId,
+      definitionHash: sourceExperimentDefinitionHash,
+      activeResponseCrossParsed: true,
+      exactBalancedAssignments: {
+        total: sourceExperimentRuns.length,
+        control: sourceExperimentRuns.filter(
+          (run: (typeof sourceExperimentRuns)[number]) =>
+            run.assignment.arm === "control"
+        ).length,
+        challenger: sourceExperimentRuns.filter(
+          (run: (typeof sourceExperimentRuns)[number]) =>
+            run.assignment.arm === "challenger"
+        ).length,
+        replayStable: true,
+        tamperedAssignmentRejected: true,
+      },
+      reviewedPulls: {
+        assignmentBindingPreserved: sourceExperimentRuns.every(
+          (run: (typeof sourceExperimentRuns)[number]) =>
+            run.sourceResponse.acquisitionExperimentAssignment
+              .assignmentHash === run.assignment.assignmentHash &&
+            run.sourceResponse.sourceDiscoveryRequestId ===
+              run.assignment.requestId
+        ),
+        importedProspects: sourceExperimentRuns.reduce(
+          (
+            total: number,
+            run: (typeof sourceExperimentRuns)[number]
+          ) => total + run.sourceResponse.prospects.length,
+          0
+        ),
+        changedBindingRejected: true,
+      },
+      coverageGate: {
+        incompleteStatus: incompleteSourceExperiment.status,
+        incompleteCode: incompleteSourceExperiment.code,
+        attritionStatus: attritedSourceExperiment.status,
+        attritionCode: attritedSourceExperiment.code,
+        measuredProspects:
+          completedSourceExperiment.coverage.measuredLeads,
+      },
+      closedRecommendation: {
+        status: completedSourceExperiment.status,
+        code: completedSourceExperiment.code,
+        winner: completedSourceExperiment.winner,
+        proposal: completedSourceExperiment.proposal,
+        resultHash: completedSourceExperiment.resultHash,
+        learningStudyDesign:
+          sourceExperimentLearningSnapshot.evidence.studyDesign,
+        sampleSize: sourceExperimentLearningSnapshot.sampleSize,
+        candidateCreated: false,
+        policyChanged: false,
+      },
+      contactActionAllowed: false,
+      spendAuthorized: false,
+      providerExecutionAuthorized: false,
+    },
+    discovery: {
+      requestContract: smirkDiscoveryRequest.contractVersion,
+      preparedContract:
+        discoveryPreparedResponse.contractVersion,
+      statusContract: discoveryStatusResponse.contractVersion,
+      requestHashAgreement:
+        smirkDiscoveryRequestHash ===
+        velvetDiscoveryRequestHash,
+      quoteHashAgreement: true,
+      maximumLeads: smirkDiscoveryRequest.criteria.limit,
+      maximumProviderRequests:
+        discoveryQuote.maximumRequests,
+      quotedMaximumCostCents:
+        discoveryQuote.maximumCostCents,
+      quotedProviders: {
+        maps: {
+          maximumRequests:
+            discoveryQuote.providers.maps.maximumRequests,
+          maximumCostCents:
+            discoveryQuote.providers.maps.maximumCostCents,
+        },
+        ownerEmailEnrichment: {
+          maximumRequests:
+            discoveryQuote.providers.ownerEmailEnrichment.maximumRequests,
+          maximumCostCents:
+            discoveryQuote.providers.ownerEmailEnrichment.maximumCostCents,
+        },
+      },
+      exactSpendCapAccepted: true,
+      changedSpendCapRejected: true,
+      completedReadyLeads:
+        discoveryStatusResponse.readyLeadCount,
+      reviewedPullBoundToDiscovery:
+        discoveryBoundSourceResponse.sourceDiscoveryRequestId ===
+        smirkDiscoveryRequest.requestId,
+      changedDiscoveryProvenanceRejected:
+        changedDiscoveryProvenance.success === false,
+      contactActionAllowed: false,
+      requestSpendAuthorized: false,
+      providerApprovalRequired: true,
+      importApprovalStillRequired: true,
+      externalAction:
+        discoveryPreparedResponse.externalAction,
+    },
+    outreach: {
+      email: {
+        syntheticStateProof: [
+          "PREPARED",
+          "APPROVED",
+          "SENDING",
+          "SENT",
+        ],
+        payloadHash: emailPayloadHash,
+        evidenceHash,
+        recipientSpecific: true,
+        providerExecution: "operator-triggered-single-recipient",
+        qc: {
+          contractVersion: emailPayload.qcReceipt.contractVersion,
+          receiptId: emailPayload.qcReceipt.receiptId,
+          verdict: emailPayload.qcReceipt.verdict,
+          modelStatus: emailPayload.qcReceipt.modelReview.status,
+          humanApprovalRequired:
+            emailPayload.qcReceipt.humanApprovalRequired,
+          contactAuthorized: emailPayload.qcReceipt.contactAuthorized,
+          executionAuthorized:
+            emailPayload.qcReceipt.executionAuthorized,
+        },
+      },
+      call: {
+        syntheticStateProof: ["PREPARED", "APPROVED", "SENT"],
+        payloadHash: callPayloadHash,
+        execution: "manual-dial-only",
+        exactManualReplayAccepted: true,
+        changedManualReplayRejected: true,
+        complianceReceipt: {
+          contractVersion:
+            callCompliance.receipt.contractVersion,
+          receiptHash: callCompliance.receiptHash,
+          dncScopes:
+            callCompliance.receipt.dncChecks.map(check => check.scope),
+          recipientTimezone:
+            callCompliance.receipt.recipientTimezone,
+          permittedLocalWindow: "09:00-17:00",
+          executionLocalTime: callComplianceExecution.localTime,
+          contactAuthorized: false,
+        },
+        automatedDialing: false,
+        providerExecution: "disabled",
+        qc: {
+          contractVersion: callPayload.qcReceipt.contractVersion,
+          receiptId: callPayload.qcReceipt.receiptId,
+          verdict: callPayload.qcReceipt.verdict,
+          modelStatus: callPayload.qcReceipt.modelReview.status,
+          humanApprovalRequired:
+            callPayload.qcReceipt.humanApprovalRequired,
+          contactAuthorized: callPayload.qcReceipt.contactAuthorized,
+          executionAuthorized:
+            callPayload.qcReceipt.executionAuthorized,
+        },
+      },
+      smsAllowed: false,
+      bulkExecution: false,
+    },
+    outcome: {
+      contractVersion: smirkOutcomePayload.contractVersion,
+      inboundReply: {
+        providerClassification: inboundClassification.kind,
+        reviewContract: inboundReview.contractVersion,
+        reviewPayloadHash: inboundReviewHash,
+        matchState: inboundReview.matchState,
+        contentContract: inboundContentReceipt.contractVersion,
+        contentReceiptHash: inboundContentReceiptHash,
+        exactPlainTextBound: true,
+        changedContentChangesReceiptHash: true,
+        resolutionContract:
+          inboundResolutionReceipt.contractVersion,
+        resolutionReceiptHash: inboundResolutionReceiptHash,
+        humanClassificationRequired: true,
+        resultingOutcome:
+          inboundResolutionReceipt.resultingOutcome,
+        contactAuthorized:
+          inboundContentReceipt.contactAuthorized,
+        sendAuthorized: inboundContentReceipt.sendAuthorized,
+      },
+      payloadHashAgreement: smirkOutcomeHash === velvetOutcomeHash,
+      signatureAgreement: smirkSignature === velvetSignature,
+      signatureVerified: true,
+      researchReceiptBound: true,
+      exactReplaySemanticsVerified: true,
+    },
+    learning: {
+      messageRegistryVersion:
+        PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+      contentBoundStrategies: {
+        email: {
+          current: currentEmailStrategy.key,
+          approved: approvedEmailStrategy.key,
+          subjectChanged: true,
+          contentChanged: true,
+          operatorEditExcludedFromRegisteredAttribution: true,
+        },
+        call: {
+          variant: manualCallStrategy.key,
+          manualDialOnlyCopy: true,
+        },
+      },
+      observationalMessageSignals: {
+        studyDesign: "observational",
+        candidateEligible: false,
+        variantScorecard,
+        offlineEvaluatorResult: variantCandidate,
+      },
+      assignedMessageExperiment: {
+        studyDesign: "deterministic-eligible-cohort-v1",
+        experimentId: messageExperiment.experimentId,
+        definitionHash:
+          hashProspectMessageExperimentDefinition(
+            messageExperiment
+          ),
+        assignmentReplayStable: true,
+        assignmentStoredInPayload:
+          emailPayload.experimentAssignment?.assignmentHash ===
+          messageAssignment.assignmentHash,
+        eligiblePopulationSize:
+          messageExperiment.eligiblePopulationSize,
+        frozenCohortSize: messageExperiment.cohortSize,
+        controlAssigned: assignedProspects.control.length,
+        challengerAssigned:
+          assignedProspects.challenger.length,
+        coverageGate: {
+          fullCohortEligible:
+            assignedCohortCoverageEvaluation.eligible,
+          assignedProspects:
+            assignedCohortCoverage.assignedProspects,
+          executedProspects:
+            assignedCohortCoverage.executedProspects,
+          measuredProspects:
+            assignedCohortCoverage.measuredProspects,
+          attritionCandidateEligible:
+            attritionCoverageEvaluation.eligible,
+          attritionCode: attritionCoverageEvaluation.code,
+        },
+        closedCohortEvaluatorResult: assignedMessageCandidate,
+        approvedWinnerRelease: {
+          releaseId: messagePolicyRelease.releaseId,
+          releaseHash: messagePolicyReleaseHash,
+          championVariantKey:
+            messagePolicyRelease.championVariantKey,
+          nextExperimentControl:
+            nextMessageExperiment.controlVariantKey,
+          receiptBoundToDefinition:
+            nextMessageExperiment.appliedPolicy?.releaseHash ===
+            messagePolicyReleaseHash,
+          rollbackReleaseId: messagePolicyRollback.releaseId,
+          rollbackChampionVariantKey:
+            messagePolicyRollback.championVariantKey,
+          existingJobsChanged: false,
+          contactAuthorized: false,
+          executionAuthorized: false,
+          spendAuthorized: false,
+        },
+        offProtocolExecutionCandidateEligible: false,
+        tamperedAssignmentRejected: true,
+      },
+      oneSamplePerExecutedJob: true,
+      acquisitionScorecard,
+      acquisitionCandidate,
+      oneSamplePerSourcedProspect: true,
+      humanReviewRequired: true,
+      candidateApprovalDoesNotApplyPolicy: true,
+      policyReleaseRequiresSeparateHumanAction: true,
+      automaticPolicyMutationAttempted: false,
+    },
+    externalActions: {
+      providerRequests: networkAttempts,
+      emailSent: false,
+      smsSent: false,
+      callPlaced: false,
+      deployment: false,
+      productionWrite: false,
+    },
+    limits: [
+      "This proves source-level contract compatibility, hashing, signatures, approval rules, replay rules, inbound provider-event classification, exact plain-text receipt binding, human reply classification, frozen eligible-population selection, exact balanced source assignment, reviewed-pull attribution, and offline candidate evaluation.",
+      "It does not prove database persistence, deployed commit parity, live provider retrieval or delivery, live credentials, or a real commercial outcome.",
+    ],
+  };
+
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+} finally {
+  globalThis.fetch = originalFetch;
+}

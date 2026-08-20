@@ -3,25 +3,29 @@ import test from "node:test";
 import type { Request, Response } from "express";
 import {
   VelvetHandoffStoreError,
+  createPostgresVelvetHandoffStore,
   createVelvetHandoffHandler,
   type VelvetHandoffStore,
 } from "../src/routes/velvet-handoff-routes.ts";
+import { velvetHandoffPayloadSchema } from "../src/velvet-handoff.ts";
 
 const configuredEnv = {
-  VELVET_ALCHEMY_HANDOFF_API_KEY: "velvet-test-token",
+  VELVET_ALCHEMY_HANDOFF_API_KEY:
+    "velvet-synthetic-handoff-test-token-0001",
+  VELVET_ALCHEMY_HANDOFF_MODE: "synthetic-fixture-only-v1",
   VELVET_ALCHEMY_WORKSPACE_ID: "42",
 };
 
 const validPayload = {
   workspaceId: 42,
-  externalId: "velvet-lead-00000001",
+  externalId: "velvet-manus-fake-00000001",
   caller: {
-    phone: "+17754204485",
+    phone: "+12025550124",
     name: "Test Caller",
   },
   companyName: "Velvet Test Co",
-  reason: "Requested a callback about a service inquiry.",
-  urgency: "normal",
+  reason: "Synthetic callback handoff integration test.",
+  urgency: "low",
 };
 
 function makeResponse() {
@@ -61,7 +65,11 @@ async function invoke(options: {
   });
   const { response, state } = makeResponse();
   await handler({
-    headers: { authorization: options.authorization ?? "Bearer velvet-test-token" },
+    headers: {
+      authorization:
+        options.authorization ??
+        "Bearer velvet-synthetic-handoff-test-token-0001",
+    },
     body: options.body ?? validPayload,
     ip: "127.0.0.1",
     requestId: "test-request",
@@ -75,7 +83,11 @@ test("fails closed when the Velvet handoff receiver is not configured", async ()
   assert.deepEqual(result.body, {
     error: "Velvet Alchemy handoff is not configured.",
     code: "VELVET_ALCHEMY_HANDOFF_NOT_CONFIGURED",
-    missing: ["VELVET_ALCHEMY_HANDOFF_API_KEY", "VELVET_ALCHEMY_WORKSPACE_ID"],
+    missing: [
+      "VELVET_ALCHEMY_HANDOFF_API_KEY",
+      "VELVET_ALCHEMY_HANDOFF_MODE",
+      "VELVET_ALCHEMY_WORKSPACE_ID",
+    ],
   });
   assert.equal(result.storeCalls, 0);
 });
@@ -92,6 +104,98 @@ test("rejects malformed callback payloads before touching storage", async () => 
   assert.equal(result.statusCode, 400);
   assert.equal((result.body as any).code, "VELVET_ALCHEMY_HANDOFF_INVALID_PAYLOAD");
   assert.equal(result.storeCalls, 0);
+});
+
+test("rejects real-shaped prospects before touching storage", async () => {
+  for (const body of [
+    {
+      ...validPayload,
+      externalId: "velvet-lead-00000001",
+    },
+    {
+      ...validPayload,
+      caller: { ...validPayload.caller, phone: "+17755550142" },
+    },
+    {
+      ...validPayload,
+      urgency: "high",
+    },
+    {
+      ...validPayload,
+      caller: {
+        ...validPayload.caller,
+        email: "owner@real-business.test.example",
+      },
+    },
+    {
+      ...validPayload,
+      companyName: "Actual Plumbing Company",
+    },
+  ]) {
+    const result = await invoke({ body });
+    assert.equal(result.statusCode, 409);
+    assert.deepEqual(result.body, {
+      error:
+        "The call-shaped Velvet handoff accepts reserved synthetic fixtures only. Use the research intake for business prospects.",
+      code: "VELVET_ALCHEMY_HANDOFF_SYNTHETIC_FIXTURE_REQUIRED",
+      externalAction: "none",
+    });
+    assert.equal(result.storeCalls, 0);
+  }
+});
+
+test("the Postgres store also rejects a real-shaped payload before opening a transaction", async () => {
+  let transactions = 0;
+  const sql: any = () => {
+    throw new Error("must not query");
+  };
+  sql.begin = async () => {
+    transactions += 1;
+    throw new Error("must not begin");
+  };
+  const payload = velvetHandoffPayloadSchema.parse({
+    ...validPayload,
+    externalId: "velvet-lead-00000001",
+    caller: { ...validPayload.caller, phone: "+17755550142" },
+  });
+
+  await assert.rejects(
+    createPostgresVelvetHandoffStore(sql).receive({
+      ...payload,
+      payloadHash: "f".repeat(64),
+    }),
+    (error: unknown) =>
+      error instanceof VelvetHandoffStoreError &&
+      error.code ===
+        "VELVET_ALCHEMY_HANDOFF_SYNTHETIC_FIXTURE_REQUIRED"
+  );
+  assert.equal(transactions, 0);
+});
+
+test("requires explicit fixture mode and a separated strong token", async () => {
+  for (const env of [
+    {
+      ...configuredEnv,
+      VELVET_ALCHEMY_HANDOFF_MODE: "",
+    },
+    {
+      ...configuredEnv,
+      VELVET_ALCHEMY_HANDOFF_API_KEY: "weak-token",
+    },
+    {
+      ...configuredEnv,
+      DASHBOARD_API_KEY:
+        configuredEnv.VELVET_ALCHEMY_HANDOFF_API_KEY,
+    },
+  ]) {
+    const result = await invoke({ env });
+    assert.equal(result.statusCode, 503);
+    assert.equal(
+      (result.body as any).code,
+      "VELVET_ALCHEMY_HANDOFF_NOT_CONFIGURED"
+    );
+    assert.equal(result.storeCalls, 0);
+  }
 });
 
 test("rejects a valid token attempting to select another workspace", async () => {

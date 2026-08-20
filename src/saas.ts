@@ -24,6 +24,7 @@ import { classifySmirkCheckoutForFulfillment, foundersPaymentLinkIdFromEnv, paym
 import { customerPolicyReadyForPlan, evaluateCustomerPolicyApproval } from "./customer-policy-approval.js";
 import { extractPaidCheckoutException } from "./paid-checkout-exception.js";
 import { candidateStarterPaymentLinkFulfillmentIds } from "./payment-link-fulfillment-ids.js";
+import { checkoutProvisioningStatusAfterInviteDelivery } from "./checkout-activation-status.js";
 import {
   checkoutFulfillmentLeaseCutoff,
   hasWorkspaceBillingEntitlement,
@@ -1814,13 +1815,15 @@ export async function resendCheckoutOwnerInvite(input: {
     requested_plan: string;
     workspace_plan: string;
     subscription_status: string;
+    twilio_phone_number: string | null;
   }[]>`
     SELECT pr.id AS provisioning_request_id,
            pr.workspace_id,
            pr.business_name,
            pr.requested_plan,
            w.plan AS workspace_plan,
-           w.subscription_status
+           w.subscription_status,
+           w.twilio_phone_number
     FROM provisioning_requests pr
     JOIN workspaces w ON w.id = pr.workspace_id
     WHERE pr.request_id = ${input.checkoutSessionId}
@@ -1853,6 +1856,10 @@ export async function resendCheckoutOwnerInvite(input: {
     ? null
     : String(delivery.error || delivery.skippedReason || "Buyer activation email was not delivered.").slice(0, 500);
   const deliveryStatus = delivery.sent ? "sent" : delivery.retryable ? "retryable_failed" : "failed";
+  const nextProvisioningStatus = checkoutProvisioningStatusAfterInviteDelivery({
+    delivered: delivery.sent,
+    twilioPhoneNumber: row.twilio_phone_number,
+  });
   await sql`
     UPDATE provisioning_requests
     SET invite_link = ${inviteLink},
@@ -1860,7 +1867,7 @@ export async function resendCheckoutOwnerInvite(input: {
         buyer_activation_email_sent_at = ${delivery.sent ? new Date().toISOString() : null},
         buyer_activation_email_provider_id = ${delivery.providerMessageId || null},
         buyer_activation_email_error = ${error},
-        status = CASE WHEN ${delivery.sent} THEN 'workspace_created' ELSE 'manual_fallback_required' END,
+        status = ${nextProvisioningStatus},
         error = CASE WHEN ${delivery.sent} THEN NULL ELSE ${error} END,
         updated_at = NOW()
     WHERE id = ${row.provisioning_request_id}
@@ -2016,6 +2023,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
     const inviteLink = invite.invite_token
       ? `${appBase}/invite/${invite.invite_token}`
       : (storedInviteLink && new URL(storedInviteLink).pathname.startsWith("/invite/") ? storedInviteLink : `${appBase}/dashboard`);
+    const existingWorkspaceNeedsManualTelephony = !String(existingWorkspace[0].twilio_phone_number || "").trim();
     const existingProvisioningRequestId = await upsertCheckoutProvisioningRequest({
       claim,
       workspaceId: existingWorkspace[0].id,
@@ -2023,7 +2031,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       ownerEmail,
       plan: verifiedPlan,
       mode,
-      status: "workspace_created",
+      status: existingWorkspaceNeedsManualTelephony ? "PENDING_MANUAL_TELEPHONY" : "workspace_created",
       inviteLink,
     });
     await createCheckoutActivationEventIfChanged(claim, {
@@ -2055,6 +2063,20 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
         existing_workspace: true,
       },
     });
+    if (existingWorkspaceNeedsManualTelephony) {
+      await createCheckoutActivationEventIfChanged(claim, {
+        workspace_id: existingWorkspace[0].id,
+        provisioning_request_id: existingProvisioningRequestId,
+        event_type: "telephony_provisioning_required",
+        status: "blocked",
+        actor: "system",
+        detail: {
+          activation_stage: "PENDING_MANUAL_TELEPHONY",
+          source: "stripe_checkout_completed",
+          reason: "No workspace Twilio line exists; activation remains incomplete until telephony is provisioned.",
+        },
+      });
+    }
     const refreshedWorkspace = await getWorkspaceById(existingWorkspace[0].id);
     if (refreshedWorkspace) {
       await reconcileStripePaymentFactsForWorkspace(refreshedWorkspace);
@@ -2109,7 +2131,9 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       plan: verifiedPlan,
       mode,
       source: "stripe_checkout_completed",
-      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke" ? "workspace_created" : "manual_fallback_required",
+      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke"
+        ? existingWorkspaceNeedsManualTelephony ? "PENDING_MANUAL_TELEPHONY" : "workspace_created"
+        : "manual_fallback_required",
       workspaceId: existingWorkspace[0].id,
       inviteLink,
       error: buyerDelivery.error,
@@ -2198,7 +2222,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       ownerEmail,
       plan: verifiedPlan,
       mode,
-      status: "workspace_created",
+      status: "PENDING_MANUAL_TELEPHONY",
       inviteLink,
       workspaceApiKey: workspace.api_key,
     });
@@ -2228,6 +2252,18 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       detail: {
         activation_stage: "workspace_created",
         invite_link: inviteLink,
+      },
+    });
+    await createCheckoutActivationEventIfChanged(claim, {
+      workspace_id: workspace.id,
+      provisioning_request_id: provisioningRequestId,
+      event_type: "telephony_provisioning_required",
+      status: "blocked",
+      actor: "system",
+      detail: {
+        activation_stage: "PENDING_MANUAL_TELEPHONY",
+        source: "stripe_checkout_completed",
+        reason: "No workspace Twilio line exists; activation remains incomplete until telephony is provisioned.",
       },
     });
     try {
@@ -2287,7 +2323,9 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       plan: verifiedPlan,
       mode,
       source: "stripe_checkout_completed",
-      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke" ? "workspace_created" : "manual_fallback_required",
+      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke"
+        ? "PENDING_MANUAL_TELEPHONY"
+        : "manual_fallback_required",
       provisioningRequestId,
       workspaceId: workspace.id,
       inviteLink,

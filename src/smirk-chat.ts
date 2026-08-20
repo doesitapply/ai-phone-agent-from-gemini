@@ -1,74 +1,29 @@
 /**
  * SMIRK Chat Agent
- * Hardened version — uses native Gemini 2.5 Flash.
- * Persistent chat bubble backend — talks about calls, leads, tasks,
- * and can edit settings, agent prompts, team roster, tasks, and contacts.
+ * Persistent dashboard assistant for calls, leads, tasks, and contacts.
+ * OpenRouter is preferred when configured, with Gemini as the bounded fallback.
+ * Provider-spend and live-configuration actions stay in guarded workflows.
  */
 
-import twilio from "twilio";
 import { sql } from "./db.js";
-import { readEnvFile, writeEnvFile } from "./settings.js";
-import { insertCalendarEvent } from "./gcal.js";
+import { readEnvFile } from "./settings.js";
 import { buildWorkspaceKnowledgeContext } from "./workspace-knowledge.js";
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-
-async function sendChatCallConfirmationEmail({
-  workspaceId,
-  to,
-  reason,
-  callSid,
-}: {
-  workspaceId: number;
-  to: string;
-  reason?: string;
-  callSid: string;
-}): Promise<{ sent: boolean; recipientCount: number }> {
-  const resendKey = process.env.RESEND_API_KEY || "";
-  const fromEmail = process.env.FROM_EMAIL || "SMIRK <alerts@smirkcalls.com>";
-  if (!resendKey || !fromEmail) return { sent: false, recipientCount: 0 };
-
-  const recipients = new Set<string>();
-  if (process.env.OWNER_EMAIL && !/owner@example\.com/i.test(process.env.OWNER_EMAIL)) recipients.add(process.env.OWNER_EMAIL);
-  const workspaceRows = await sql<{ owner_email: string | null; notification_email: string | null }[]>`
-    SELECT owner_email, notification_email FROM workspaces WHERE id = ${workspaceId} LIMIT 1
-  `.catch(() => []);
-  const workspace = workspaceRows[0];
-  if (workspace?.owner_email && !/owner@example\.com/i.test(workspace.owner_email)) recipients.add(workspace.owner_email);
-  if (workspace?.notification_email && !/owner@example\.com/i.test(workspace.notification_email)) recipients.add(workspace.notification_email);
-
-  const toList = Array.from(recipients).filter(Boolean);
-  if (toList.length === 0) return { sent: false, recipientCount: 0 };
-
-  const appUrl = (process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL)
-    ? `https://${String(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL).replace(/^\/+|\/+$/g, "")}`
-    : (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
-  const reasonText = reason?.trim() || "Not specified";
-  const html = [
-    "<h2>Outbound call started from SMIRK chat</h2>",
-    `<p><strong>To:</strong> ${to}</p>`,
-    `<p><strong>Reason:</strong> ${reasonText.replace(/</g, "&lt;")}</p>`,
-    `<p><strong>Call SID:</strong> ${callSid}</p>`,
-    `<p><a href="${appUrl}/dashboard">Open SMIRK dashboard</a></p>`,
-  ].join("");
-
-  const resp = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: fromEmail,
-      to: toList,
-      subject: `SMIRK chat started a call: ${to}`,
-      text: `Outbound call started from SMIRK chat\nTo: ${to}\nReason: ${reasonText}\nCall SID: ${callSid}\nDashboard: ${appUrl}/dashboard`,
-      html,
-    }),
-  });
-  if (!resp.ok) throw new Error(`Resend returned ${resp.status}: ${await resp.text()}`);
-  return { sent: true, recipientCount: toList.length };
-}
+import { loadOpenRouterConfig } from "./openrouter.js";
+import {
+  buildWorkspaceOpenRouterConfig,
+  resolveWorkspaceAiKeys,
+} from "./workspace-ai-keys.js";
+import {
+  chatToolDeclarationsForAccessMode,
+  chatToolPolicyText,
+  isChatToolAllowed,
+  type ChatAccessMode,
+} from "./smirk-chat-policy.js";
+import {
+  runSmirkChatProviderChain,
+  type SmirkChatProviderName,
+} from "./smirk-chat-provider.js";
 
 // ── Context loader ────────────────────────────────────────────────────────────
 export async function loadChatContext(workspaceId: number): Promise<string> {
@@ -134,20 +89,9 @@ ${JSON.stringify(agentRows, null, 2)}
 const TOOL_DECLARATIONS = [
   {
     name: "get_settings",
-    description: "Read current platform settings (non-sensitive keys only).",
+    description:
+      "Read configuration status and a small allowlist of non-sensitive operational values. Secret values are never returned.",
     parameters: { type: Type.OBJECT, properties: {} },
-  },
-  {
-    name: "update_setting",
-    description: "Update a platform setting by key.",
-    parameters: {
-      type: Type.OBJECT,
-      required: ["key", "value"],
-      properties: {
-        key: { type: Type.STRING, description: "Setting key name" },
-        value: { type: Type.STRING, description: "New value" },
-      },
-    },
   },
   {
     name: "get_agent_prompt",
@@ -156,20 +100,6 @@ const TOOL_DECLARATIONS = [
       type: Type.OBJECT,
       properties: {
         agent_id: { type: Type.NUMBER, description: "Optional agent ID" },
-      },
-    },
-  },
-  {
-    name: "update_agent_prompt",
-    description: "Update system prompt or greeting for a missed-call recovery assistant.",
-    parameters: {
-      type: Type.OBJECT,
-      required: ["agent_id"],
-      properties: {
-        agent_id: { type: Type.NUMBER },
-        system_prompt: { type: Type.STRING },
-        greeting: { type: Type.STRING },
-        voice: { type: Type.STRING },
       },
     },
   },
@@ -186,19 +116,6 @@ const TOOL_DECLARATIONS = [
       properties: {
         name: { type: Type.STRING },
         phone: { type: Type.STRING },
-      },
-    },
-  },
-  {
-    name: "inject_briefing",
-    description: "Inject a temporary briefing into the missed-call recovery assistant.",
-    parameters: {
-      type: Type.OBJECT,
-      required: ["content"],
-      properties: {
-        content: { type: Type.STRING },
-        category: { type: Type.STRING },
-        expires_hours: { type: Type.NUMBER },
       },
     },
   },
@@ -297,36 +214,6 @@ const TOOL_DECLARATIONS = [
     },
   },
   {
-    name: "make_call",
-    description: "Initiate an outbound phone call via Twilio to a contact or phone number. Use when the user says 'call X', 'dial X', 'phone X', or 'reach out to X'. Always look up the contact first if only a name is given.",
-    parameters: {
-      type: Type.OBJECT,
-      required: ["to_number"],
-      properties: {
-        to_number: { type: Type.STRING, description: "E.164 phone number to call, e.g. +15551234567" },
-        contact_name: { type: Type.STRING, description: "Name of the contact being called (for logging)" },
-        reason: { type: Type.STRING, description: "Why this call is being made (for task/log notes)" },
-      },
-    },
-  },
-  {
-    name: "book_appointment",
-    description: "Book an appointment in Google Calendar. Use when the user says 'book', 'schedule', 'set up a meeting', 'appointment for X at Y time'.",
-    parameters: {
-      type: Type.OBJECT,
-      required: ["summary", "start_iso"],
-      properties: {
-        summary: { type: Type.STRING, description: "Appointment title, e.g. 'HVAC Inspection — Bob Smith'" },
-        start_iso: { type: Type.STRING, description: "ISO 8601 start datetime, e.g. 2025-05-01T14:00:00" },
-        end_iso: { type: Type.STRING, description: "ISO 8601 end datetime (optional, defaults to +1h)" },
-        description: { type: Type.STRING, description: "Notes or context for the appointment" },
-        location: { type: Type.STRING, description: "Address or location" },
-        attendee_email: { type: Type.STRING, description: "Email of the attendee" },
-        timezone: { type: Type.STRING, description: "Timezone, e.g. America/Los_Angeles" },
-      },
-    },
-  },
-  {
     name: "create_task",
     description: "Create a new task only for concrete follow-up work somebody must do. Use when the user says 'create a task', 'add a task', 'remind me to', or when there is a real callback, confirmation, quote, payment, onboarding, or escalation obligation. Do not create tasks for FYI notes, generic review, or information already captured in a summary.",
     parameters: {
@@ -345,7 +232,7 @@ const TOOL_DECLARATIONS = [
   },
   {
     name: "search_contacts",
-    description: "Search contacts by name, phone, or business name. Use before make_call when you only have a name.",
+    description: "Search contacts by name, phone, or business name.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -360,18 +247,28 @@ const TOOL_DECLARATIONS = [
 async function executeTool(name: string, args: any, workspaceId: number): Promise<string> {
   if (name === "get_settings") {
     const env = readEnvFile();
-    const safe: Record<string, string> = {};
+    const valueAllowlist = new Set([
+      "AGENT_NAME",
+      "BUSINESS_NAME",
+      "BUSINESS_TIMEZONE",
+      "DEFAULT_TIMEZONE",
+      "GEMINI_MODEL",
+      "OPENROUTER_ENABLED",
+      "OPENROUTER_MODEL",
+    ]);
+    const safe: Record<
+      string,
+      { configured: boolean; value?: string }
+    > = {};
     for (const [k, v] of Object.entries(env)) {
-      safe[k] = k.toUpperCase().includes("API_KEY") || k.toUpperCase().includes("TOKEN") ? "••••••••" : v;
+      safe[k] = {
+        configured: Boolean(String(v || "").trim()),
+        ...(valueAllowlist.has(k) && String(v || "").trim()
+          ? { value: String(v).trim() }
+          : {}),
+      };
     }
     return JSON.stringify(safe, null, 2);
-  }
-
-  if (name === "update_setting") {
-    const PROTECTED = ["TWILIO_AUTH_TOKEN", "GEMINI_API_KEY", "OPENAI_API_KEY", "DASHBOARD_PASS"];
-    if (PROTECTED.includes(args.key)) return `ERROR: Cannot update ${args.key} via chat.`;
-    writeEnvFile({ [args.key]: args.value });
-    return JSON.stringify({ ok: true, message: "Setting updated." });
   }
 
   if (name === "get_agent_prompt") {
@@ -381,34 +278,22 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
     return JSON.stringify(rows[0] || "No agent found.");
   }
 
-  if (name === "update_agent_prompt") {
-    await sql`
-      UPDATE agent_configs SET
-        system_prompt = COALESCE(${args.system_prompt ?? null}, system_prompt),
-        greeting      = COALESCE(${args.greeting ?? null}, greeting),
-        voice         = COALESCE(${args.voice ?? null}, voice),
-        updated_at    = NOW()
-      WHERE id = ${args.agent_id} AND workspace_id = ${workspaceId}
-    `;
-    return JSON.stringify({ ok: true, message: "Agent updated." });
-  }
-
   if (name === "get_team") {
     const rows = await sql`SELECT id, name, role, is_on_call, phone, email, handles_topics, priority FROM team_members WHERE workspace_id = ${workspaceId} AND is_active = TRUE ORDER BY name`;
     return JSON.stringify(rows);
   }
 
   if (name === "get_contact") {
+    if (!args.phone && !args.name) {
+      return JSON.stringify({
+        ok: false,
+        error: "Provide a contact name or phone number.",
+      });
+    }
     const rows = args.phone
       ? await sql`SELECT id, name, phone_number, email, business_name FROM contacts WHERE workspace_id = ${workspaceId} AND phone_number ILIKE ${'%' + args.phone + '%'}`
       : await sql`SELECT id, name, phone_number, email, business_name FROM contacts WHERE workspace_id = ${workspaceId} AND name ILIKE ${'%' + args.name + '%'}`;
     return JSON.stringify(rows);
-  }
-
-  if (name === "inject_briefing") {
-    const expiresAt = args.expires_hours ? new Date(Date.now() + args.expires_hours * 3600000).toISOString() : null;
-    await sql`INSERT INTO temporary_context (workspace_id, content, category, expires_at) VALUES (${workspaceId}, ${args.content}, ${args.category || 'briefing'}, ${expiresAt})`;
-    return JSON.stringify({ ok: true, message: "Briefing injected." });
   }
 
   // ── Task management tools ────────────────────────────────────────────────────
@@ -436,15 +321,25 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
   }
 
   if (name === "complete_task") {
-    await sql`
+    const rows = await sql`
       UPDATE tasks SET status = 'completed', notes = COALESCE(${args.resolution_notes ?? null}, notes), updated_at = NOW()
       WHERE id = ${args.task_id} AND workspace_id = ${workspaceId}
+      RETURNING id
     `;
-    return JSON.stringify({ ok: true, message: `Task ${args.task_id} marked completed.` });
+    return rows.length === 1
+      ? JSON.stringify({
+          ok: true,
+          message: `Task ${args.task_id} marked completed.`,
+        })
+      : JSON.stringify({
+          ok: false,
+          code: "TASK_NOT_FOUND_OR_FORBIDDEN",
+          error: "No task changed in this workspace.",
+        });
   }
 
   if (name === "update_task") {
-    await sql`
+    const rows = await sql`
       UPDATE tasks SET
         status      = COALESCE(${args.status ?? null}, status),
         notes       = COALESCE(${args.notes ?? null}, notes),
@@ -452,32 +347,58 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
         due_at      = COALESCE(${args.due_at ? new Date(args.due_at) : null}, due_at),
         updated_at  = NOW()
       WHERE id = ${args.task_id} AND workspace_id = ${workspaceId}
+      RETURNING id
     `;
-    return JSON.stringify({ ok: true, message: `Task ${args.task_id} updated.` });
+    return rows.length === 1
+      ? JSON.stringify({
+          ok: true,
+          message: `Task ${args.task_id} updated.`,
+        })
+      : JSON.stringify({
+          ok: false,
+          code: "TASK_NOT_FOUND_OR_FORBIDDEN",
+          error: "No task changed in this workspace.",
+        });
   }
 
   if (name === "cancel_task") {
-    await sql`
+    const rows = await sql`
       UPDATE tasks SET status = 'cancelled', notes = COALESCE(${args.reason ?? null}, notes), updated_at = NOW()
       WHERE id = ${args.task_id} AND workspace_id = ${workspaceId}
+      RETURNING id
     `;
-    return JSON.stringify({ ok: true, message: `Task ${args.task_id} cancelled.` });
+    return rows.length === 1
+      ? JSON.stringify({
+          ok: true,
+          message: `Task ${args.task_id} cancelled.`,
+        })
+      : JSON.stringify({
+          ok: false,
+          code: "TASK_NOT_FOUND_OR_FORBIDDEN",
+          error: "No task changed in this workspace.",
+        });
   }
 
   // ── Contact management tools ─────────────────────────────────────────────────
   if (name === "create_contact") {
-    const existing = await sql`SELECT id FROM contacts WHERE phone_number = ${args.phone_number}`;
+    const existing = await sql`
+      SELECT id
+      FROM contacts
+      WHERE workspace_id = ${workspaceId}
+        AND phone_number = ${args.phone_number}
+      LIMIT 1
+    `;
     if (existing.length > 0) return JSON.stringify({ ok: false, message: `Contact with phone ${args.phone_number} already exists (id: ${existing[0].id}).` });
     const rows = await sql`
-      INSERT INTO contacts (phone_number, name, email, business_name, notes)
-      VALUES (${args.phone_number}, ${args.name ?? null}, ${args.email ?? null}, ${args.business_name ?? null}, ${args.notes ?? null})
+      INSERT INTO contacts (workspace_id, phone_number, name, email, business_name, notes)
+      VALUES (${workspaceId}, ${args.phone_number}, ${args.name ?? null}, ${args.email ?? null}, ${args.business_name ?? null}, ${args.notes ?? null})
       RETURNING id, name, phone_number
     `;
     return JSON.stringify({ ok: true, contact: rows[0] });
   }
 
   if (name === "update_contact") {
-    await sql`
+    const rows = await sql`
       UPDATE contacts SET
         name          = COALESCE(${args.name ?? null}, name),
         email         = COALESCE(${args.email ?? null}, email),
@@ -485,8 +406,19 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
         notes         = COALESCE(${args.notes ?? null}, notes),
         do_not_call   = COALESCE(${args.do_not_call ?? null}, do_not_call)
       WHERE id = ${args.contact_id}
+        AND workspace_id = ${workspaceId}
+      RETURNING id
     `;
-    return JSON.stringify({ ok: true, message: `Contact ${args.contact_id} updated.` });
+    return rows.length === 1
+      ? JSON.stringify({
+          ok: true,
+          message: `Contact ${args.contact_id} updated.`,
+        })
+      : JSON.stringify({
+          ok: false,
+          code: "CONTACT_NOT_FOUND_OR_FORBIDDEN",
+          error: "No contact changed in this workspace.",
+        });
   }
 
   // ── Action tools ────────────────────────────────────────────────────────────
@@ -503,107 +435,23 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
     return JSON.stringify(rows);
   }
 
-  if (name === "make_call") {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const fromNumber = process.env.TWILIO_PHONE_NUMBER;
-    const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
-    if (!accountSid || !authToken || !fromNumber) {
-      return JSON.stringify({ ok: false, error: 'Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.' });
-    }
-    const toNumber = args.to_number.startsWith('+') ? args.to_number : `+1${args.to_number.replace(/\D/g, '')}`;
-    try {
-      const client = twilio(accountSid, authToken);
-      // Get active agent for the TwiML URL
-      const [agent] = await sql`SELECT id FROM agent_configs WHERE workspace_id = ${workspaceId} AND is_active = TRUE ORDER BY id DESC LIMIT 1`;
-      const agentId = agent?.id;
-      const incomingParams = new URLSearchParams();
-      if (agentId) incomingParams.set("agentId", String(agentId));
-      if (args.reason) incomingParams.set("reason", String(args.reason));
-      incomingParams.set("notes", "Initiated from SMIRK chat");
-      const incomingQuery = incomingParams.toString();
-      const call = await client.calls.create({
-        to: toNumber,
-        from: fromNumber,
-        url: `${appUrl}/api/twilio/incoming${incomingQuery ? `?${incomingQuery}` : ''}`,
-        statusCallback: `${appUrl}/api/twilio/status`,
-        statusCallbackMethod: 'POST',
-        statusCallbackEvent: ['completed', 'failed', 'no-answer', 'busy', 'canceled'],
-        machineDetection: 'Enable',
-        machineDetectionTimeout: 30,
-      });
-      await sql`
-        INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, workspace_id)
-        VALUES (${call.sid}, 'outbound', ${toNumber}, ${fromNumber}, 'initiated', 'SMIRK', ${workspaceId})
-        ON CONFLICT (call_sid) DO NOTHING
-      `.catch(() => {});
-      if (args.reason) {
-        await sql`
-          INSERT INTO messages (call_sid, role, text)
-          VALUES (${call.sid}, 'system', ${`[CALL REASON] ${args.reason}\n[OPERATOR NOTES] Initiated from SMIRK chat`})
-        `.catch(() => {});
-      }
-      // Log a task for this outbound call
-      await sql`
-        INSERT INTO tasks (workspace_id, task_type, title, status, notes, priority)
-        VALUES (${workspaceId}, 'outbound_call', ${`Outbound call to ${args.contact_name || toNumber}`}, 'open',
-                ${args.reason || `Initiated via SMIRK chat`}, 'medium')
-      `;
-      let confirmation = { sent: false, recipientCount: 0 };
-      try {
-        confirmation = await sendChatCallConfirmationEmail({
-          workspaceId,
-          to: toNumber,
-          reason: args.reason,
-          callSid: call.sid,
-        });
-      } catch (emailError: unknown) {
-        console.warn("[smirk-chat] call confirmation email failed", emailError instanceof Error ? emailError.message : String(emailError));
-      }
-      return JSON.stringify({
-        ok: true,
-        call_sid: call.sid,
-        to: toNumber,
-        status: call.status,
-        confirmation_email_sent: confirmation.sent,
-        confirmation_recipient_count: confirmation.recipientCount,
-        message: `Call initiated to ${args.contact_name || toNumber} (${toNumber}). SID: ${call.sid}${confirmation.sent ? ". Confirmation email sent." : "."}`,
-      });
-    } catch (err: any) {
-      return JSON.stringify({ ok: false, error: err.message });
-    }
-  }
-
-  if (name === "book_appointment") {
-    try {
-      if (!args.start_iso) {
-        return JSON.stringify({ ok: false, error: "A requested callback time is required before creating a follow-up record." });
-      }
-      const result = await insertCalendarEvent({
-        summary: args.summary,
-        description: args.description,
-        startIso: args.start_iso,
-        endIso: args.end_iso,
-        location: args.location,
-        attendeeEmail: args.attendee_email,
-        timeZone: args.timezone || process.env.DEFAULT_TIMEZONE || 'America/Los_Angeles',
-      });
-      if (result.success) {
-        // Also store in appointments table
-        await sql`
-          INSERT INTO appointments (workspace_id, service_type, scheduled_at, notes, status, calendar_event_id)
-          VALUES (${workspaceId}, ${args.summary}, ${args.start_iso ? new Date(args.start_iso) : new Date()}, ${args.description || null}, 'scheduled', ${result.eventId || null})
-        `.catch(() => {}); // non-fatal if appointments table schema differs
-        return JSON.stringify({ ok: true, event_id: result.eventId, link: result.htmlLink, message: `Requested follow-up time for "${args.summary}" captured.` });
-      } else {
-        return JSON.stringify({ ok: false, error: result.error || 'Requested follow-up time capture failed.' });
-      }
-    } catch (err: any) {
-      return JSON.stringify({ ok: false, error: err.message });
-    }
-  }
-
   if (name === "create_task") {
+    if (args.contact_id != null) {
+      const contacts = await sql`
+        SELECT id
+        FROM contacts
+        WHERE id = ${args.contact_id}
+          AND workspace_id = ${workspaceId}
+        LIMIT 1
+      `;
+      if (contacts.length !== 1) {
+        return JSON.stringify({
+          ok: false,
+          code: "CONTACT_NOT_FOUND_OR_FORBIDDEN",
+          error: "The selected contact is not available in this workspace.",
+        });
+      }
+    }
     const rows = await sql`
       INSERT INTO tasks (workspace_id, task_type, title, status, notes, assigned_to, due_at, priority, contact_id)
       VALUES (
@@ -641,127 +489,382 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
 
 // ── Main chat handler ─────────────────────────────────────────────────────────
 export interface ChatMessage {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant";
   content: string;
 }
 
-export type ChatAccessMode = "operator" | "workspace" | "demo_operator";
+export type { ChatAccessMode } from "./smirk-chat-policy.js";
 
-const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([
-  "get_team",
-  "get_contact",
-  "list_tasks",
-  "list_calls",
-  "search_contacts",
-]);
-
-const WORKSPACE_ALLOWED_TOOLS = new Set([
-  "get_team",
-  "get_contact",
-  "list_tasks",
-  "complete_task",
-  "update_task",
-  "cancel_task",
-  "create_contact",
-  "update_contact",
-  "list_calls",
-  "create_task",
-  "search_contacts",
-]);
-
-const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode) => {
-  if (accessMode === "operator") return TOOL_DECLARATIONS;
-  if (accessMode === "demo_operator") return TOOL_DECLARATIONS.filter((tool) => DEMO_OPERATOR_ALLOWED_TOOLS.has(tool.name));
-  return TOOL_DECLARATIONS.filter((tool) => WORKSPACE_ALLOWED_TOOLS.has(tool.name));
+type ChatToolUse = { name: string; result: string };
+type SmirkChatResult = {
+  reply: string;
+  toolsUsed: ChatToolUse[];
+  provider: SmirkChatProviderName;
 };
+
+const CHAT_PROVIDER_MAX_ROUNDS = 4;
+const CHAT_PROVIDER_MAX_OUTPUT_TOKENS = 400;
+
+function chatToolDenied(name: string, accessMode: ChatAccessMode): string {
+  return JSON.stringify({
+    ok: false,
+    code: "CHAT_TOOL_REQUIRES_GUARDED_WORKFLOW",
+    error: `${name} is not available from ${accessMode} chat. Use the dedicated guarded dashboard workflow.`,
+  });
+}
+
+async function executeAllowedChatTool(input: {
+  name: string;
+  args: unknown;
+  accessMode: ChatAccessMode;
+  workspaceId: number;
+  toolsUsed: ChatToolUse[];
+  onExecutionAttempt: () => void;
+}): Promise<string> {
+  if (!isChatToolAllowed(input.accessMode, input.name)) {
+    const denied = chatToolDenied(input.name, input.accessMode);
+    input.toolsUsed.push({ name: input.name, result: denied });
+    return denied;
+  }
+
+  input.onExecutionAttempt();
+  const result = await executeTool(
+    input.name,
+    input.args && typeof input.args === "object" ? input.args : {},
+    input.workspaceId
+  );
+  input.toolsUsed.push({ name: input.name, result });
+  return result;
+}
+
+function toOpenRouterSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toOpenRouterSchema);
+  if (!value || typeof value !== "object") {
+    return typeof value === "string" &&
+      ["OBJECT", "ARRAY", "STRING", "NUMBER", "INTEGER", "BOOLEAN", "NULL"].includes(
+        value
+      )
+      ? value.toLowerCase()
+      : value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      toOpenRouterSchema(child),
+    ])
+  );
+}
+
+function parseOpenRouterToolArguments(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== "string" || raw.trim() === "") return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function fetchOpenRouterChat(input: {
+  apiKey: string;
+  model: string;
+  timeoutMs: number;
+  messages: unknown[];
+  tools: unknown[];
+}): Promise<any> {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    Math.max(1_000, Math.min(30_000, input.timeoutMs))
+  );
+  try {
+    const response = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${input.apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer":
+            process.env.APP_URL || "https://smirkcalls.com",
+          "X-Title": "SMIRK Dashboard Chat",
+        },
+        body: JSON.stringify({
+          model: input.model,
+          messages: input.messages,
+          tools: input.tools,
+          tool_choice: input.tools.length > 0 ? "auto" : undefined,
+          temperature: 0.3,
+          max_tokens: CHAT_PROVIDER_MAX_OUTPUT_TOKENS,
+        }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`OpenRouter HTTP ${response.status}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runOpenRouterChat(input: {
+  apiKey: string;
+  model: string;
+  timeoutMs: number;
+  messages: ChatMessage[];
+  systemInstruction: string;
+  accessMode: ChatAccessMode;
+  workspaceId: number;
+  toolsUsed: ChatToolUse[];
+  onExecutionAttempt: () => void;
+}): Promise<Omit<SmirkChatResult, "provider">> {
+  const declarations = chatToolDeclarationsForAccessMode(
+    TOOL_DECLARATIONS,
+    input.accessMode
+  );
+  const tools = declarations.map((declaration) => ({
+    type: "function",
+    function: toOpenRouterSchema(declaration),
+  }));
+  const providerMessages: any[] = [
+    { role: "system", content: input.systemInstruction },
+    ...input.messages.map((message) => ({
+      role: message.role === "assistant" ? "assistant" : "user",
+      content: message.content,
+    })),
+  ];
+
+  for (let round = 0; round < CHAT_PROVIDER_MAX_ROUNDS; round += 1) {
+    const data = await fetchOpenRouterChat({
+      apiKey: input.apiKey,
+      model: input.model,
+      timeoutMs: input.timeoutMs,
+      messages: providerMessages,
+      tools,
+    });
+    const message = data?.choices?.[0]?.message;
+    if (!message) throw new Error("OpenRouter returned no assistant message");
+
+    const toolCalls = Array.isArray(message.tool_calls)
+      ? message.tool_calls
+      : [];
+    if (toolCalls.length === 0) {
+      return {
+        reply:
+          typeof message.content === "string" && message.content.trim()
+            ? message.content.trim()
+            : "I could not produce a response. Please try again.",
+        toolsUsed: input.toolsUsed,
+      };
+    }
+
+    providerMessages.push({
+      role: "assistant",
+      content: typeof message.content === "string" ? message.content : null,
+      tool_calls: toolCalls,
+    });
+
+    for (const toolCall of toolCalls) {
+      const name = String(toolCall?.function?.name || "");
+      const args = parseOpenRouterToolArguments(
+        toolCall?.function?.arguments
+      );
+      const result = await executeAllowedChatTool({
+        name,
+        args,
+        accessMode: input.accessMode,
+        workspaceId: input.workspaceId,
+        toolsUsed: input.toolsUsed,
+        onExecutionAttempt: input.onExecutionAttempt,
+      });
+      providerMessages.push({
+        role: "tool",
+        tool_call_id: String(toolCall?.id || `tool-${round}`),
+        content: result,
+      });
+    }
+  }
+
+  return {
+    reply:
+      "I reached the chat action limit. Review the recorded tool results before trying again.",
+    toolsUsed: input.toolsUsed,
+  };
+}
+
+async function runGeminiChat(input: {
+  apiKey: string;
+  model: string;
+  messages: ChatMessage[];
+  systemInstruction: string;
+  accessMode: ChatAccessMode;
+  workspaceId: number;
+  toolsUsed: ChatToolUse[];
+  onExecutionAttempt: () => void;
+}): Promise<Omit<SmirkChatResult, "provider">> {
+  const ai = new GoogleGenAI({ apiKey: input.apiKey });
+  const currentContents: any[] = input.messages.map((message) => ({
+    role: message.role === "assistant" ? "model" : "user",
+    parts: [{ text: message.content }],
+  }));
+  const declarations = chatToolDeclarationsForAccessMode(
+    TOOL_DECLARATIONS,
+    input.accessMode
+  );
+
+  for (let round = 0; round < CHAT_PROVIDER_MAX_ROUNDS; round += 1) {
+    const response = await ai.models.generateContent({
+      model: input.model,
+      contents: currentContents,
+      config: {
+        systemInstruction: input.systemInstruction,
+        tools: [{ functionDeclarations: declarations }],
+        toolConfig: {
+          functionCallingConfig: {
+            mode: FunctionCallingConfigMode.AUTO,
+          },
+        },
+        temperature: 0.3,
+        maxOutputTokens: CHAT_PROVIDER_MAX_OUTPUT_TOKENS,
+      },
+    });
+
+    const candidate = response.candidates?.[0];
+    if (!candidate?.content) {
+      throw new Error("Gemini returned no assistant message");
+    }
+
+    const parts = candidate.content.parts || [];
+    currentContents.push(candidate.content);
+    const toolCalls = parts.filter((part: any) => part.functionCall);
+    if (toolCalls.length === 0) {
+      const reply = parts
+        .filter((part: any) => typeof part.text === "string")
+        .map((part: any) => part.text)
+        .join("\n")
+        .trim();
+      return {
+        reply:
+          reply || "I could not produce a response. Please try again.",
+        toolsUsed: input.toolsUsed,
+      };
+    }
+
+    const toolResults: any[] = [];
+    for (const part of toolCalls) {
+      const name = String(part.functionCall?.name || "");
+      const result = await executeAllowedChatTool({
+        name,
+        args: part.functionCall?.args,
+        accessMode: input.accessMode,
+        workspaceId: input.workspaceId,
+        toolsUsed: input.toolsUsed,
+        onExecutionAttempt: input.onExecutionAttempt,
+      });
+      toolResults.push({
+        functionResponse: { name, response: { result } },
+      });
+    }
+    currentContents.push({ role: "user", parts: toolResults });
+  }
+
+  return {
+    reply:
+      "I reached the chat action limit. Review the recorded tool results before trying again.",
+    toolsUsed: input.toolsUsed,
+  };
+}
 
 export async function handleSmirkChat(
   messages: ChatMessage[],
   workspaceId: number,
   options: { accessMode?: ChatAccessMode } = {}
-): Promise<{ reply: string; toolsUsed: { name: string; result: string }[] }> {
-  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured for SMIRK Chat");
-
+): Promise<SmirkChatResult> {
   const accessMode = options.accessMode || "operator";
   const context = await loadChatContext(workspaceId);
-  const toolPolicy = accessMode === "operator"
-    ? "You can take REAL action: make phone calls via Twilio, create callback tasks, search contacts, update settings, edit agent prompts, inject briefings, and capture requested callback windows for owner review."
-    : accessMode === "demo_operator"
-      ? "You are in demo-operator mode. You may explain calls, contacts, tasks, team context, and dashboard proof using read-only lookup tools only. Do not create, update, delete, send, dial, book, launch outreach, edit settings, edit prompts, or inject live briefings."
-      : "You are in workspace-owner mode. You may help with calls, tasks, contacts, and team context, and you may create or update CRM/task records. Do not place phone calls, edit platform settings, edit prompts, inject live briefings, or book calendar records from this mode. If the user asks for one of those operator-only actions, say it requires operator access.";
-  const callPolicy = accessMode === "operator"
-    ? `When the user asks you to call someone, dial a number, phone a contact, or follow up by phone — DO IT using make_call. Do not describe what you would do. Execute it.
-For every call, pass a clear reason that tells the phone agent exactly what outcome to achieve. If the user gave a purpose like "about the estimate", "confirm tomorrow", "ask for gate code", or "reschedule", preserve that purpose in reason.
-If you need a phone number for a contact name, use search_contacts first, then make_call with the result. If several contacts match, ask one concise clarifying question instead of guessing.`
-    : accessMode === "demo_operator"
-      ? "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, task/contact changes, calendar writes, lead search, or outreach, explain that demo access is read-only and cannot perform that action. Do not claim to have performed those actions."
-      : "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, or calendar writes, explain that operator access is required. Do not claim to have performed those actions.";
   const systemInstruction = `You are SMIRK — the operational brain of the SMIRK missed-call recovery service.
 You have visibility into calls, leads, tasks, contacts, and team state.
-${toolPolicy}
-
-${callPolicy}
-Always confirm what action was taken and provide the outcome (call SID, event link, task ID, etc.).
+${chatToolPolicyText(accessMode)}
+For permitted local CRM and task actions, confirm the action and provide its persisted identifier. For restricted actions, identify the exact guarded dashboard workflow instead of pretending the action ran.
 
 --- LIVE CONTEXT ---
 ${context}
 --- END CONTEXT ---`;
+  const workspaceKeys = await resolveWorkspaceAiKeys(workspaceId, {
+    geminiApiKey: process.env.GEMINI_API_KEY,
+    openrouterApiKey: process.env.OPENROUTER_API_KEY,
+  });
+  const baseOpenRouterConfig = loadOpenRouterConfig();
+  const openRouterConfig = workspaceKeys.openrouterIsWorkspaceKey
+    ? buildWorkspaceOpenRouterConfig(
+        workspaceKeys,
+        baseOpenRouterConfig
+      )
+    : baseOpenRouterConfig;
+  const geminiApiKey = workspaceKeys.geminiApiKey;
+  const geminiModel =
+    process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const toolsUsed: ChatToolUse[] = [];
+  let toolExecutionAttempts = 0;
 
-  const currentContents: any[] = messages.map(m => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }]
-  }));
-
-  const toolsUsed: { name: string; result: string }[] = [];
-  let rounds = 0;
-
-  while (rounds < 8) {
-    rounds++;
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: currentContents,
-      config: {
-        systemInstruction,
-        tools: [{ functionDeclarations: toolDeclarationsForAccessMode(accessMode) }],
-        toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
-        temperature: 0.5,
+  const selected = await runSmirkChatProviderChain({
+    providers: [
+      {
+        name: "openrouter",
+        configured: Boolean(openRouterConfig?.enabled),
+        stopOnAuthenticationFailure:
+          workspaceKeys.openrouterIsWorkspaceKey,
+        run: () =>
+          runOpenRouterChat({
+            apiKey: openRouterConfig!.apiKey,
+            model: openRouterConfig!.model,
+            timeoutMs: openRouterConfig!.timeoutMs,
+            messages,
+            systemInstruction,
+            accessMode,
+            workspaceId,
+            toolsUsed,
+            onExecutionAttempt: () => {
+              toolExecutionAttempts += 1;
+            },
+          }),
       },
-    });
+      {
+        name: "gemini",
+        configured: Boolean(geminiApiKey),
+        stopOnAuthenticationFailure: workspaceKeys.geminiIsWorkspaceKey,
+        run: () =>
+          runGeminiChat({
+            apiKey: geminiApiKey!,
+            model: geminiModel,
+            messages,
+            systemInstruction,
+            accessMode,
+            workspaceId,
+            toolsUsed,
+            onExecutionAttempt: () => {
+              toolExecutionAttempts += 1;
+            },
+          }),
+      },
+    ],
+    canFailover: () => toolExecutionAttempts === 0,
+    onFailure: (attempt) => {
+      console.warn("[smirk-chat] provider attempt failed", {
+        workspaceId,
+        provider: attempt.provider,
+        failureKind: attempt.failureKind,
+        toolExecutionAttempts,
+      });
+    },
+  });
 
-    const candidate = response.candidates?.[0];
-    if (!candidate) throw new Error("Gemini returned no response");
-
-    const parts = candidate.content?.parts || [];
-    currentContents.push(candidate.content);
-
-    const callParts = parts.filter((p: any) => p.functionCall);
-    const textParts = parts.filter((p: any) => p.text);
-
-    if (callParts.length > 0) {
-      const toolResults: any[] = [];
-      for (const cp of callParts) {
-        const { name, args } = cp.functionCall;
-        const allowedForMode = accessMode === "operator"
-          || (accessMode === "demo_operator" ? DEMO_OPERATOR_ALLOWED_TOOLS.has(name) : WORKSPACE_ALLOWED_TOOLS.has(name));
-        if (!allowedForMode) {
-          const denied = JSON.stringify({ ok: false, error: `${name} is not allowed in ${accessMode} mode.` });
-          toolsUsed.push({ name, result: denied });
-          toolResults.push({
-            functionResponse: { name, response: { result: denied } }
-          });
-          continue;
-        }
-        const result = await executeTool(name, args, workspaceId);
-        toolsUsed.push({ name, result });
-        toolResults.push({
-          functionResponse: { name, response: { result } }
-        });
-      }
-      currentContents.push({ role: "model", parts: toolResults });
-    } else {
-      return { reply: textParts.map((p: any) => p.text).join("\n") || "", toolsUsed };
-    }
-  }
-
-  return { reply: "Max rounds reached.", toolsUsed };
+  return {
+    ...selected.value,
+    provider: selected.provider,
+  };
 }

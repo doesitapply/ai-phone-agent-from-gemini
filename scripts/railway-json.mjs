@@ -6,6 +6,27 @@ const defaultRailwayProjectId = process.env.SMIRK_RAILWAY_PROJECT_ID || process.
 const defaultRailwayServiceId = process.env.SMIRK_RAILWAY_SERVICE_ID || process.env.RAILWAY_SERVICE_ID || "96bcd6e7-9487-4197-bcd1-a6bd0546e6b2";
 const defaultRailwayEnvironmentId = process.env.SMIRK_RAILWAY_ENVIRONMENT_ID || process.env.RAILWAY_ENVIRONMENT_ID || "";
 const railwayGraphqlEndpoint = process.env.SMIRK_RAILWAY_GRAPHQL_ENDPOINT || "https://backboard.railway.app/graphql/v2";
+const railwayGraphqlTransportScript = `
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+try {
+  const response = await fetch(request.endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: \`Bearer \${request.token}\`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query: request.query, variables: request.variables }),
+    signal: AbortSignal.timeout(request.timeoutMs),
+  });
+  const body = await response.text();
+  process.stdout.write(JSON.stringify({ status: response.status, body }));
+} catch (error) {
+  process.stderr.write(error instanceof Error ? error.message : "Railway GraphQL transport failed");
+  process.exitCode = 1;
+}
+`;
 
 function sleepSync(ms) {
   if (ms <= 0) return;
@@ -111,22 +132,27 @@ export function railwayGraphql(query, variables = {}, options = {}) {
     throw error;
   }
 
-  const result = spawnSync("curl", [
-    "-sS",
-    "-m",
-    String(options.timeoutSeconds || process.env.SMIRK_RAILWAY_GRAPHQL_TIMEOUT_SECONDS || 20),
-    "-X",
-    "POST",
-    railwayGraphqlEndpoint,
-    "-H",
-    `Authorization: Bearer ${token}`,
-    "-H",
-    "Content-Type: application/json",
-    "--data",
-    JSON.stringify({ query, variables }),
+  const timeoutSeconds = Number(
+    options.timeoutSeconds ||
+      process.env.SMIRK_RAILWAY_GRAPHQL_TIMEOUT_SECONDS ||
+      20
+  );
+  const timeoutMs = Math.max(1, timeoutSeconds) * 1000;
+  const result = spawnSync(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    railwayGraphqlTransportScript,
   ], {
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    input: JSON.stringify({
+      endpoint: railwayGraphqlEndpoint,
+      token,
+      query,
+      variables,
+      timeoutMs,
+    }),
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: timeoutMs + 5_000,
     maxBuffer: options.maxBuffer || 1024 * 1024 * 8,
   });
 
@@ -143,17 +169,44 @@ export function railwayGraphql(query, variables = {}, options = {}) {
     throw error;
   }
 
+  let transport;
+  try {
+    transport = JSON.parse(String(result.stdout || ""));
+  } catch (parseError) {
+    const error = new Error("Railway GraphQL transport returned invalid JSON");
+    error.detail = {
+      ok: false,
+      error: "railway-graphql-transport-invalid-json",
+      message: String(parseError?.message || parseError),
+      stdout: String(result.stdout || "").trim().slice(0, 1000),
+      stderr: String(result.stderr || "").trim(),
+    };
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(transport?.status) ||
+    transport.status < 200 ||
+    transport.status >= 300
+  ) {
+    const error = new Error("Railway GraphQL returned an HTTP error");
+    error.detail = {
+      ok: false,
+      error: "railway-graphql-http-error",
+      status: transport?.status ?? null,
+    };
+    throw error;
+  }
+
   let parsed;
   try {
-    parsed = JSON.parse(String(result.stdout || ""));
+    parsed = JSON.parse(String(transport.body || ""));
   } catch (parseError) {
     const error = new Error("Railway GraphQL returned invalid JSON");
     error.detail = {
       ok: false,
       error: "railway-graphql-invalid-json",
       message: String(parseError?.message || parseError),
-      stdout: String(result.stdout || "").trim().slice(0, 1000),
-      stderr: String(result.stderr || "").trim(),
     };
     throw error;
   }
@@ -255,24 +308,30 @@ export function readRailwayEnvValue(key, options = {}) {
 
 export function railwaySetVariable(name, value, options = {}) {
   loadRailwayAuth();
-  const assignment = `${name}=${value}`;
-  const args = ["variable", "set"];
-  if (options.serviceId) args.push("--service", options.serviceId);
-  if (options.environmentId) args.push("--environment", options.environmentId);
-  if (options.skipDeploys === true) args.push("--skip-deploys");
-  args.push(assignment);
-  const result = spawnSync("railway", args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: options.maxBuffer || 1024 * 1024 * 8,
-  });
+  let cliFailure = null;
+  if (options.graphqlOnly !== true) {
+    const assignment = `${name}=${value}`;
+    const args = ["variable", "set"];
+    if (options.serviceId) args.push("--service", options.serviceId);
+    if (options.environmentId) args.push("--environment", options.environmentId);
+    if (options.skipDeploys === true) args.push("--skip-deploys");
+    args.push(assignment);
+    const result = spawnSync("railway", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: options.maxBuffer || 1024 * 1024 * 8,
+    });
 
-  if (result.status === 0) return { ok: true, method: "cli" };
-
-  if (options.graphqlFallback === false) {
-    const error = new Error("railway variable set failed");
-    error.detail = normalizeCliFailure(result, `railway variable set ${name}=...`);
-    throw error;
+    if (result.status === 0) return { ok: true, method: "cli" };
+    cliFailure = normalizeCliFailure(
+      result,
+      `railway variable set ${name}=...`
+    );
+    if (options.graphqlFallback === false) {
+      const error = new Error("railway variable set failed");
+      error.detail = cliFailure;
+      throw error;
+    }
   }
 
   const context = railwayProjectContext(options);
@@ -291,7 +350,52 @@ export function railwaySetVariable(name, value, options = {}) {
       skipDeploys: Boolean(options.skipDeploys),
     },
   }, options);
-  return { ok: true, method: "graphql", cliFailure: normalizeCliFailure(result, `railway variable set ${name}=...`) };
+  return {
+    ok: true,
+    method: "graphql",
+    ...(cliFailure ? { cliFailure } : {}),
+  };
+}
+
+export function railwayStageDeleteVariable(name, options = {}) {
+  if (!name || !/^[A-Z][A-Z0-9_]*$/.test(name)) {
+    const error = new Error("invalid Railway variable name");
+    error.detail = { ok: false, error: "railway-variable-name-invalid" };
+    throw error;
+  }
+
+  const context = railwayProjectContext(options);
+  const mutation = `
+    mutation RailwayVariableDelete($input: VariableDeleteInput!) {
+      variableDelete(input: $input)
+    }
+  `;
+  const data = railwayGraphql(mutation, {
+    input: {
+      projectId: context.projectId,
+      serviceId: context.serviceId,
+      environmentId: context.environmentId,
+      name,
+    },
+  }, options);
+  if (data?.variableDelete !== true) {
+    const error = new Error("Railway variable delete was not accepted");
+    error.detail = {
+      ok: false,
+      error: "railway-variable-delete-not-accepted",
+      name,
+    };
+    throw error;
+  }
+  return {
+    ok: true,
+    method: "graphql",
+    stagedOnly: true,
+    projectId: context.projectId,
+    serviceId: context.serviceId,
+    environmentId: context.environmentId,
+    name,
+  };
 }
 
 export function railwayDeployments(options = {}) {

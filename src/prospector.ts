@@ -1,38 +1,29 @@
 /**
- * Outbound Prospecting Engine
+ * Workspace-scoped prospect research storage.
  *
- * SMIRK can sell itself. This module:
- *   1. Finds local businesses via Google Places API (or manual CSV upload)
- *   2. Enriches leads with website, phone, industry, employee count
- *   3. Queues outbound calls with a pitch agent (FORGE by default)
- *   4. Tracks outcomes: interested, not interested, callback, DNC, voicemail
- *   5. Follows up with interested leads via email/demo link or scheduled callback
- *
- * The pitch agent introduces SMIRK, explains the value prop, and either:
- *   - Books a demo call (creates appointment)
- *   - Sends a follow-up email/demo link when email is available or schedules a callback
- *   - Marks as DNC if requested
- *
- * Usage:
- *   POST /api/prospecting/campaigns      — create a campaign
- *   POST /api/prospecting/campaigns/:id/leads — add leads (manual or Places search)
- *   POST /api/prospecting/campaigns/:id/launch — start dialing
- *   GET  /api/prospecting/campaigns      — list campaigns with stats
- *   GET  /api/prospecting/leads          — list all leads
+ * This module stores campaigns and prospect records for human review. It does
+ * not send email, SMS, or place calls. External contact remains behind a
+ * separate, recipient-specific approval workflow.
  */
 
+import { randomUUID } from "node:crypto";
 import { sql } from "./db.js";
-import { checkOutboundCompliance, detectOptOut } from "./compliance.js";
-import { generatePersonalizedPitch, SCORE_GATE_DIAL } from "./lead-hunter.js";
+import { SMIRK_INTERNAL_INBOX_SEED_SOURCE } from "./prospect-inbox-placement.js";
+import {
+  buildProspectPositiveOutcomeReviewPayload,
+  hashProspectPositiveOutcomeReviewPayload,
+} from "./prospect-positive-outcome-review.js";
+import { acquireProspectAcquisitionWorkspaceLock } from "./prospect-positive-outcome-pause.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface ProspectingCampaign {
   id: number;
+  workspace_id: number;
   name: string;
   description?: string;
   status: "draft" | "active" | "paused" | "completed";
-  agent_name: string;           // which SMIRK agent makes the calls (default: FORGE)
+  agent_name: string;           // legacy campaign label; not execution authority
   pitch_script?: string;        // custom pitch override
   target_industry?: string;     // e.g. "plumbing", "dental", "restaurant"
   target_location?: string;     // e.g. "Miami, FL" or "33101"
@@ -51,7 +42,10 @@ export interface ProspectLead {
   id: number;
   campaign_id: number;
   business_name: string;
-  phone: string;
+  phone?: string;
+  phone_contact_mode?: "operator_review_only";
+  email?: string;
+  email_verification?: "verified_owner_email";
   website?: string;
   industry?: string;
   address?: string;
@@ -59,8 +53,19 @@ export interface ProspectLead {
   state?: string;
   contact_name?: string;
   contact_title?: string;
-  source: "google_places" | "manual" | "csv" | "linkedin";
-  status: "pending" | "calling" | "interested" | "not_interested" | "voicemail" | "dnc" | "no_answer" | "callback";
+  source: "google_places" | "manual" | "csv" | "linkedin" | "velvet_alchemy_research";
+  status:
+    | "pending"
+    | "calling"
+    | "interested"
+    | "not_interested"
+    | "voicemail"
+    | "dnc"
+    | "no_answer"
+    | "callback"
+    | "contacted"
+    | "converted";
+  review_state: "pending_review" | "qualified" | "rejected";
   call_sid?: string;
   notes?: string;
   callback_at?: string;
@@ -70,7 +75,189 @@ export interface ProspectLead {
 
 // ── DB Schema ──────────────────────────────────────────────────────────────────
 
-export async function initProspectorSchema(): Promise<void> {
+const POSITIVE_OUTCOME_REVIEW_BACKFILL_LIMIT = 10_000;
+
+async function backfillPositiveOutcomeReviews(): Promise<void> {
+  const rows = await sql<{
+    outcome_event_id: number;
+    workspace_id: number;
+    campaign_id: number;
+    lead_id: number;
+    business_name: string;
+    outreach_job_id: number;
+    approval_id: string;
+    channel: "email" | "call";
+    source: string;
+    external_event_id: string;
+    outcome: "replied" | "qualified" | "demo_booked" | "converted";
+    occurred_at: string | Date;
+    notes: string | null;
+    recorded_by: string;
+  }[]>`
+    SELECT o.id AS outcome_event_id, o.workspace_id, o.campaign_id,
+           o.lead_id, l.business_name, o.outreach_job_id,
+           j.approval_id, j.channel, o.source, o.external_event_id,
+           o.outcome, o.occurred_at, o.notes, o.recorded_by
+    FROM prospect_outcome_events o
+    JOIN prospect_outreach_jobs j
+      ON j.id = o.outreach_job_id
+     AND j.workspace_id = o.workspace_id
+    JOIN prospect_leads l ON l.id = o.lead_id
+    WHERE o.outcome IN (
+      'replied', 'qualified', 'demo_booked', 'converted'
+    )
+      AND j.is_seed = FALSE
+      AND NOT EXISTS (
+        SELECT 1
+        FROM prospect_positive_outcome_reviews r
+        WHERE r.workspace_id = o.workspace_id
+          AND r.outcome_event_id = o.id
+      )
+    ORDER BY o.id
+    LIMIT ${POSITIVE_OUTCOME_REVIEW_BACKFILL_LIMIT + 1}
+  `;
+  if (rows.length > POSITIVE_OUTCOME_REVIEW_BACKFILL_LIMIT) {
+    throw new Error(
+      "Positive-outcome review backfill exceeds the 10,000-row safety limit."
+    );
+  }
+  for (const row of rows) {
+    const reviewId = randomUUID();
+    const payload = buildProspectPositiveOutcomeReviewPayload({
+      reviewId,
+      workspaceId: row.workspace_id,
+      campaignId: row.campaign_id,
+      prospectId: row.lead_id,
+      businessName: row.business_name,
+      outreachJobId: row.outreach_job_id,
+      outreachApprovalId: row.approval_id,
+      channel: row.channel,
+      outcomeEventId: row.outcome_event_id,
+      outcome: row.outcome,
+      eventSource: row.source,
+      externalEventId: row.external_event_id,
+      occurredAt: row.occurred_at,
+      recordedBy: row.recorded_by,
+      notes: row.notes,
+    });
+    const payloadHash =
+      hashProspectPositiveOutcomeReviewPayload(payload);
+    await sql.begin(async (tx: any) => {
+      await acquireProspectAcquisitionWorkspaceLock(
+        tx,
+        row.workspace_id
+      );
+      const inserted = await tx<{ id: number }[]>`
+        INSERT INTO prospect_positive_outcome_reviews (
+          review_id, workspace_id, campaign_id, lead_id,
+          outreach_job_id, outcome_event_id, payload, payload_hash,
+          state
+        ) VALUES (
+          ${reviewId}, ${row.workspace_id}, ${row.campaign_id},
+          ${row.lead_id}, ${row.outreach_job_id},
+          ${row.outcome_event_id}, ${tx.json(payload)}, ${payloadHash},
+          'PENDING'
+        )
+        ON CONFLICT (workspace_id, outcome_event_id) DO NOTHING
+        RETURNING id
+      `;
+      if (inserted.length === 0) return;
+      if (inserted.length !== 1) {
+        throw new Error(
+          "Positive-outcome review backfill changed an unexpected row count."
+        );
+      }
+      const audit = await tx<{ id: number }[]>`
+        INSERT INTO prospect_positive_outcome_review_events (
+          event_id, workspace_id, review_row_id, from_state,
+          to_state, actor, receipt_hash, details
+        ) VALUES (
+          ${randomUUID()}, ${row.workspace_id}, ${inserted[0].id},
+          NULL, 'PENDING', 'schema_backfill', ${payloadHash},
+          ${tx.json({
+            outcomeEventId: row.outcome_event_id,
+            externalAction: "none",
+          })}
+        )
+        RETURNING id
+      `;
+      if (audit.length !== 1) {
+        throw new Error(
+          "Positive-outcome review backfill audit was not recorded."
+        );
+      }
+    });
+  }
+}
+
+export const PROSPECT_SCHEMA_ADVISORY_LOCK_CLASS_ID = 0x534d4952;
+export const PROSPECT_SCHEMA_ADVISORY_LOCK_OBJECT_ID = 0x50524f53;
+
+export async function withProspectorSchemaLock<T>(
+  rootSql: any,
+  operation: (schemaSql: any) => Promise<T>
+): Promise<T> {
+  if (typeof rootSql?.reserve !== "function") {
+    throw new Error(
+      "Prospector schema initialization requires a reserved Postgres connection."
+    );
+  }
+
+  const connection = await rootSql.reserve();
+  let acquired = false;
+  let result: T | undefined;
+  let operationError: unknown;
+  try {
+    const rows = await connection<{ acquired: boolean }[]>`
+      SELECT pg_try_advisory_lock(
+        ${PROSPECT_SCHEMA_ADVISORY_LOCK_CLASS_ID},
+        ${PROSPECT_SCHEMA_ADVISORY_LOCK_OBJECT_ID}
+      ) AS acquired
+    `;
+    if (rows.length !== 1 || rows[0].acquired !== true) {
+      throw new Error(
+        "Prospector schema initialization is already running on another instance."
+      );
+    }
+    acquired = true;
+    result = await operation(connection);
+  } catch (error) {
+    operationError = error;
+  }
+
+  let unlockError: unknown;
+  if (acquired) {
+    try {
+      const rows = await connection<{ released: boolean }[]>`
+        SELECT pg_advisory_unlock(
+          ${PROSPECT_SCHEMA_ADVISORY_LOCK_CLASS_ID},
+          ${PROSPECT_SCHEMA_ADVISORY_LOCK_OBJECT_ID}
+        ) AS released
+      `;
+      if (rows.length !== 1 || rows[0].released !== true) {
+        throw new Error(
+          "Prospector schema advisory lock was not released."
+        );
+      }
+    } catch (error) {
+      unlockError = error;
+    }
+  }
+
+  let releaseError: unknown;
+  try {
+    connection.release();
+  } catch (error) {
+    releaseError = error;
+  }
+
+  if (operationError) throw operationError;
+  if (unlockError) throw unlockError;
+  if (releaseError) throw releaseError;
+  return result as T;
+}
+
+async function applyProspectorSchema(sql: any): Promise<void> {
   console.log("[prospector] Initializing prospector schema...");
   await sql`
     CREATE TABLE IF NOT EXISTS prospecting_campaigns (
@@ -90,6 +277,9 @@ export async function initProspectorSchema(): Promise<void> {
       interested          INTEGER NOT NULL DEFAULT 0,
       not_interested      INTEGER NOT NULL DEFAULT 0,
       voicemails          INTEGER NOT NULL DEFAULT 0,
+      workspace_id        INTEGER NOT NULL DEFAULT 1,
+      external_source     TEXT,
+      external_id         TEXT,
       created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
@@ -99,7 +289,10 @@ export async function initProspectorSchema(): Promise<void> {
       id             SERIAL PRIMARY KEY,
       campaign_id    INTEGER NOT NULL REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
       business_name  TEXT NOT NULL,
-      phone          TEXT NOT NULL,
+      phone          TEXT,
+      email          TEXT,
+      email_verification TEXT,
+      phone_contact_mode TEXT,
       website        TEXT,
       industry       TEXT,
       address        TEXT,
@@ -108,6 +301,9 @@ export async function initProspectorSchema(): Promise<void> {
       contact_name   TEXT,
       contact_title  TEXT,
       source         TEXT NOT NULL DEFAULT 'manual',
+      external_id    TEXT,
+      payload_hash   TEXT,
+      research_evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
       status         TEXT NOT NULL DEFAULT 'pending',
       call_sid       TEXT,
       notes          TEXT,
@@ -118,24 +314,963 @@ export async function initProspectorSchema(): Promise<void> {
   `;
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS score INTEGER`;
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS personalized_hook TEXT`;
+  await sql`ALTER TABLE prospect_leads ALTER COLUMN phone DROP NOT NULL`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS email TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS email_verification TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS phone_contact_mode TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS external_id TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS payload_hash TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS research_evidence JSONB NOT NULL DEFAULT '[]'::jsonb`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS review_state TEXT NOT NULL DEFAULT 'pending_review'`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS reviewed_by TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ`;
   await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS external_source TEXT`;
+  await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS external_id TEXT`;
+  await sql`ALTER TABLE prospecting_campaigns ALTER COLUMN workspace_id DROP DEFAULT`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospecting_campaigns_external
+    ON prospecting_campaigns(workspace_id, external_source, external_id)
+    WHERE external_source IS NOT NULL AND external_id IS NOT NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_leads_external
+    ON prospect_leads(campaign_id, source, external_id)
+    WHERE external_id IS NOT NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_alchemy_research_receipts (
+      id            SERIAL PRIMARY KEY,
+      workspace_id  INTEGER NOT NULL,
+      source        TEXT NOT NULL DEFAULT 'velvet_alchemy_research',
+      external_id   TEXT NOT NULL,
+      payload_hash  TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'processing'
+        CHECK (status IN ('processing', 'received')),
+      campaign_id   INTEGER REFERENCES prospecting_campaigns(id) ON DELETE SET NULL,
+      prospect_id   INTEGER REFERENCES prospect_leads(id) ON DELETE SET NULL,
+      received_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, source, external_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_alchemy_research_receipts_workspace
+    ON velvet_alchemy_research_receipts(workspace_id, received_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_lead_source_requests (
+      id                    SERIAL PRIMARY KEY,
+      request_id            TEXT NOT NULL UNIQUE,
+      workspace_id          INTEGER NOT NULL,
+      state                 TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN (
+          'PREPARED', 'APPROVED', 'SENDING', 'PARTIAL', 'COMPLETED',
+          'EMPTY', 'FAILED', 'CANCELLED', 'EXPIRED'
+        )),
+      criteria              JSONB NOT NULL,
+      request_payload       JSONB NOT NULL,
+      request_payload_hash  TEXT NOT NULL,
+      prepared_by           TEXT NOT NULL,
+      approved_by           TEXT,
+      approved_at           TIMESTAMPTZ,
+      approval_attestations JSONB,
+      expires_at            TIMESTAMPTZ NOT NULL,
+      attempts              INTEGER NOT NULL DEFAULT 0,
+      remote_batch_id       INTEGER,
+      remote_original_state TEXT,
+      remote_response       JSONB,
+      remote_response_hash  TEXT,
+      applied_learning_candidate JSONB,
+      imported_count        INTEGER NOT NULL DEFAULT 0,
+      failed_count          INTEGER NOT NULL DEFAULT 0,
+      last_error            TEXT,
+      dispatch_requested_by TEXT,
+      dispatch_requested_at TIMESTAMPTZ,
+      dispatch_response_at  TIMESTAMPTZ,
+      completed_at          TIMESTAMPTZ,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_lead_source_requests_workspace
+    ON velvet_lead_source_requests(workspace_id, created_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_lead_source_request_items (
+      id                    SERIAL PRIMARY KEY,
+      request_row_id        INTEGER NOT NULL
+        REFERENCES velvet_lead_source_requests(id) ON DELETE CASCADE,
+      workspace_id          INTEGER NOT NULL,
+      external_id           TEXT NOT NULL,
+      prospect_payload_hash TEXT NOT NULL,
+      import_state          TEXT NOT NULL
+        CHECK (import_state IN ('IMPORTED', 'DUPLICATE', 'FAILED')),
+      campaign_id           INTEGER,
+      prospect_id           INTEGER,
+      error_code            TEXT,
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (request_row_id, external_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_lead_source_items_request
+    ON velvet_lead_source_request_items(
+      workspace_id, request_row_id, created_at
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_lead_source_request_events (
+      id             SERIAL PRIMARY KEY,
+      event_id       TEXT NOT NULL UNIQUE,
+      workspace_id   INTEGER NOT NULL,
+      request_row_id INTEGER NOT NULL
+        REFERENCES velvet_lead_source_requests(id) ON DELETE CASCADE,
+      from_state     TEXT,
+      to_state       TEXT NOT NULL,
+      actor          TEXT NOT NULL,
+      payload_hash   TEXT NOT NULL,
+      details        JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_lead_source_events_request
+    ON velvet_lead_source_request_events(
+      workspace_id, request_row_id, occurred_at
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_discovery_requests (
+      id                    SERIAL PRIMARY KEY,
+      request_id            TEXT NOT NULL UNIQUE,
+      workspace_id          INTEGER NOT NULL,
+      state                 TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN (
+          'PREPARED', 'APPROVED', 'SENDING', 'SUBMITTED',
+          'FAILED', 'CANCELLED', 'EXPIRED'
+        )),
+      criteria              JSONB NOT NULL,
+      request_payload       JSONB NOT NULL,
+      request_payload_hash  TEXT NOT NULL,
+      prepared_by           TEXT NOT NULL,
+      approved_by           TEXT,
+      approved_at           TIMESTAMPTZ,
+      approval_attestations JSONB,
+      expires_at            TIMESTAMPTZ NOT NULL,
+      attempts              INTEGER NOT NULL DEFAULT 0,
+      remote_discovery_id   INTEGER,
+      remote_state          TEXT
+        CHECK (
+          remote_state IS NULL OR remote_state IN (
+            'PREPARED', 'APPROVED', 'QUEUED', 'RUNNING',
+            'COMPLETED', 'EMPTY', 'PARTIAL', 'FAILED',
+            'REJECTED', 'CANCELLED', 'EXPIRED'
+          )
+        ),
+      remote_prepared_response JSONB,
+      remote_prepared_hash  TEXT,
+      remote_status_response JSONB,
+      remote_status_hash    TEXT,
+      quote_payload         JSONB,
+      quote_payload_hash    TEXT,
+      effective_criteria    JSONB,
+      created_lead_count    INTEGER NOT NULL DEFAULT 0,
+      ready_lead_count      INTEGER NOT NULL DEFAULT 0,
+      skipped_lead_count    INTEGER NOT NULL DEFAULT 0,
+      failed_lead_count     INTEGER NOT NULL DEFAULT 0,
+      provider_requests     INTEGER NOT NULL DEFAULT 0,
+      approved_max_spend_cents INTEGER,
+      last_error            TEXT,
+      dispatch_requested_by TEXT,
+      dispatch_requested_at TIMESTAMPTZ,
+      dispatch_response_at  TIMESTAMPTZ,
+      status_checked_by     TEXT,
+      status_checked_at     TIMESTAMPTZ,
+      completed_at          TIMESTAMPTZ,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_discovery_requests_workspace
+    ON velvet_discovery_requests(workspace_id, created_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_discovery_request_events (
+      id             SERIAL PRIMARY KEY,
+      event_id       TEXT NOT NULL UNIQUE,
+      workspace_id   INTEGER NOT NULL,
+      request_row_id INTEGER NOT NULL
+        REFERENCES velvet_discovery_requests(id) ON DELETE CASCADE,
+      from_state     TEXT,
+      to_state       TEXT NOT NULL,
+      actor          TEXT NOT NULL,
+      payload_hash   TEXT NOT NULL,
+      details        JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_discovery_events_request
+    ON velvet_discovery_request_events(
+      workspace_id, request_row_id, occurred_at
+    )
+  `;
+  await sql`
+    ALTER TABLE velvet_lead_source_requests
+    ADD COLUMN IF NOT EXISTS discovery_request_id INTEGER
+      REFERENCES velvet_discovery_requests(id) ON DELETE SET NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_velvet_source_discovery_unique
+    ON velvet_lead_source_requests(workspace_id, discovery_request_id)
+    WHERE discovery_request_id IS NOT NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_outreach_jobs (
+      id                  SERIAL PRIMARY KEY,
+      approval_id         TEXT NOT NULL UNIQUE,
+      workspace_id        INTEGER NOT NULL,
+      campaign_id         INTEGER NOT NULL REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      lead_id             INTEGER NOT NULL REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      channel             TEXT NOT NULL CHECK (channel IN ('email', 'call')),
+      state               TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN (
+          'PREPARED', 'APPROVED', 'SENDING', 'SENT', 'FAILED',
+          'REJECTED', 'EXPIRED', 'CANCELLED'
+        )),
+      recipient           TEXT NOT NULL,
+      subject             TEXT,
+      content             TEXT NOT NULL,
+      variant_key         TEXT NOT NULL DEFAULT 'operator-v1',
+      contract_version    TEXT NOT NULL,
+      evidence_hash       TEXT NOT NULL,
+      draft_fingerprint   TEXT NOT NULL,
+      payload             JSONB NOT NULL,
+      payload_hash        TEXT NOT NULL,
+      max_cost_cents      INTEGER NOT NULL CHECK (max_cost_cents >= 0),
+      prepared_by         TEXT NOT NULL,
+      approved_by         TEXT,
+      approved_at         TIMESTAMPTZ,
+      approval_attestations JSONB,
+      qc_model_review_id  TEXT,
+      qc_model_review_receipt_hash TEXT,
+      expires_at          TIMESTAMPTZ NOT NULL,
+      sent_at             TIMESTAMPTZ,
+      provider_name       TEXT,
+      provider_idempotency_key TEXT,
+      provider_message_id TEXT,
+      provider_cost_cents INTEGER,
+      provider_requested_at TIMESTAMPTZ,
+      provider_response_at TIMESTAMPTZ,
+      provider_attempts   INTEGER NOT NULL DEFAULT 0,
+      is_seed             BOOLEAN NOT NULL DEFAULT FALSE,
+      execution_proof_reference TEXT,
+      failure_code        TEXT,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_outreach_active_fingerprint
+    ON prospect_outreach_jobs(workspace_id, lead_id, draft_fingerprint)
+    WHERE state IN ('PREPARED', 'APPROVED', 'SENDING')
+  `;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS variant_key TEXT NOT NULL DEFAULT 'operator-v1'`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS approval_attestations JSONB`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS qc_model_review_id TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS qc_model_review_receipt_hash TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS execution_proof_reference TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_name TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_idempotency_key TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_message_id TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_cost_cents INTEGER`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_requested_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_response_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_attempts INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS is_seed BOOLEAN NOT NULL DEFAULT FALSE`;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_outreach_jobs_workspace
+    ON prospect_outreach_jobs(workspace_id, created_at DESC)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_outreach_provider_message
+    ON prospect_outreach_jobs(provider_name, provider_message_id)
+    WHERE provider_name IS NOT NULL AND provider_message_id IS NOT NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_qc_revision_items (
+      id                     SERIAL PRIMARY KEY,
+      revision_id            TEXT NOT NULL UNIQUE,
+      workspace_id           INTEGER NOT NULL,
+      campaign_id            INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      lead_id                INTEGER NOT NULL
+        REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      channel                TEXT NOT NULL CHECK (channel IN ('email', 'call')),
+      state                  TEXT NOT NULL DEFAULT 'REVISION_REQUIRED'
+        CHECK (state IN ('REVISION_REQUIRED', 'REJECTED', 'SUPERSEDED')),
+      recipient              TEXT NOT NULL,
+      subject                TEXT,
+      content                TEXT NOT NULL,
+      variant_key            TEXT NOT NULL,
+      evidence_hash          TEXT NOT NULL,
+      draft_fingerprint      TEXT NOT NULL,
+      payload                JSONB NOT NULL,
+      payload_hash           TEXT NOT NULL,
+      prepared_by            TEXT NOT NULL,
+      prepared_at            TIMESTAMPTZ NOT NULL,
+      rejected_by            TEXT,
+      rejected_at            TIMESTAMPTZ,
+      rejection_reason       TEXT,
+      superseded_by_job_id   INTEGER
+        REFERENCES prospect_outreach_jobs(id) ON DELETE SET NULL,
+      superseded_at          TIMESTAMPTZ,
+      created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, lead_id, draft_fingerprint)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_qc_revision_items_workspace
+    ON prospect_qc_revision_items(workspace_id, lead_id, created_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_qc_revision_events (
+      id               SERIAL PRIMARY KEY,
+      event_id         TEXT NOT NULL UNIQUE,
+      workspace_id     INTEGER NOT NULL,
+      revision_row_id  INTEGER NOT NULL
+        REFERENCES prospect_qc_revision_items(id) ON DELETE CASCADE,
+      from_state       TEXT,
+      to_state         TEXT NOT NULL,
+      actor            TEXT NOT NULL,
+      payload_hash     TEXT NOT NULL,
+      details          JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_qc_revision_events_revision
+    ON prospect_qc_revision_events(
+      workspace_id, revision_row_id, occurred_at
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_qc_model_reviews (
+      id                         SERIAL PRIMARY KEY,
+      review_id                  TEXT NOT NULL UNIQUE,
+      workspace_id               INTEGER NOT NULL,
+      outreach_job_id            INTEGER NOT NULL
+        REFERENCES prospect_outreach_jobs(id) ON DELETE CASCADE,
+      state                      TEXT NOT NULL
+        CHECK (state IN (
+          'SENDING', 'COMPLETED', 'DEFINITIVE_FAILURE', 'OUTCOME_UNKNOWN'
+        )),
+      request_hash               TEXT NOT NULL,
+      payload_hash               TEXT NOT NULL,
+      draft_hash                 TEXT NOT NULL,
+      evidence_hash              TEXT NOT NULL,
+      provider                   TEXT NOT NULL,
+      model                      TEXT NOT NULL,
+      reserved_cost_cents        INTEGER NOT NULL
+        CHECK (reserved_cost_cents BETWEEN 1 AND 10),
+      provider_request_id        TEXT,
+      provider_response_hash     TEXT,
+      provider_reported_cost_usd NUMERIC(12, 8),
+      total_tokens               INTEGER,
+      review                     JSONB,
+      receipt                    JSONB,
+      receipt_hash               TEXT,
+      failure_code               TEXT,
+      requested_by               TEXT NOT NULL,
+      requested_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at               TIMESTAMPTZ,
+      updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, outreach_job_id, request_hash)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_qc_model_reviews_workspace
+    ON prospect_qc_model_reviews(workspace_id, requested_at DESC)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_qc_model_reviews_budget
+    ON prospect_qc_model_reviews(workspace_id, requested_at)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_email_suppressions (
+      id            SERIAL PRIMARY KEY,
+      workspace_id  INTEGER NOT NULL,
+      email         TEXT NOT NULL,
+      reason        TEXT NOT NULL,
+      source        TEXT NOT NULL,
+      active        BOOLEAN NOT NULL DEFAULT TRUE,
+      recorded_by   TEXT NOT NULL,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, email)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_email_suppressions_active
+    ON prospect_email_suppressions(workspace_id, email)
+    WHERE active = TRUE
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_email_provider_events (
+      id                  SERIAL PRIMARY KEY,
+      workspace_id        INTEGER NOT NULL,
+      provider            TEXT NOT NULL,
+      provider_event_id   TEXT NOT NULL,
+      provider_message_id TEXT,
+      event_type          TEXT NOT NULL,
+      payload_hash        TEXT NOT NULL,
+      process_status      TEXT NOT NULL DEFAULT 'RECEIVED'
+        CHECK (process_status IN (
+          'RECEIVED', 'PROCESSED', 'IGNORED', 'RETRY', 'REVIEW_REQUIRED'
+        )),
+      outreach_job_id     INTEGER REFERENCES prospect_outreach_jobs(id) ON DELETE SET NULL,
+      details             JSONB NOT NULL DEFAULT '{}'::jsonb,
+      received_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at        TIMESTAMPTZ,
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (provider, provider_event_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_email_provider_events_workspace
+    ON prospect_email_provider_events(workspace_id, received_at DESC)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_email_provider_events_retry
+    ON prospect_email_provider_events(workspace_id, updated_at)
+    WHERE process_status IN ('RETRY', 'REVIEW_REQUIRED')
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_outreach_events (
+      id            SERIAL PRIMARY KEY,
+      event_id      TEXT NOT NULL UNIQUE,
+      workspace_id  INTEGER NOT NULL,
+      outreach_job_id INTEGER NOT NULL REFERENCES prospect_outreach_jobs(id) ON DELETE CASCADE,
+      from_state    TEXT,
+      to_state      TEXT NOT NULL,
+      actor         TEXT NOT NULL,
+      payload_hash  TEXT NOT NULL,
+      details       JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_outreach_events_job
+    ON prospect_outreach_events(workspace_id, outreach_job_id, occurred_at)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_inbox_placement_tests (
+      id                     SERIAL PRIMARY KEY,
+      test_id                TEXT NOT NULL UNIQUE,
+      workspace_id           INTEGER NOT NULL,
+      target_campaign_id     INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      state                  TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN (
+          'PREPARED', 'PASSED', 'FAILED', 'CANCELLED', 'EXPIRED'
+        )),
+      control_variant_key    TEXT NOT NULL,
+      challenger_variant_key TEXT NOT NULL,
+      definition             JSONB NOT NULL,
+      definition_hash        TEXT NOT NULL,
+      receipt                JSONB,
+      receipt_hash           TEXT,
+      prepared_by            TEXT NOT NULL,
+      finalized_by           TEXT,
+      finalized_at           TIMESTAMPTZ,
+      valid_until            TIMESTAMPTZ,
+      expires_at             TIMESTAMPTZ NOT NULL,
+      cancel_reason          TEXT,
+      created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (control_variant_key <> challenger_variant_key),
+      CHECK (
+        (state IN ('PASSED', 'FAILED') AND receipt IS NOT NULL
+          AND receipt_hash IS NOT NULL AND finalized_at IS NOT NULL)
+        OR
+        (state NOT IN ('PASSED', 'FAILED') AND receipt IS NULL
+          AND receipt_hash IS NULL)
+      )
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_inbox_placement_tests_workspace
+    ON prospect_inbox_placement_tests(
+      workspace_id, target_campaign_id, created_at DESC
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_inbox_placement_tests_pass
+    ON prospect_inbox_placement_tests(
+      workspace_id, target_campaign_id, valid_until DESC
+    )
+    WHERE state = 'PASSED'
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_inbox_placement_items (
+      id                  SERIAL PRIMARY KEY,
+      workspace_id        INTEGER NOT NULL,
+      test_row_id         INTEGER NOT NULL
+        REFERENCES prospect_inbox_placement_tests(id) ON DELETE CASCADE,
+      slot                INTEGER NOT NULL CHECK (slot BETWEEN 1 AND 5),
+      mailbox_label       TEXT NOT NULL,
+      provider            TEXT NOT NULL
+        CHECK (provider IN (
+          'google_workspace', 'microsoft_365', 'yahoo_aol'
+        )),
+      recipient_hash      TEXT NOT NULL,
+      assigned_variant_key TEXT NOT NULL,
+      outreach_job_id     INTEGER NOT NULL
+        REFERENCES prospect_outreach_jobs(id) ON DELETE RESTRICT,
+      inspection          JSONB,
+      inspection_hash     TEXT,
+      inspected_by        TEXT,
+      inspected_at        TIMESTAMPTZ,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (test_row_id, slot),
+      UNIQUE (test_row_id, outreach_job_id),
+      CHECK (
+        (inspection IS NULL AND inspection_hash IS NULL
+          AND inspected_by IS NULL AND inspected_at IS NULL)
+        OR
+        (inspection IS NOT NULL AND inspection_hash IS NOT NULL
+          AND inspected_by IS NOT NULL AND inspected_at IS NOT NULL)
+      )
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_inbox_placement_items_test
+    ON prospect_inbox_placement_items(
+      workspace_id, test_row_id, slot
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_inbox_placement_events (
+      id              SERIAL PRIMARY KEY,
+      event_id        TEXT NOT NULL UNIQUE,
+      workspace_id    INTEGER NOT NULL,
+      test_row_id     INTEGER NOT NULL
+        REFERENCES prospect_inbox_placement_tests(id) ON DELETE CASCADE,
+      from_state      TEXT,
+      to_state        TEXT NOT NULL,
+      actor           TEXT NOT NULL,
+      definition_hash TEXT NOT NULL,
+      details         JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_inbox_placement_events_test
+    ON prospect_inbox_placement_events(
+      workspace_id, test_row_id, occurred_at
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_outcome_events (
+      id                  SERIAL PRIMARY KEY,
+      workspace_id        INTEGER NOT NULL,
+      campaign_id         INTEGER NOT NULL REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      lead_id             INTEGER NOT NULL REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      outreach_job_id     INTEGER REFERENCES prospect_outreach_jobs(id) ON DELETE SET NULL,
+      source              TEXT NOT NULL,
+      external_event_id   TEXT NOT NULL,
+      outcome             TEXT NOT NULL,
+      occurred_at         TIMESTAMPTZ NOT NULL,
+      notes               TEXT,
+      recorded_by         TEXT NOT NULL,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, source, external_event_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_outcome_events_lead
+    ON prospect_outcome_events(workspace_id, lead_id, occurred_at DESC)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_outcome_job_state
+    ON prospect_outcome_events(workspace_id, outreach_job_id, outcome)
+    WHERE outreach_job_id IS NOT NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_positive_outcome_reviews (
+      id                          SERIAL PRIMARY KEY,
+      review_id                   TEXT NOT NULL UNIQUE,
+      workspace_id                INTEGER NOT NULL,
+      campaign_id                 INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      lead_id                     INTEGER NOT NULL
+        REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      outreach_job_id             INTEGER NOT NULL
+        REFERENCES prospect_outreach_jobs(id) ON DELETE RESTRICT,
+      outcome_event_id            INTEGER NOT NULL
+        REFERENCES prospect_outcome_events(id) ON DELETE CASCADE,
+      payload                     JSONB NOT NULL,
+      payload_hash                TEXT NOT NULL,
+      state                       TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (state IN ('PENDING', 'ACKNOWLEDGED')),
+      acknowledgment_request      JSONB,
+      acknowledgment_request_hash TEXT,
+      acknowledgment_receipt      JSONB,
+      acknowledgment_receipt_hash TEXT,
+      acknowledged_by             TEXT,
+      acknowledged_at             TIMESTAMPTZ,
+      created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, outcome_event_id),
+      CHECK (
+        (
+          state = 'PENDING'
+          AND acknowledgment_request IS NULL
+          AND acknowledgment_request_hash IS NULL
+          AND acknowledgment_receipt IS NULL
+          AND acknowledgment_receipt_hash IS NULL
+          AND acknowledged_by IS NULL
+          AND acknowledged_at IS NULL
+        )
+        OR
+        (
+          state = 'ACKNOWLEDGED'
+          AND acknowledgment_request IS NOT NULL
+          AND acknowledgment_request_hash IS NOT NULL
+          AND acknowledgment_receipt IS NOT NULL
+          AND acknowledgment_receipt_hash IS NOT NULL
+          AND acknowledged_by IS NOT NULL
+          AND acknowledged_at IS NOT NULL
+        )
+      )
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_positive_outcome_reviews_pending
+    ON prospect_positive_outcome_reviews(
+      workspace_id, created_at, review_id
+    )
+    WHERE state = 'PENDING'
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_positive_outcome_review_events (
+      id              SERIAL PRIMARY KEY,
+      event_id        TEXT NOT NULL UNIQUE,
+      workspace_id    INTEGER NOT NULL,
+      review_row_id   INTEGER NOT NULL
+        REFERENCES prospect_positive_outcome_reviews(id) ON DELETE CASCADE,
+      from_state      TEXT,
+      to_state        TEXT NOT NULL,
+      actor           TEXT NOT NULL,
+      receipt_hash    TEXT NOT NULL,
+      details         JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_positive_outcome_review_events
+    ON prospect_positive_outcome_review_events(
+      workspace_id, review_row_id, occurred_at
+    )
+  `;
+  await backfillPositiveOutcomeReviews();
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_outcome_outbox (
+      id                    SERIAL PRIMARY KEY,
+      workspace_id          INTEGER NOT NULL,
+      lead_id               INTEGER NOT NULL REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      outcome_event_id      INTEGER NOT NULL REFERENCES prospect_outcome_events(id) ON DELETE CASCADE,
+      external_event_id     TEXT NOT NULL,
+      external_prospect_id  TEXT NOT NULL,
+      payload               JSONB NOT NULL,
+      payload_hash          TEXT NOT NULL,
+      state                 TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN (
+          'PREPARED', 'SENDING', 'DISPATCHED', 'FAILED', 'CANCELLED'
+        )),
+      attempts              INTEGER NOT NULL DEFAULT 0,
+      last_error            TEXT,
+      dispatch_idempotency_key TEXT,
+      dispatch_requested_by  TEXT,
+      dispatch_requested_at TIMESTAMPTZ,
+      dispatch_response_at  TIMESTAMPTZ,
+      remote_event_id       INTEGER,
+      dispatched_at         TIMESTAMPTZ,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, external_event_id)
+    )
+  `;
+  await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS dispatch_idempotency_key TEXT
+  `;
+  await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS dispatch_requested_by TEXT
+  `;
+  await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS dispatch_requested_at TIMESTAMPTZ
+  `;
+  await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS dispatch_response_at TIMESTAMPTZ
+  `;
+  await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS remote_event_id INTEGER
+  `;
+  await sql`
+    DO $$
+    DECLARE
+      state_constraint TEXT;
+    BEGIN
+      SELECT pg_get_constraintdef(oid)
+      INTO state_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'velvet_outcome_outbox'::regclass
+        AND conname = 'velvet_outcome_outbox_state_check';
+
+      IF state_constraint IS NULL OR
+         POSITION('SENDING' IN state_constraint) = 0 THEN
+        ALTER TABLE velvet_outcome_outbox
+        DROP CONSTRAINT IF EXISTS velvet_outcome_outbox_state_check;
+        ALTER TABLE velvet_outcome_outbox
+        ADD CONSTRAINT velvet_outcome_outbox_state_check
+        CHECK (state IN (
+          'PREPARED', 'SENDING', 'DISPATCHED', 'FAILED', 'CANCELLED'
+        ));
+      END IF;
+    END
+    $$
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_outcome_outbox_pending
+    ON velvet_outcome_outbox(workspace_id, created_at)
+    WHERE state = 'PREPARED'
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_outcome_dispatch_events (
+      id                  SERIAL PRIMARY KEY,
+      event_id            TEXT NOT NULL UNIQUE,
+      workspace_id        INTEGER NOT NULL,
+      outbox_id           INTEGER NOT NULL REFERENCES velvet_outcome_outbox(id) ON DELETE CASCADE,
+      from_state          TEXT,
+      to_state            TEXT NOT NULL,
+      actor               TEXT NOT NULL,
+      payload_hash        TEXT NOT NULL,
+      details             JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_outcome_dispatch_events_outbox
+    ON velvet_outcome_dispatch_events(workspace_id, outbox_id, occurred_at)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_message_experiments (
+      id                      SERIAL PRIMARY KEY,
+      experiment_id           TEXT NOT NULL UNIQUE,
+      workspace_id            INTEGER NOT NULL,
+      campaign_id             INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      channel                 TEXT NOT NULL CHECK (channel IN ('email', 'call')),
+      state                   TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN ('PREPARED', 'ACTIVE', 'CLOSED', 'CANCELLED')),
+      control_variant_key     TEXT NOT NULL,
+      challenger_variant_key  TEXT NOT NULL,
+      allocation_basis_points INTEGER NOT NULL DEFAULT 5000
+        CHECK (allocation_basis_points = 5000),
+      definition              JSONB NOT NULL,
+      definition_hash         TEXT NOT NULL,
+      prepared_by             TEXT NOT NULL,
+      activated_by            TEXT,
+      activated_at            TIMESTAMPTZ,
+      closed_by               TEXT,
+      closed_at               TIMESTAMPTZ,
+      inbox_placement_test_id  TEXT,
+      inbox_placement_receipt_hash TEXT,
+      created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (control_variant_key <> challenger_variant_key)
+    )
+  `;
+  await sql`ALTER TABLE prospect_message_experiments ADD COLUMN IF NOT EXISTS inbox_placement_test_id TEXT`;
+  await sql`ALTER TABLE prospect_message_experiments ADD COLUMN IF NOT EXISTS inbox_placement_receipt_hash TEXT`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_message_experiment_active
+    ON prospect_message_experiments(workspace_id, campaign_id, channel)
+    WHERE state = 'ACTIVE'
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_message_experiment_enrollment
+    ON prospect_outreach_jobs(
+      workspace_id,
+      lead_id,
+      ((payload->'experimentAssignment'->>'experimentId'))
+    )
+    WHERE payload->'experimentAssignment'->>'experimentId' IS NOT NULL
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_message_experiments_workspace
+    ON prospect_message_experiments(workspace_id, created_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_message_experiment_events (
+      id                  SERIAL PRIMARY KEY,
+      event_id            TEXT NOT NULL UNIQUE,
+      workspace_id        INTEGER NOT NULL,
+      experiment_row_id   INTEGER NOT NULL
+        REFERENCES prospect_message_experiments(id) ON DELETE CASCADE,
+      from_state          TEXT,
+      to_state            TEXT NOT NULL,
+      actor               TEXT NOT NULL,
+      definition_hash     TEXT NOT NULL,
+      details             JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_message_experiment_events
+    ON prospect_message_experiment_events(
+      workspace_id, experiment_row_id, occurred_at
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_learning_candidates (
+      id              SERIAL PRIMARY KEY,
+      workspace_id    INTEGER NOT NULL,
+      candidate_key   TEXT NOT NULL,
+      version         INTEGER NOT NULL,
+      state           TEXT NOT NULL DEFAULT 'CANDIDATE'
+        CHECK (state IN ('CANDIDATE', 'APPROVED', 'REJECTED')),
+      proposal        JSONB NOT NULL,
+      evidence        JSONB NOT NULL,
+      sample_size     INTEGER NOT NULL CHECK (sample_size >= 0),
+      generated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      decided_by      TEXT,
+      decided_at      TIMESTAMPTZ,
+      UNIQUE (workspace_id, candidate_key, version)
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_message_policy_releases (
+      id                    SERIAL PRIMARY KEY,
+      release_id            TEXT NOT NULL UNIQUE,
+      workspace_id          INTEGER NOT NULL,
+      campaign_id           INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE RESTRICT,
+      channel               TEXT NOT NULL
+        CHECK (channel IN ('email', 'call')),
+      version               INTEGER NOT NULL CHECK (version > 0),
+      action                TEXT NOT NULL
+        CHECK (action IN ('PROMOTE', 'ROLLBACK')),
+      champion_variant_key  TEXT NOT NULL,
+      previous_champion_variant_key TEXT NOT NULL,
+      source_candidate_id   INTEGER
+        REFERENCES prospect_learning_candidates(id) ON DELETE RESTRICT,
+      rollback_of_release_id TEXT,
+      release               JSONB NOT NULL,
+      release_hash          TEXT NOT NULL,
+      applied_by            TEXT NOT NULL,
+      applied_at            TIMESTAMPTZ NOT NULL,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, campaign_id, channel, version),
+      CHECK (champion_variant_key <> previous_champion_variant_key),
+      CHECK (
+        (action = 'PROMOTE' AND source_candidate_id IS NOT NULL
+          AND rollback_of_release_id IS NULL)
+        OR
+        (action = 'ROLLBACK' AND source_candidate_id IS NULL
+          AND rollback_of_release_id IS NOT NULL)
+      )
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_message_policy_candidate
+    ON prospect_message_policy_releases(
+      workspace_id, source_candidate_id
+    )
+    WHERE action = 'PROMOTE' AND source_candidate_id IS NOT NULL
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_message_policy_current
+    ON prospect_message_policy_releases(
+      workspace_id, campaign_id, channel, version DESC
+    )
+  `;
   console.log("[prospector] Prospector schema OK.");
+}
+
+export async function initProspectorSchema(): Promise<void> {
+  await withProspectorSchemaLock(sql, applyProspectorSchema);
 }
 
 // ── Campaign CRUD ──────────────────────────────────────────────────────────────
 
-export async function getCampaigns(): Promise<ProspectingCampaign[]> {
-  return sql<ProspectingCampaign[]>`SELECT * FROM prospecting_campaigns ORDER BY created_at DESC`;
+export async function getCampaigns(workspaceId: number): Promise<ProspectingCampaign[]> {
+  return sql<ProspectingCampaign[]>`
+    SELECT
+      c.*,
+      COUNT(l.id)::int AS total_leads,
+      COUNT(l.id) FILTER (WHERE l.status != 'pending')::int AS called,
+      COUNT(l.id) FILTER (WHERE l.status = 'interested')::int AS interested,
+      COUNT(l.id) FILTER (WHERE l.status = 'not_interested')::int
+        AS not_interested,
+      COUNT(l.id) FILTER (WHERE l.status = 'voicemail')::int AS voicemails
+    FROM prospecting_campaigns c
+    LEFT JOIN prospect_leads l ON l.campaign_id = c.id
+    WHERE c.workspace_id = ${workspaceId}
+      AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+    GROUP BY c.id
+    ORDER BY c.created_at DESC
+  `;
 }
 
-export async function getCampaignById(id: number): Promise<ProspectingCampaign | null> {
-  const rows = await sql<ProspectingCampaign[]>`SELECT * FROM prospecting_campaigns WHERE id = ${id}`;
+export async function getCampaignById(id: number, workspaceId: number): Promise<ProspectingCampaign | null> {
+  const rows = await sql<ProspectingCampaign[]>`
+    SELECT
+      c.*,
+      COUNT(l.id)::int AS total_leads,
+      COUNT(l.id) FILTER (WHERE l.status != 'pending')::int AS called,
+      COUNT(l.id) FILTER (WHERE l.status = 'interested')::int AS interested,
+      COUNT(l.id) FILTER (WHERE l.status = 'not_interested')::int
+        AS not_interested,
+      COUNT(l.id) FILTER (WHERE l.status = 'voicemail')::int AS voicemails
+    FROM prospecting_campaigns c
+    LEFT JOIN prospect_leads l ON l.campaign_id = c.id
+    WHERE c.id = ${id} AND c.workspace_id = ${workspaceId}
+      AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+    GROUP BY c.id
+  `;
   return rows[0] || null;
 }
 
-export async function createCampaign(data: Partial<ProspectingCampaign>): Promise<ProspectingCampaign> {
-  const rows = await sql<ProspectingCampaign[]>`
-    INSERT INTO prospecting_campaigns (name, description, agent_name, pitch_script, target_industry, target_location, max_calls_per_day, call_window_start, call_window_end)
+export async function createCampaign(
+  data: Partial<ProspectingCampaign>,
+  workspaceId: number,
+  db: any = sql
+): Promise<ProspectingCampaign> {
+  const rows = (await db`
+    INSERT INTO prospecting_campaigns (
+      name,
+      description,
+      agent_name,
+      pitch_script,
+      target_industry,
+      target_location,
+      max_calls_per_day,
+      call_window_start,
+      call_window_end,
+      workspace_id
+    )
     VALUES (
       ${data.name || "New Campaign"},
       ${data.description || null},
@@ -145,292 +1280,143 @@ export async function createCampaign(data: Partial<ProspectingCampaign>): Promis
       ${data.target_location || null},
       ${data.max_calls_per_day || 50},
       ${data.call_window_start || "09:00"},
-      ${data.call_window_end || "17:00"}
+      ${data.call_window_end || "17:00"},
+      ${workspaceId}
     )
     RETURNING *
-  `;
+  `) as ProspectingCampaign[];
   return rows[0];
 }
 
-export async function updateCampaignStatus(id: number, status: ProspectingCampaign["status"]): Promise<void> {
-  await sql`UPDATE prospecting_campaigns SET status = ${status} WHERE id = ${id}`;
+export async function updateCampaignStatus(
+  id: number,
+  status: ProspectingCampaign["status"],
+  workspaceId: number,
+  db: any = sql
+): Promise<boolean> {
+  const rows = (await db`
+    UPDATE prospecting_campaigns
+    SET status = ${status}
+    WHERE id = ${id} AND workspace_id = ${workspaceId}
+    RETURNING id
+  `) as Array<{ id: number }>;
+  return rows.length === 1;
 }
 
 // ── Lead Management ────────────────────────────────────────────────────────────
 
-export async function getLeads(campaignId?: number, status?: string): Promise<ProspectLead[]> {
+export async function getLeads(
+  workspaceId: number,
+  campaignId?: number,
+  status?: string
+): Promise<ProspectLead[]> {
   if (campaignId && status) {
-    return sql<ProspectLead[]>`SELECT * FROM prospect_leads WHERE campaign_id = ${campaignId} AND status = ${status} ORDER BY created_at DESC`;
+    return sql<ProspectLead[]>`
+      SELECT l.* FROM prospect_leads l
+      JOIN prospecting_campaigns c ON c.id = l.campaign_id
+      WHERE c.workspace_id = ${workspaceId}
+        AND l.campaign_id = ${campaignId}
+        AND l.status = ${status}
+        AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+      ORDER BY l.created_at DESC
+    `;
   }
   if (campaignId) {
-    return sql<ProspectLead[]>`SELECT * FROM prospect_leads WHERE campaign_id = ${campaignId} ORDER BY created_at DESC`;
+    return sql<ProspectLead[]>`
+      SELECT l.* FROM prospect_leads l
+      JOIN prospecting_campaigns c ON c.id = l.campaign_id
+      WHERE c.workspace_id = ${workspaceId}
+        AND l.campaign_id = ${campaignId}
+        AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+      ORDER BY l.created_at DESC
+    `;
   }
-  return sql<ProspectLead[]>`SELECT * FROM prospect_leads ORDER BY created_at DESC LIMIT 200`;
+  return sql<ProspectLead[]>`
+    SELECT l.* FROM prospect_leads l
+    JOIN prospecting_campaigns c ON c.id = l.campaign_id
+    WHERE c.workspace_id = ${workspaceId}
+      AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+      ${status ? sql`AND l.status = ${status}` : sql``}
+    ORDER BY l.created_at DESC
+    LIMIT 200
+  `;
 }
 
-export async function addLeads(campaignId: number, leads: Partial<ProspectLead & { score?: number; personalized_hook?: string }>[]): Promise<number> {
+export async function addLeads(
+  campaignId: number,
+  leads: Partial<ProspectLead & { score?: number; personalized_hook?: string }>[],
+  workspaceId: number,
+  db: any = sql
+): Promise<number> {
+  const campaignRows = (await db`
+    SELECT id
+    FROM prospecting_campaigns
+    WHERE id = ${campaignId}
+      AND workspace_id = ${workspaceId}
+      AND external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+    LIMIT 1
+  `) as Array<{ id: number }>;
+  if (!campaignRows[0]) throw new Error("Campaign not found");
+
   let added = 0;
   for (const lead of leads) {
-    if (!lead.phone || !lead.business_name) continue;
+    if (!lead.business_name || (!lead.phone && !lead.email && !lead.website)) continue;
     const score = (lead as any).score ?? null;
     const hook = (lead as any).personalized_hook ?? (lead as any).personalizedHook ?? null;
-    await sql`
-      INSERT INTO prospect_leads (campaign_id, business_name, phone, website, industry, address, city, state, contact_name, contact_title, source, score, personalized_hook)
-      VALUES (${campaignId}, ${lead.business_name}, ${lead.phone}, ${lead.website || null}, ${lead.industry || null},
+    const inserted = (await db`
+      INSERT INTO prospect_leads (campaign_id, business_name, phone, email, website, industry, address, city, state, contact_name, contact_title, source, score, personalized_hook)
+      VALUES (${campaignId}, ${lead.business_name}, ${lead.phone || null}, ${lead.email || null}, ${lead.website || null}, ${lead.industry || null},
               ${lead.address || null}, ${lead.city || null}, ${lead.state || null},
               ${lead.contact_name || null}, ${lead.contact_title || null}, ${lead.source || "manual"},
               ${score}, ${hook})
       ON CONFLICT DO NOTHING
-    `;
-    added++;
+      RETURNING id
+    `) as Array<{ id: number }>;
+    added += inserted.length;
   }
-  await sql`UPDATE prospecting_campaigns SET total_leads = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${campaignId}) WHERE id = ${campaignId}`;
+  await db`
+    UPDATE prospecting_campaigns
+    SET total_leads = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${campaignId})
+    WHERE id = ${campaignId} AND workspace_id = ${workspaceId}
+  `;
   return added;
 }
 
 export async function updateLeadStatus(
   leadId: number,
   status: ProspectLead["status"],
+  workspaceId: number,
   callSid?: string,
   notes?: string
-): Promise<void> {
-  await sql`
+): Promise<boolean> {
+  const updated = await sql<{ campaign_id: number }[]>`
     UPDATE prospect_leads SET
       status = ${status},
       call_sid = COALESCE(${callSid || null}, call_sid),
       notes = COALESCE(${notes || null}, notes),
       called_at = CASE WHEN ${status !== "pending"} THEN NOW() ELSE called_at END
     WHERE id = ${leadId}
+      AND EXISTS (
+        SELECT 1
+        FROM prospecting_campaigns c
+        WHERE c.id = prospect_leads.campaign_id
+          AND c.workspace_id = ${workspaceId}
+      )
+    RETURNING campaign_id
   `;
 
-  // Update campaign counters
-  const lead = await sql`SELECT campaign_id FROM prospect_leads WHERE id = ${leadId}`;
-  if (lead[0]) {
-    const cid = lead[0].campaign_id;
+  if (updated[0]) {
+    const cid = updated[0].campaign_id;
     await sql`
       UPDATE prospecting_campaigns SET
         called = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${cid} AND status != 'pending'),
         interested = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${cid} AND status = 'interested'),
         not_interested = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${cid} AND status = 'not_interested'),
         voicemails = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${cid} AND status = 'voicemail')
-      WHERE id = ${cid}
+      WHERE id = ${cid} AND workspace_id = ${workspaceId}
     `;
   }
-}
-
-// ── Google Places Lead Finder (Places API New) ────────────────────────────────
-// Migrated from legacy textsearch endpoint (REQUEST_DENIED on new GCP projects)
-// to Places API (New): places.googleapis.com/v1/places:searchText
-
-export async function findBusinessesViaPlaces(params: {
-  query: string;       // e.g. "plumbers in Miami FL"
-  location?: string;   // kept for API compat — encode location in query string instead
-  radius?: number;     // kept for API compat — not used by New API
-  maxResults?: number;
-}): Promise<Partial<ProspectLead>[]> {
-  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_PLACES_API_KEY not set — add it in Settings to enable lead finding");
-
-  const maxResults = params.maxResults || 20;
-  const fieldMask = [
-    "places.displayName",
-    "places.formattedAddress",
-    "places.nationalPhoneNumber",
-    "places.internationalPhoneNumber",
-    "places.websiteUri",
-    "places.types",
-    "nextPageToken",
-  ].join(",");
-
-  const leads: Partial<ProspectLead>[] = [];
-  let pageToken: string | undefined;
-
-  while (leads.length < maxResults) {
-    const body: any = {
-      textQuery: params.query,
-      maxResultCount: Math.min(20, maxResults - leads.length),
-    };
-
-    if (params.location && params.radius) {
-      const [lat, lng] = params.location.split(",").map(Number);
-      if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
-        body.locationBias = {
-          circle: {
-            center: { latitude: lat, longitude: lng },
-            radius: Number(params.radius),
-          },
-        };
-      }
-    }
-
-    if (pageToken) body.pageToken = pageToken;
-
-    const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": fieldMask,
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = await res.json() as any;
-    if (!res.ok || data?.error) {
-      const status = data?.error?.status || res.status;
-      const message = data?.error?.message || "Unknown Places API error";
-      throw new Error(`Google Places error: ${status} — ${message}`);
-    }
-
-    for (const place of (data.places || [])) {
-      if (leads.length >= maxResults) break;
-      const phoneRaw = place.nationalPhoneNumber || place.internationalPhoneNumber || "";
-      const phone = String(phoneRaw).replace(/\D/g, "").replace(/^1/, "");
-      if (phone.length >= 10) {
-        leads.push({
-          business_name: place.displayName?.text || "Unknown Business",
-          phone,
-          website: place.websiteUri,
-          address: place.formattedAddress,
-          industry: place.types?.[0]?.replace(/_/g, " "),
-          source: "google_places",
-        });
-      }
-    }
-
-    pageToken = data.nextPageToken;
-    if (!pageToken || leads.length >= maxResults) break;
-    await new Promise((r) => setTimeout(r, 1200));
-  }
-
-  return leads;
-}
-
-// ── Pitch Script Generator ─────────────────────────────────────────────────────
-
-export function buildPitchSystemPrompt(campaign: ProspectingCampaign, personalizedHook?: string): string {
-  const customPitch = campaign.pitch_script;
-  const industry = campaign.target_industry || "small business";
-
-  // If there's a pre-generated personalized hook, inject it as the exact opening line
-  const openingInstruction = personalizedHook
-    ? `CRITICAL: Open the call with this EXACT sentence (do not paraphrase it): "${personalizedHook}"
-Then pause briefly and let them respond before continuing.`
-    : `Introduce yourself briefly: "Hi, this is FORGE calling from SMIRK AI — do you have 60 seconds?"`;
-
-  return customPitch || `You are FORGE, a professional outbound sales agent calling on behalf of SMIRK AI.
-Your goal: introduce SMIRK to ${industry} owners and book a 15-minute demo call.
-SMIRK is a missed-call recovery assistant that:
-- Answers missed calls when the owner or staff cannot pick up
-- Captures caller details and urgency
-- Emails the owner a callback-ready lead
-- Creates a callback task so the lead gets followed up
-- Costs less than one hour of a receptionist's time per month
-Your approach:
-1. ${openingInstruction}
-2. Ask one qualifying question: "Are you currently missing calls when you're busy or after hours?"
-3. If yes: explain SMIRK in one sentence, offer a free 14-day trial
-4. If interested: offer to book a 15-minute demo — "I can get you set up in 15 minutes, when works for you?"
-5. If not interested: thank them, wish them well, hang up
-6. If they ask to be removed: say "Absolutely, I'll remove you right now" and use the mark_do_not_call tool
-Keep it under 90 seconds. Be warm, direct, and not pushy. If they seem busy, offer to call back.`;
-}
-
-// ── Dialer ─────────────────────────────────────────────────────────────────────
-
-export async function dialNextLead(
-  campaignId: number,
-  twilioClient: any,
-  fromNumber: string,
-  webhookBase: string
-): Promise<{ lead: ProspectLead; callSid: string; pitch?: string } | { blocked: true; reason: string }> {
-  const [campaign] = await sql<ProspectingCampaign[]>`SELECT * FROM prospecting_campaigns WHERE id = ${campaignId}`;
-  if (!campaign) throw new Error("Campaign not found");
-  if (campaign.status !== "active") throw new Error("Campaign is not active");
-
-  const lead = await getNextLeadToDial(campaignId);
-  if (!lead) throw new Error("No pending leads in this campaign");
-
-  // Compliance check before dialing
-  const compliance = await checkOutboundCompliance(
-    lead.phone,
-    campaignId,
-    campaign.call_window_start,
-    campaign.call_window_end
-  );
-
-  if (!compliance.allowed) {
-    return { blocked: true, reason: compliance.reason || "Compliance check failed" };
-  }
-
-   // Mark as calling
-  await sql`UPDATE prospect_leads SET status = 'calling' WHERE id = ${lead.id}`;
-  // Use pre-generated personalized hook (set during AI qualification) or fall back to template
-  const personalizedOpener = (lead as any).personalized_hook || "";
-  // Build pitch system prompt — inject hook as the opening line
-  const systemPrompt = buildPitchSystemPrompt(campaign, personalizedOpener);
-
-  // Add recording disclosure to pitch if required by state law
-  const disclosureLine = compliance.requiresDisclosure && compliance.disclosureText
-    ? `\n\nIMPORTANT: Before speaking, say: "${compliance.disclosureText}"`
-    : "";
-
-  // Dial via Twilio
-  const call = await twilioClient.calls.create({
-    to: lead.phone.startsWith("+") ? lead.phone : `+1${lead.phone}`,
-    from: fromNumber,
-    url: `${webhookBase}/twilio/inbound?agent=${encodeURIComponent(campaign.agent_name)}&prospectLeadId=${lead.id}&campaignId=${campaignId}&systemPromptOverride=${encodeURIComponent(systemPrompt + disclosureLine)}`,
-    statusCallback: `${webhookBase}/twilio/status`,
-    statusCallbackMethod: "POST",
-    statusCallbackEvent: ["completed", "failed", "no-answer", "busy"],
-    machineDetection: "Enable",
-    machineDetectionTimeout: 30,
-  });
-
-  await sql`UPDATE prospect_leads SET call_sid = ${call.sid} WHERE id = ${lead.id}`;
-  return { lead, callSid: call.sid, pitch: personalizedOpener || undefined };
-}
-
-export async function getNextLeadToDial(campaignId: number): Promise<ProspectLead | null> {
-  // Get callbacks first, then pending
-  const callbacks = await sql<ProspectLead[]>`
-    SELECT * FROM prospect_leads
-    WHERE campaign_id = ${campaignId}
-      AND status = 'callback'
-      AND callback_at <= NOW()
-    ORDER BY callback_at ASC LIMIT 1
-  `;
-  if (callbacks.length > 0) return callbacks[0];
-
-  // Score gate: skip leads below SCORE_GATE_DIAL (70) — dial best leads first
-  const pending = await sql<ProspectLead[]>`
-    SELECT * FROM prospect_leads
-    WHERE campaign_id = ${campaignId}
-      AND status = 'pending'
-      AND (score IS NULL OR score >= ${SCORE_GATE_DIAL})
-    ORDER BY score DESC NULLS LAST, created_at ASC LIMIT 1
-  `;
-  return pending[0] || null;
-}
-
-export async function isWithinCallWindow(campaign: ProspectingCampaign, timezone: string = "America/New_York"): Promise<boolean> {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false });
-  const parts = formatter.formatToParts(now);
-  const hour = parseInt(parts.find(p => p.type === "hour")?.value || "0");
-  const minute = parseInt(parts.find(p => p.type === "minute")?.value || "0");
-  const currentMinutes = hour * 60 + minute;
-
-  const [startH, startM] = campaign.call_window_start.split(":").map(Number);
-  const [endH, endM] = campaign.call_window_end.split(":").map(Number);
-  const startMinutes = startH * 60 + startM;
-  const endMinutes = endH * 60 + endM;
-
-  // Also check it's a weekday
-  const dayOfWeek = new Date().toLocaleDateString("en-US", { timeZone: timezone, weekday: "short" });
-  if (["Sat", "Sun"].includes(dayOfWeek)) return false;
-
-  return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  return updated.length === 1;
 }
 
 // ── CSV Parser ─────────────────────────────────────────────────────────────────

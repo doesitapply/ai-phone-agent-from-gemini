@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 const root = process.cwd();
 const outputPath = path.join(root, "openapi.yaml");
@@ -13,12 +14,10 @@ const sourceFiles = [
 ];
 const checkOnly = process.argv.includes("--check");
 
-const methodRegex = /\bapp\.(get|post|patch|put|delete|use)\(\s*(?:"([^"]+)"|'([^']+)'|\[([^\]]+)\])/g;
-const quotedPathRegex = /["']([^"']+)["']/g;
-
 const manualDescriptions = new Map();
 const signedWebhookPaths = new Set([
   "/api/calendly/webhook",
+  "/api/prospecting/resend/webhook",
   "/api/stripe/webhook",
   "/api/launch/telegram-approval/webhook",
   "/api/twilio/amd",
@@ -33,6 +32,7 @@ const signedWebhookPaths = new Set([
 const operatorOnlyPaths = new Set([
   "GET /api/analytics/agents",
   "GET /api/admin/webhook-buffer-lag",
+  "GET /api/admin/webhook-buffer-replay/audit",
   "GET /api/agents",
   "GET /api/agents/:id",
   "GET /api/agents/active",
@@ -136,6 +136,9 @@ const testCallSecretOnlyPaths = new Set([
 const velvetHandoffPaths = new Set([
   "POST /api/integrations/velvet/handoffs",
 ]);
+const velvetResearchPaths = new Set([
+  "POST /api/integrations/velvet/prospects",
+]);
 
 const publicRateLimitedMarkers = new Set([
   "publicDemoRateLimit",
@@ -169,11 +172,12 @@ function routeTag(openApiPath) {
 function securityFor(method, expressPath, sourceLine) {
   if (testCallSecretOnlyPaths.has(`${method} ${expressPath}`)) return [{ ApiKeyAuth: [] }];
   if (velvetHandoffPaths.has(`${method} ${expressPath}`)) return [{ VelvetHandoffBearerAuth: [] }];
+  if (velvetResearchPaths.has(`${method} ${expressPath}`)) return [{ VelvetResearchBearerAuth: [] }];
   if (workspaceOnlyPaths.has(`${method} ${expressPath}`)) return [{ WorkspaceBearerAuth: [] }];
   if (expressPath.includes("/auth/google") || expressPath === "/api/version" || expressPath === "/api/pricing") return [];
   if (expressPath.includes("/provisioning/checkout-status") || expressPath.includes("/public-proof-snapshot") || expressPath.includes("/first-dollar-readiness")) return [];
   if ([...publicRateLimitedMarkers].some((marker) => sourceLine.includes(marker))) return [];
-  if (sourceLine.includes("requireOperator") || expressPath.includes("/operator")) return [{ ApiKeyAuth: [] }];
+  if (sourceLine.includes("requireOperator") || sourceLine.includes("requireFullOperator") || expressPath.includes("/operator")) return [{ ApiKeyAuth: [] }];
   if (sourceLine.includes("provisioningBearerAuth")) return [{ ProvisioningBearerAuth: [] }];
   if (sourceLine.includes("workspaceBillingPortalAuth")) return [{ WorkspaceBearerAuth: [] }];
   if (sourceLine.includes("dashboardAuth") || expressPath.includes("/workspace")) return [{ WorkspaceBearerAuth: [] }, { ApiKeyAuth: [] }];
@@ -188,14 +192,61 @@ function validateSecurityInventory(routes) {
     const security = securityFor(route.method, route.expressPath, route.sourceLine);
     const securityLabel = security.length === 0 ? "public" : Object.keys(security[0] || {}).join(",");
     const routeKey = `${route.method} ${route.expressPath}`;
-    if (operatorOnlyPaths.has(routeKey) && !route.sourceLine.includes("requireOperator")) {
-      failures.push(`${routeKey} must include requireOperator in openapi.yaml inventory`);
+    const isProspectOutreachRoute =
+      route.sourceFile ===
+      path.join("src", "routes", "prospect-outreach-routes.ts");
+    const isProspectEmailWebhook =
+      route.expressPath === "/api/prospecting/resend/webhook";
+    const isVelvetLeadSourceRoute =
+      route.sourceFile ===
+      path.join("src", "routes", "velvet-lead-source-routes.ts");
+    const hasOperatorGuard =
+      route.sourceLine.includes("requireOperator") ||
+      route.sourceLine.includes("requireFullOperator");
+    if (operatorOnlyPaths.has(routeKey) && !hasOperatorGuard) {
+      failures.push(`${routeKey} must include an operator guard in openapi.yaml inventory`);
     }
     if (testCallSecretOnlyPaths.has(routeKey) && !route.sourceLine.includes("requireTestCallSecret")) {
       failures.push(`${routeKey} must include requireTestCallSecret in openapi.yaml inventory`);
     }
     if (signedWebhookPaths.has(route.expressPath) && security.length !== 0) {
       failures.push(`${route.expressPath} should be listed as a public signed webhook, got ${securityLabel}`);
+    }
+    if (
+      isProspectOutreachRoute &&
+      !isProspectEmailWebhook &&
+      (!route.sourceLine.includes("dashboardAuth") || !hasOperatorGuard)
+    ) {
+      failures.push(
+        `${routeKey} must include dashboardAuth plus an operator guard`,
+      );
+    }
+    if (
+      isProspectOutreachRoute &&
+      isProspectEmailWebhook &&
+      !route.sourceLine.includes("express.raw")
+    ) {
+      failures.push(
+        `${routeKey} must preserve raw request bytes for signed webhook verification`,
+      );
+    }
+    if (
+      isVelvetLeadSourceRoute &&
+      (!route.sourceLine.includes("dashboardAuth") ||
+        !route.sourceLine.includes("requireOperator"))
+    ) {
+      failures.push(
+        `${routeKey} must use the guarded Velvet lead-source middleware stack`,
+      );
+    }
+    if (
+      isVelvetLeadSourceRoute &&
+      route.method === "POST" &&
+      !route.sourceLine.includes("requireFullOperator")
+    ) {
+      failures.push(
+        `${routeKey} must be restricted to a full operator`,
+      );
     }
   }
   return failures;
@@ -206,25 +257,42 @@ function collectRoutes() {
   for (const sourceFile of sourceFiles) {
     const absolutePath = path.join(root, sourceFile);
     const text = fs.readFileSync(absolutePath, "utf8");
-    const lines = text.split(/\r?\n/);
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      methodRegex.lastIndex = 0;
-      let match;
-      while ((match = methodRegex.exec(line)) !== null) {
-        const method = match[1].toUpperCase();
-        const directPath = match[2] ?? match[3];
-        const arrayPaths = match[4];
-        const paths = [];
-        if (directPath) {
-          paths.push(directPath);
-        } else if (arrayPaths) {
-          quotedPathRegex.lastIndex = 0;
-          let pathMatch;
-          while ((pathMatch = quotedPathRegex.exec(arrayPaths)) !== null) {
-            paths.push(pathMatch[1]);
-          }
-        }
+    const parsed = ts.createSourceFile(
+      sourceFile,
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const visit = (node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "app" &&
+        ["get", "post", "patch", "put", "delete", "use"].includes(
+          node.expression.name.text,
+        )
+      ) {
+        const method = node.expression.name.text.toUpperCase();
+        const routeArg = node.arguments[0];
+        const paths = ts.isStringLiteralLike(routeArg)
+          ? [routeArg.text]
+          : ts.isArrayLiteralExpression(routeArg) &&
+              routeArg.elements.every(ts.isStringLiteralLike)
+            ? routeArg.elements.map((element) => element.text)
+            : [];
+        const lineNumber =
+          parsed.getLineAndCharacterOfPosition(node.getStart(parsed)).line + 1;
+        const middlewareSource = node.arguments
+          .slice(1)
+          .filter(
+            (argument) =>
+              !ts.isArrowFunction(argument) &&
+              !ts.isFunctionExpression(argument),
+          )
+          .map((argument) => argument.getText(parsed))
+          .join(" ");
         for (const expressPath of paths) {
           if (!expressPath.startsWith("/api")) continue;
           routes.push({
@@ -232,12 +300,14 @@ function collectRoutes() {
             expressPath,
             openApiPath: expressPathToOpenApi(expressPath),
             sourceFile,
-            lineNumber: i + 1,
-            sourceLine: line.trim(),
+            lineNumber,
+            sourceLine: middlewareSource,
           });
         }
       }
-    }
+      ts.forEachChild(node, visit);
+    };
+    visit(parsed);
   }
   return routes;
 }
@@ -270,7 +340,7 @@ function renderOpenApi(routes) {
     "info:",
     "  title: SMIRK API",
     `  version: ${yamlScalar(readPackageVersion())}`,
-    "  description: Route inventory generated from concrete Express route declarations in server.ts and src/team-routes.ts. Middleware app.use declarations are excluded from paths.",
+    "  description: Route inventory generated from concrete Express route declarations in server.ts, src/team-routes.ts, and src/routes. Middleware app.use declarations are excluded from paths.",
     "servers:",
     "  - url: https://smirkcalls.com",
     "    description: Production",
@@ -294,6 +364,10 @@ function renderOpenApi(routes) {
     "      type: http",
     "      scheme: bearer",
     "      bearerFormat: Velvet Alchemy handoff token",
+    "    VelvetResearchBearerAuth:",
+    "      type: http",
+    "      scheme: bearer",
+    "      bearerFormat: Velvet Alchemy research-only token",
     "paths:",
   ];
 

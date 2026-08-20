@@ -29,6 +29,38 @@ type CallRouteDeps = {
   log: (level: "info" | "warn" | "error" | "debug", message: string, meta?: Record<string, unknown>) => void;
 };
 
+export async function deleteWorkspaceCalls(
+  sql: any,
+  workspaceId: number,
+  requestedCallSids: string[],
+): Promise<string[]> {
+  const callSids = [...new Set(requestedCallSids.map((sid) => String(sid).trim()).filter(Boolean))];
+  if (callSids.length === 0) return [];
+
+  return sql.begin(async (tx: any) => {
+    const ownedRows = await tx<{ call_sid: string }[]>`
+      SELECT call_sid
+      FROM calls
+      WHERE workspace_id = ${workspaceId}
+        AND call_sid = ANY(${callSids}::text[])
+      FOR UPDATE
+    `;
+    const ownedCallSids = ownedRows.map((row) => String(row.call_sid)).filter(Boolean);
+    if (ownedCallSids.length === 0) return [];
+
+    await tx`DELETE FROM messages WHERE call_sid = ANY(${ownedCallSids}::text[])`;
+    await tx`DELETE FROM call_events WHERE call_sid = ANY(${ownedCallSids}::text[])`;
+    await tx`DELETE FROM call_summaries WHERE call_sid = ANY(${ownedCallSids}::text[])`;
+    const deletedRows = await tx<{ call_sid: string }[]>`
+      DELETE FROM calls
+      WHERE workspace_id = ${workspaceId}
+        AND call_sid = ANY(${ownedCallSids}::text[])
+      RETURNING call_sid
+    `;
+    return deletedRows.map((row) => String(row.call_sid)).filter(Boolean);
+  });
+}
+
 export function registerCallRoutes(app: Express, deps: CallRouteDeps): void {
   const {
     dashboardAuth,
@@ -111,11 +143,8 @@ export function registerCallRoutes(app: Express, deps: CallRouteDeps): void {
   app.delete("/api/calls/:sid", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     const { sid } = req.params;
     const wsId = getWorkspaceId(req);
-    await sql`DELETE FROM messages WHERE call_sid = ${sid}`;
-    await sql`DELETE FROM call_events WHERE call_sid = ${sid}`;
-    await sql`DELETE FROM call_summaries WHERE call_sid = ${sid}`;
-    const result = await sql`DELETE FROM calls WHERE call_sid = ${sid} AND workspace_id = ${wsId} RETURNING call_sid`;
-    if (result.length === 0) return res.status(404).json({ error: "Call not found" });
+    const deletedSids = await deleteWorkspaceCalls(sql, wsId, [sid]);
+    if (deletedSids.length === 0) return res.status(404).json({ error: "Call not found" });
     res.json({ deleted: sid });
   });
 
@@ -150,35 +179,15 @@ export function registerCallRoutes(app: Express, deps: CallRouteDeps): void {
 
     if (sids) {
       const sidList = sids.split(",").map((s) => s.trim()).filter(Boolean);
-      for (const sid of sidList) {
-        await sql`DELETE FROM messages WHERE call_sid = ${sid}`;
-        await sql`DELETE FROM call_events WHERE call_sid = ${sid}`;
-        await sql`DELETE FROM call_summaries WHERE call_sid = ${sid}`;
-      }
-      const result = await sql`DELETE FROM calls WHERE call_sid = ANY(${sidList}::text[]) AND workspace_id = ${wsId} RETURNING call_sid`;
-      deletedSids = result.map((r: any) => r.call_sid);
+      deletedSids = await deleteWorkspaceCalls(sql, wsId, sidList);
     } else if (filter === "stale") {
       const stale = await sql`SELECT call_sid FROM calls WHERE workspace_id = ${wsId} AND (duration_seconds IS NULL OR duration_seconds = 0) AND status != 'in-progress'`;
       const staleSids = stale.map((r: any) => r.call_sid);
-      if (staleSids.length > 0) {
-        for (const sid of staleSids) {
-          await sql`DELETE FROM messages WHERE call_sid = ${sid}`;
-          await sql`DELETE FROM call_events WHERE call_sid = ${sid}`;
-          await sql`DELETE FROM call_summaries WHERE call_sid = ${sid}`;
-        }
-        await sql`DELETE FROM calls WHERE call_sid = ANY(${staleSids}::text[]) AND workspace_id = ${wsId}`;
-        deletedSids = staleSids;
-      }
+      deletedSids = await deleteWorkspaceCalls(sql, wsId, staleSids);
     } else if (filter === "all") {
       const all = await sql`SELECT call_sid FROM calls WHERE workspace_id = ${wsId}`;
       const allSids = all.map((r: any) => r.call_sid);
-      if (allSids.length > 0) {
-        await sql`DELETE FROM messages WHERE call_sid = ANY(${allSids}::text[])`;
-        await sql`DELETE FROM call_events WHERE call_sid = ANY(${allSids}::text[])`;
-        await sql`DELETE FROM call_summaries WHERE call_sid = ANY(${allSids}::text[])`;
-        await sql`DELETE FROM calls WHERE workspace_id = ${wsId}`;
-        deletedSids = allSids;
-      }
+      deletedSids = await deleteWorkspaceCalls(sql, wsId, allSids);
     } else {
       return res.status(400).json({ error: "Provide filter=stale|all or sids=CA1,CA2" });
     }
