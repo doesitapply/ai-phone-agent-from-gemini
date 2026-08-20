@@ -11,7 +11,7 @@ import {
   WifiOff, ChevronRight, Loader2, Copy, Shield,
   Database, Globe, Key, Sliders, TestTube,
   Layers, Pencil, Trash2, Check, RefreshCw, Plus,
-  ChevronDown, ChevronLeft, MessageSquare, Tag, Star, ArrowUpRight,
+  ChevronDown, ChevronLeft, ChevronUp, MessageSquare, Tag, Star, ArrowUpRight,
   Building2, Scale, Sparkles, Briefcase, Home, DollarSign,
   Headphones, Radio, Send, PhoneMissed, PhoneCall,
   ShieldOff, Filter, Download, ExternalLink, Link, ToggleLeft, ToggleRight,
@@ -5424,12 +5424,12 @@ function VelvetAlchemyPage() {
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-5 p-4 sm:space-y-6 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-[0.16em] text-fuchsia-400"><Sparkles size={13} /> Cross-system handoff bridge</div>
           <h2 className="mt-1 text-xl font-black text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Velvet Alchemy Portal</h2>
-          <p className="mt-1 max-w-2xl text-sm text-gray-500">The SMIRK-side control room for inbound Velvet outcomes, human follow-up, and cross-system visibility.</p>
+          <p className="mt-1 max-w-2xl text-sm text-gray-500">Bring qualified Velvet signals into SMIRK, review the human work they create, move approved leads into the outreach pipeline, and return real outcomes to Velvet.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={load} className="rounded-lg bg-gray-800 p-2 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white" title="Refresh Velvet status"><RefreshCw size={14} /></button>
@@ -5450,6 +5450,21 @@ function VelvetAlchemyPage() {
           <div className="mt-4 space-y-2">
             {data.recentHandoffs.length === 0 ? <div className="py-8 text-center text-sm text-gray-500">No handoffs are currently available in this workspace.</div> : data.recentHandoffs.map((handoff) => <div key={handoff.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-3"><div><div className="flex items-center gap-2"><span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${handoff.status === "pending" ? "border-red-900 bg-red-950 text-red-400" : "border-gray-700 bg-gray-800 text-gray-400"}`}>{handoff.status}</span><span className="text-sm font-semibold text-white">{handoff.reason || "Handoff"}</span></div><div className="mt-1 text-xs text-gray-500">{handoff.contact_name || handoff.phone_number || "Unknown contact"} · {handoff.urgency || "normal"} urgency</div></div><div className="text-xs text-gray-600">{new Date(handoff.created_at).toLocaleString()}</div></div>)}
           </div>
+        </div>
+        <div className={`rounded-xl border p-5 ${card}`}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-white">Velvet → SMIRK outreach loop</h3>
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-gray-500">Signals enter a reviewable revenue loop: validate the lead, apply consent and compliance checks, choose an approved next action, then return the result. SMIRK does not auto-dial a Velvet signal simply because it arrived.</p>
+            </div>
+            <span className="border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-amber-300">Human approval before outreach</span>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <a href="/dashboard/handoffs?filter=pending" className="group border border-gray-800 bg-black/20 p-3 transition-colors hover:border-fuchsia-700"><div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500">01 · Review</div><div className="mt-1 text-sm font-semibold text-white group-hover:text-fuchsia-300">Open human attention queue →</div></a>
+            <a href="/dashboard/prospecting" className="group border border-gray-800 bg-black/20 p-3 transition-colors hover:border-fuchsia-700"><div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500">02 · Qualify</div><div className="mt-1 text-sm font-semibold text-white group-hover:text-fuchsia-300">Check lead & compliance →</div></a>
+            <a href="/dashboard/prospecting" className="group border border-gray-800 bg-black/20 p-3 transition-colors hover:border-fuchsia-700"><div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500">03 · Execute</div><div className="mt-1 text-sm font-semibold text-white group-hover:text-fuchsia-300">Use approved outreach sequence →</div></a>
+          </div>
+          {!data.sourceAttributionAvailable && <p className="mt-3 text-[11px] leading-5 text-amber-200/80">Source-level Velvet attribution is not yet persisted on individual SMIRK handoffs. This portal shows the shared queue honestly until the inbound receiver stores source and idempotency metadata with each record.</p>}
         </div>
       </>}
     </div>
@@ -12304,6 +12319,7 @@ export default function App() {
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [taskCount, setTaskCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [commandRailCollapsed, setCommandRailCollapsed] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -12936,6 +12952,15 @@ export default function App() {
   const overflowTabs = allOverflowTabs
     .filter((t) => visibleForSession(t.id))
     .filter((t) => !visiblePrimaryTabs.some((primary) => primary.id === t.id));
+  const mobileCoreTabIds = new Set<Tab>(["dashboard", "calls", "recovery", "prospecting", "velvet"]);
+  const mobileCoreTabs = [...visiblePrimaryTabs, ...overflowTabs]
+    .filter((tabItem) => mobileCoreTabIds.has(tabItem.id))
+    .map((tabItem) => ({
+      ...tabItem,
+      label: tabItem.id === "dashboard" ? "Today" : tabItem.id === "prospecting" ? "Pipeline" : tabItem.label,
+    }));
+  const mobileAdvancedTabs = [...visiblePrimaryTabs, ...overflowTabs].filter((tabItem) => !mobileCoreTabIds.has(tabItem.id));
+  const activeMobileAdvancedTab = mobileAdvancedTabs.find((tabItem) => tabItem.id === activeTab) || null;
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
   if (pathname === "/app") {
     window.location.replace("/dashboard");
@@ -13395,18 +13420,36 @@ export default function App() {
 
           {/* Mobile Nav Drawer */}
           {mobileMenuOpen && (
-            <div className="smirk-mobile-nav fixed left-0 right-0 top-12 z-50 border-b border-[#3b4b3d] bg-[#1c1b1b] lg:hidden">
-              {[...visiblePrimaryTabs, ...overflowTabs].map((t) => (
-                <button key={t.id} onClick={() => { navigateToTab(t.id); setMobileMenuOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-5 py-3 font-mono text-[11px] font-bold uppercase tracking-[0.06em] transition-colors ${
-                    activeTab === t.id ? 'text-[#00ff88] bg-[#00ff88]/10' : 'text-[#b9cbb9] hover:text-white hover:bg-[#2a2a2a]'
+            <div className="smirk-mobile-nav fixed left-0 right-0 top-12 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto border-b border-[#3b4b3d] bg-[#1c1b1b] lg:hidden">
+              <div className="border-b border-[#3b4b3d] px-5 py-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[#849585]">Run the revenue loop</div>
+              {mobileCoreTabs.map((t) => (
+                <button key={t.id} onClick={() => { navigateToTab(t.id); setMobileMenuOpen(false); setMobileMoreOpen(false); }}
+                  className={`flex w-full items-center gap-3 px-5 py-3.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] transition-colors ${
+                    activeTab === t.id ? 'bg-[#00ff88]/10 text-[#00ff88]' : 'text-[#b9cbb9] hover:bg-[#2a2a2a] hover:text-white'
                   }`}>
-                  {t.icon}{t.label}
-                  {t.id === 'tasks' && taskCount > 0 && (
-                    <span className="ml-auto text-xs bg-amber-500 text-white rounded-full px-1.5 py-0.5 font-bold">{taskCount}</span>
-                  )}
+                  {React.cloneElement(t.icon, { size: 17 })}<span>{t.label}</span>
+                  {t.id === 'recovery' && taskCount > 0 && <span className="ml-auto rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] text-white">{taskCount}</span>}
                 </button>
               ))}
+              {activeMobileAdvancedTab && !mobileMoreOpen && (
+                <button onClick={() => setMobileMoreOpen(true)} className="flex w-full items-center gap-3 border-t border-[#3b4b3d] px-5 py-3 text-left font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-[#d7e6d7] hover:bg-[#2a2a2a]">
+                  {React.cloneElement(activeMobileAdvancedTab.icon, { size: 16 })}<span className="flex-1">Current tool: {activeMobileAdvancedTab.label}</span><ChevronDown size={15} />
+                </button>
+              )}
+              <button onClick={() => setMobileMoreOpen((open) => !open)} className="flex w-full items-center gap-3 border-t border-[#3b4b3d] px-5 py-3.5 text-left font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-[#849585] hover:bg-[#2a2a2a] hover:text-white">
+                <Layers size={16} /><span className="flex-1">More tools</span>{mobileMoreOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              </button>
+              {mobileMoreOpen && <div className="border-t border-[#3b4b3d] bg-[#171717] pb-2">
+                {mobileAdvancedTabs.map((t) => (
+                  <button key={t.id} onClick={() => { navigateToTab(t.id); setMobileMenuOpen(false); setMobileMoreOpen(false); }}
+                    className={`flex w-full items-center gap-3 px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.06em] transition-colors ${
+                      activeTab === t.id ? 'bg-[#00ff88]/10 text-[#00ff88]' : 'text-[#9caf9d] hover:bg-[#2a2a2a] hover:text-white'
+                    }`}>
+                    {React.cloneElement(t.icon, { size: 15 })}<span>{t.label}</span>
+                    {t.id === 'tasks' && taskCount > 0 && <span className="ml-auto rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] text-white">{taskCount}</span>}
+                  </button>
+                ))}
+              </div>}
             </div>
           )}
 
