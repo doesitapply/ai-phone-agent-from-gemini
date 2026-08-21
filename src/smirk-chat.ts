@@ -377,7 +377,10 @@ const TOOL_DECLARATIONS = [
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
-async function executeTool(name: string, args: any, workspaceId: number, approvedCallTarget?: string | null): Promise<string> {
+async function executeTool(name: string, args: any, workspaceId: number, approvedCallTarget?: string | null, approvedActionTool?: string | null): Promise<string> {
+  if (WRITE_CONFIRMATION_TOOLS.has(name) && approvedActionTool !== name) {
+    return JSON.stringify({ ok: false, error: `ACTION_REQUIRES_CONFIRMATION: Ask the operator to reply exactly CONFIRM ACTION ${name} before making this change.` });
+  }
   if (name === "get_velvet_system_state") return JSON.stringify(await velvetControl.getSystemState());
   if (name === "list_velvet_qualified_leads") return JSON.stringify(await velvetControl.listQualifiedLeads(args.limit));
   if (name === "get_velvet_lead_evidence") return JSON.stringify(await velvetControl.getLeadEvidence(args.lead_id));
@@ -687,6 +690,27 @@ export function extractApprovedCallTarget(messages: ChatMessage[]): string | nul
   return null;
 }
 
+export const WRITE_CONFIRMATION_TOOLS = new Set([
+  "update_setting",
+  "update_agent_prompt",
+  "inject_briefing",
+  "complete_task",
+  "update_task",
+  "cancel_task",
+  "create_contact",
+  "update_contact",
+  "create_task",
+  "book_appointment",
+]);
+
+/** A single latest explicit confirmation enables only the named non-contact mutation. */
+export function extractApprovedActionTool(messages: ChatMessage[]): string | null {
+  const lastUserMessage = [...messages].reverse().find(message => message.role === "user")?.content.trim() || "";
+  const match = lastUserMessage.match(/^CONFIRM\s+ACTION\s+([a-z_]+)$/i);
+  if (!match || !WRITE_CONFIRMATION_TOOLS.has(match[1])) return null;
+  return match[1];
+}
+
 export type ChatAccessMode = "operator" | "workspace" | "demo_operator";
 
 const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([
@@ -726,9 +750,12 @@ export async function handleSmirkChat(
 
   const accessMode = options.accessMode || "operator";
   const approvedCallTarget = extractApprovedCallTarget(messages);
+  const approvedActionTool = extractApprovedActionTool(messages);
   const context = await loadChatContext(workspaceId);
   const toolPolicy = accessMode === "operator"
-    ? "You can inspect configured Velvet evidence through read-only tools, and take SMIRK actions permitted to operators. Velvet tools cannot create leads, override qualification, queue calls, send outreach, alter credentials, or change deployment configuration."
+    ? approvedActionTool
+      ? `You can inspect configured Velvet evidence through read-only tools. The operator explicitly approved only the SMIRK mutation ${approvedActionTool}; do not mutate any other record. Velvet tools cannot create leads, override qualification, queue calls, send outreach, alter credentials, or change deployment configuration.`
+      : "You can inspect configured Velvet evidence through read-only tools. Do not mutate SMIRK tasks, contacts, briefings, settings, agent prompts, or calendar records until the latest operator message exactly says CONFIRM ACTION <tool_name>. Velvet tools cannot create leads, override qualification, queue calls, send outreach, alter credentials, or change deployment configuration."
     : accessMode === "demo_operator"
       ? "You are in demo-operator mode. You may explain calls, contacts, tasks, team context, and dashboard proof using read-only lookup tools only. Do not create, update, delete, send, dial, book, launch outreach, edit settings, edit prompts, or inject live briefings."
       : "You are in workspace-owner mode. You may help with calls, tasks, contacts, and team context, and you may create or update CRM/task records. Do not place phone calls, edit platform settings, edit prompts, inject live briefings, or book calendar records from this mode. If the user asks for one of those operator-only actions, say it requires operator access.";
@@ -766,7 +793,8 @@ ${context}
       config: {
         systemInstruction,
         tools: [{ functionDeclarations: toolDeclarationsForAccessMode(accessMode)
-          .filter(tool => tool.name !== "make_call" || Boolean(approvedCallTarget)) }],
+          .filter(tool => (tool.name !== "make_call" || Boolean(approvedCallTarget))
+            && (!WRITE_CONFIRMATION_TOOLS.has(tool.name) || approvedActionTool === tool.name)) }],
         toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
         temperature: 0.5,
       },
@@ -787,7 +815,8 @@ ${context}
         const { name, args } = cp.functionCall;
         const allowedForMode = (accessMode === "operator"
           || (accessMode === "demo_operator" ? DEMO_OPERATOR_ALLOWED_TOOLS.has(name) : WORKSPACE_ALLOWED_TOOLS.has(name)))
-          && (name !== "make_call" || Boolean(approvedCallTarget));
+          && (name !== "make_call" || Boolean(approvedCallTarget))
+          && (!WRITE_CONFIRMATION_TOOLS.has(name) || approvedActionTool === name);
         if (!allowedForMode) {
           const denied = JSON.stringify({ ok: false, error: `${name} is not allowed in ${accessMode} mode.` });
           toolsUsed.push({ name, result: denied });
@@ -796,7 +825,7 @@ ${context}
           });
           continue;
         }
-        const result = await executeTool(name, args, workspaceId, approvedCallTarget);
+        const result = await executeTool(name, args, workspaceId, approvedCallTarget, approvedActionTool);
         toolsUsed.push({ name, result });
         toolResults.push({
           functionResponse: { name, response: { result } }

@@ -13980,6 +13980,7 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
                   Read-only system evidence. This surface cannot queue a Velvet lead, place outreach, edit credentials, or alter deployment settings.
                 </div>
               </div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: dark ? "#94a3b8" : "#475569", letterSpacing: 1 }}>READ SYSTEM STATE</div>
               {[
                 ["Velvet system state", "Show Velvet system state, qualification counts, and current handoff lifecycle."],
                 ["Qualified leads", "List the current qualified Velvet leads. Do not queue any handoff."],
@@ -13992,6 +13993,28 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
                   style={{ textAlign: "left", padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, background: inputBg, color: textColor, cursor: loading ? "not-allowed" : "pointer", fontSize: 12 }}
                 >
                   <strong>{label}</strong><br /><span style={{ opacity: 0.7 }}>{prompt}</span>
+                </button>
+              ))}
+              <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: dark ? "#94a3b8" : "#475569", letterSpacing: 1 }}>SMIRK CRUD LAUNCHERS</div>
+              <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${dark ? "#78350f" : "#fde68a"}`, background: dark ? "#2a1d08" : "#fffbeb", fontSize: 11, lineHeight: 1.5, color: dark ? "#fde68a" : "#92400e" }}>
+                These controls gather the required fields first. They cannot write until the operator’s latest message exactly confirms the named action.
+              </div>
+              {[
+                ["Create task", "I want to create a SMIRK task. Ask me for title, task type, owner, due time, priority, and notes. Do not create it until I reply exactly CONFIRM ACTION create_task."],
+                ["Update task", "I want to update a SMIRK task. Ask me for the task ID and exact changes. Do not update it until I reply exactly CONFIRM ACTION update_task."],
+                ["Cancel task", "I want to cancel a SMIRK task. Ask me for the task ID and reason. Do not cancel it until I reply exactly CONFIRM ACTION cancel_task."],
+                ["Create contact", "I want to create a SMIRK contact. Ask me for the exact phone, name, business, email, and notes. Do not create it until I reply exactly CONFIRM ACTION create_contact."],
+                ["Update contact", "I want to update a SMIRK contact. Ask me for the contact ID and exact fields to change. Do not update it until I reply exactly CONFIRM ACTION update_contact."],
+                ["Schedule follow-up", "I want to schedule a SMIRK follow-up. Ask me for the exact calendar details. Do not create it until I reply exactly CONFIRM ACTION book_appointment."],
+                ["Launch a call", "I want to place one outbound SMIRK call. First ask me for the exact E.164 phone number and reason. Do not dial until I reply exactly CONFIRM CALL <E.164 phone number>."],
+              ].map(([label, prompt]) => (
+                <button
+                  key={label}
+                  disabled={loading}
+                  onClick={() => { setMode('chat'); void sendPrompt(prompt); }}
+                  style={{ textAlign: "left", padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, background: dark ? "#1e293b" : "#f8fafc", color: textColor, cursor: loading ? "not-allowed" : "pointer", fontSize: 12 }}
+                >
+                  <strong>{label}</strong><br /><span style={{ opacity: 0.7 }}>Launch guided, confirmation-gated workflow</span>
                 </button>
               ))}
             </div>

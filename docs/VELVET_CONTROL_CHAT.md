@@ -12,7 +12,7 @@ This is not a general remote-code executor and does not dynamically load arbitra
 |---|---|---|---|
 | System read | Receiver health, active workspace, queued task counts | Read-only | None |
 | Velvet read | Qualification state, qualified-lead list, lead evidence, handoff/outcome status | Read-only through a narrow Velvet API key | None |
-| SMIRK record action | Create or update a task, save a briefing | SMIRK operator policy | Explicit tool policy, logged |
+| SMIRK record action | Create, update, complete, or cancel a task; create or update a contact; save a briefing; schedule a follow-up; update an approved operator setting or agent prompt | SMIRK operator policy | Latest operator message must exactly match `CONFIRM ACTION <tool_name>` |
 | Contact action | Dial an exact phone target | SMIRK operator policy | Latest operator message must exactly match `CONFIRM CALL <E.164 phone>` |
 | Secret or infrastructure action | Change credentials, deploy, alter Railway variables, edit provider settings | Never delegated to chat | Outside this tool surface |
 
@@ -40,7 +40,9 @@ No cross-system tool will create a Velvet lead, override qualification, queue a 
 
 ## Chat UX
 
-The existing SMIRK chat bubble gains a **System** mode next to Chat and Whisper. System mode exposes read-only prompts for Velvet state, qualified leads, and specific lead evidence. It opens the normal chat transcript for the result; when no read key is configured, the tool returns an explicit `not_configured` state and makes no outbound request.
+The existing SMIRK chat bubble gains a **System** mode next to Chat and Whisper. System mode exposes read-only prompts for Velvet state, qualified leads, and specific lead evidence, plus visible launch controls for task, contact, follow-up, and call workflows. A launch control only opens the guided chat workflow; it does not execute a write.
+
+For a SMIRK record write, the agent must first gather the exact fields, recap the intended mutation, and ask for the tool-specific latest confirmation. For example, a task creation becomes eligible only after `CONFIRM ACTION create_task`. A new user message invalidates a prior confirmation. Outbound dialing remains stricter: it requires `CONFIRM CALL <E.164 phone>` for the exact target.
 
 ## Security Invariants
 
@@ -48,7 +50,8 @@ The existing SMIRK chat bubble gains a **System** mode next to Chat and Whisper.
 2. Tool selection is authenticated, workspace-scoped, and rate-limited by the existing SMIRK chat route.
 3. Tool output is bounded, redacted, and returned only to the authorized SMIRK operator session.
 4. A remote failure returns an explicit degraded state. It never falls back to invented lead, call, outcome, or configuration data.
-5. A chat request cannot become a contact action merely because the model inferred an intent. `make_call` is not available until the latest operator message exactly confirms the same phone target.
+5. A chat request cannot become a mutation merely because the model inferred an intent. CRUD, briefing, agent, setting, and calendar tools are not available until the latest operator message exactly confirms the named tool.
+6. A chat request cannot become a contact action merely because the model inferred an intent. `make_call` is not available until the latest operator message exactly confirms the same phone target.
 
 ## Deployment Gate
 

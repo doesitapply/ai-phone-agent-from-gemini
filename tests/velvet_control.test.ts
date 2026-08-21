@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getVelvetControlConfiguration } from "../src/velvet-control.ts";
-import { extractApprovedCallTarget } from "../src/smirk-chat.ts";
+import { extractApprovedActionTool, extractApprovedCallTarget } from "../src/smirk-chat.ts";
 
 test("Velvet control is disabled without a dedicated read credential", () => {
   const result = getVelvetControlConfiguration({ VELVET_ALCHEMY_BASE_URL: "https://velvetalchemy.manus.space" });
@@ -34,5 +34,15 @@ test("SMIRK chat call approval requires the latest exact confirmation and normal
     { role: "user", content: "CONFIRM CALL +17755550100" },
     { role: "assistant", content: "Understood." },
     { role: "user", content: "Actually, hold." },
+  ]), null);
+});
+
+test("SMIRK chat CRUD approval enables only one exact mutation", () => {
+  assert.equal(extractApprovedActionTool([{ role: "user", content: "Create a task" }]), null);
+  assert.equal(extractApprovedActionTool([{ role: "user", content: "CONFIRM ACTION create_task" }]), "create_task");
+  assert.equal(extractApprovedActionTool([{ role: "user", content: "CONFIRM ACTION make_call" }]), null);
+  assert.equal(extractApprovedActionTool([
+    { role: "user", content: "CONFIRM ACTION create_task" },
+    { role: "user", content: "Actually do not." },
   ]), null);
 });
