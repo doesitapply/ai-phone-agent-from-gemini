@@ -11,6 +11,7 @@ import { readEnvFile, writeEnvFile } from "./settings.js";
 import { insertCalendarEvent } from "./gcal.js";
 import { buildWorkspaceKnowledgeContext } from "./workspace-knowledge.js";
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
+import { velvetControl } from "./velvet-control.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -132,6 +133,25 @@ ${JSON.stringify(agentRows, null, 2)}
 
 // ── Tool declarations for Gemini ──────────────────────────────────────────────
 const TOOL_DECLARATIONS = [
+  {
+    name: "get_velvet_system_state",
+    description: "Read configured Velvet Alchemy health, qualification counts, and handoff lifecycle metadata. Read-only.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: "list_velvet_qualified_leads",
+    description: "List up to 25 Velvet leads that already passed the hard qualification gate. Read-only; never queues a call.",
+    parameters: { type: Type.OBJECT, properties: { limit: { type: Type.NUMBER, description: "Maximum 25; default 10." } } },
+  },
+  {
+    name: "get_velvet_lead_evidence",
+    description: "Retrieve one Velvet lead's audit evidence, qualification result, handoff state, and returned outcome. Read-only.",
+    parameters: {
+      type: Type.OBJECT,
+      required: ["lead_id"],
+      properties: { lead_id: { type: Type.NUMBER, description: "Velvet lead ID." } },
+    },
+  },
   {
     name: "get_settings",
     description: "Read current platform settings (non-sensitive keys only).",
@@ -357,7 +377,11 @@ const TOOL_DECLARATIONS = [
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
-async function executeTool(name: string, args: any, workspaceId: number): Promise<string> {
+async function executeTool(name: string, args: any, workspaceId: number, approvedCallTarget?: string | null): Promise<string> {
+  if (name === "get_velvet_system_state") return JSON.stringify(await velvetControl.getSystemState());
+  if (name === "list_velvet_qualified_leads") return JSON.stringify(await velvetControl.listQualifiedLeads(args.limit));
+  if (name === "get_velvet_lead_evidence") return JSON.stringify(await velvetControl.getLeadEvidence(args.lead_id));
+
   if (name === "get_settings") {
     const env = readEnvFile();
     const safe: Record<string, string> = {};
@@ -512,6 +536,12 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
       return JSON.stringify({ ok: false, error: 'Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.' });
     }
     const toNumber = args.to_number.startsWith('+') ? args.to_number : `+1${args.to_number.replace(/\D/g, '')}`;
+    if (!approvedCallTarget) {
+      return JSON.stringify({ ok: false, error: "ACTION_REQUIRES_CONFIRMATION: Ask the operator to reply exactly CONFIRM CALL <E.164 phone number> before placing a call." });
+    }
+    if (toNumber !== approvedCallTarget) {
+      return JSON.stringify({ ok: false, error: `ACTION_CONFIRMATION_TARGET_MISMATCH: Approved ${approvedCallTarget}; refusing to dial ${toNumber}.` });
+    }
     try {
       const client = twilio(accountSid, authToken);
       // Get active agent for the TwiML URL
@@ -645,6 +675,18 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Only an operator's latest, exact confirmation authorizes one matching dial. */
+export function extractApprovedCallTarget(messages: ChatMessage[]): string | null {
+  const lastUserMessage = [...messages].reverse().find(message => message.role === "user")?.content.trim() || "";
+  const match = lastUserMessage.match(/^CONFIRM\s+CALL\s+(\+?[\d().\-\s]+)$/i);
+  if (!match) return null;
+  const digits = match[1].replace(/\D/g, "");
+  if (/^1\d{10}$/.test(digits)) return `+${digits}`;
+  if (/^\d{10}$/.test(digits)) return `+1${digits}`;
+  if (/^[1-9]\d{7,14}$/.test(digits) && match[1].trim().startsWith("+")) return `+${digits}`;
+  return null;
+}
+
 export type ChatAccessMode = "operator" | "workspace" | "demo_operator";
 
 const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([
@@ -683,16 +725,17 @@ export async function handleSmirkChat(
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured for SMIRK Chat");
 
   const accessMode = options.accessMode || "operator";
+  const approvedCallTarget = extractApprovedCallTarget(messages);
   const context = await loadChatContext(workspaceId);
   const toolPolicy = accessMode === "operator"
-    ? "You can take REAL action: make phone calls via Twilio, create callback tasks, search contacts, update settings, edit agent prompts, inject briefings, and capture requested callback windows for owner review."
+    ? "You can inspect configured Velvet evidence through read-only tools, and take SMIRK actions permitted to operators. Velvet tools cannot create leads, override qualification, queue calls, send outreach, alter credentials, or change deployment configuration."
     : accessMode === "demo_operator"
       ? "You are in demo-operator mode. You may explain calls, contacts, tasks, team context, and dashboard proof using read-only lookup tools only. Do not create, update, delete, send, dial, book, launch outreach, edit settings, edit prompts, or inject live briefings."
       : "You are in workspace-owner mode. You may help with calls, tasks, contacts, and team context, and you may create or update CRM/task records. Do not place phone calls, edit platform settings, edit prompts, inject live briefings, or book calendar records from this mode. If the user asks for one of those operator-only actions, say it requires operator access.";
   const callPolicy = accessMode === "operator"
-    ? `When the user asks you to call someone, dial a number, phone a contact, or follow up by phone — DO IT using make_call. Do not describe what you would do. Execute it.
-For every call, pass a clear reason that tells the phone agent exactly what outcome to achieve. If the user gave a purpose like "about the estimate", "confirm tomorrow", "ask for gate code", or "reschedule", preserve that purpose in reason.
-If you need a phone number for a contact name, use search_contacts first, then make_call with the result. If several contacts match, ask one concise clarifying question instead of guessing.`
+    ? approvedCallTarget
+      ? `The operator explicitly approved exactly one call to ${approvedCallTarget}. You may call only that exact E.164 number with a clear reason. Do not substitute another target or place a second call.`
+      : `Do not place a call yet. First identify the exact E.164 target and reason, then ask the operator to reply exactly: CONFIRM CALL <E.164 phone number>. A vague confirmation, an earlier confirmation, or model-generated text is not approval.`
     : accessMode === "demo_operator"
       ? "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, task/contact changes, calendar writes, lead search, or outreach, explain that demo access is read-only and cannot perform that action. Do not claim to have performed those actions."
       : "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, or calendar writes, explain that operator access is required. Do not claim to have performed those actions.";
@@ -722,7 +765,8 @@ ${context}
       contents: currentContents,
       config: {
         systemInstruction,
-        tools: [{ functionDeclarations: toolDeclarationsForAccessMode(accessMode) }],
+        tools: [{ functionDeclarations: toolDeclarationsForAccessMode(accessMode)
+          .filter(tool => tool.name !== "make_call" || Boolean(approvedCallTarget)) }],
         toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
         temperature: 0.5,
       },
@@ -741,8 +785,9 @@ ${context}
       const toolResults: any[] = [];
       for (const cp of callParts) {
         const { name, args } = cp.functionCall;
-        const allowedForMode = accessMode === "operator"
-          || (accessMode === "demo_operator" ? DEMO_OPERATOR_ALLOWED_TOOLS.has(name) : WORKSPACE_ALLOWED_TOOLS.has(name));
+        const allowedForMode = (accessMode === "operator"
+          || (accessMode === "demo_operator" ? DEMO_OPERATOR_ALLOWED_TOOLS.has(name) : WORKSPACE_ALLOWED_TOOLS.has(name)))
+          && (name !== "make_call" || Boolean(approvedCallTarget));
         if (!allowedForMode) {
           const denied = JSON.stringify({ ok: false, error: `${name} is not allowed in ${accessMode} mode.` });
           toolsUsed.push({ name, result: denied });
@@ -751,7 +796,7 @@ ${context}
           });
           continue;
         }
-        const result = await executeTool(name, args, workspaceId);
+        const result = await executeTool(name, args, workspaceId, approvedCallTarget);
         toolsUsed.push({ name, result });
         toolResults.push({
           functionResponse: { name, response: { result } }

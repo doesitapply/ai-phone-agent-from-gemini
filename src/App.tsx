@@ -13673,6 +13673,9 @@ export default function App() {
 };
 
 const TOOL_LABELS: Record<string, string> = {
+  get_velvet_system_state: "◈ Reading Velvet state",
+  list_velvet_qualified_leads: "◈ Fetching qualified Velvet leads",
+  get_velvet_lead_evidence: "◈ Reading Velvet evidence",
   make_call: "📞 Dialing",
   book_appointment: "📅 Capturing requested time",
   create_task: "✅ Creating task",
@@ -13696,7 +13699,7 @@ const TOOL_LABELS: Record<string, string> = {
 function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls?: ActiveCall[]; canWhisper?: boolean }) {
   const { dark } = useContext(ThemeContext);
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<'chat' | 'whisper'>('chat');
+  const [mode, setMode] = useState<'chat' | 'system' | 'whisper'>('chat');
   const [selectedCallSid, setSelectedCallSid] = useState<string>("");
   const [whisperInput, setWhisperInput] = useState("");
   const [whisperSending, setWhisperSending] = useState(false);
@@ -13706,7 +13709,7 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
       id: "welcome",
       role: "assistant",
       content: canWhisper
-        ? "Hey — I'm SMIRK. I can take real action: call contacts, create callback tasks, capture requested follow-up times, update settings, and tune agent prompts. What do you need?"
+        ? "Hey — I'm SMIRK. Chat manages SMIRK operations. System mode can retrieve read-only Velvet qualification and handoff evidence. Contact and infrastructure actions stay separately controlled."
         : "Hey — I'm SMIRK. I can help with calls, contacts, and callback tasks. Operator-only actions like outbound dialing, settings changes, prompt edits, and live call injection require operator access.",
     },
   ]);
@@ -13754,8 +13757,8 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
     if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, open]);
 
-  async function send() {
-    const text = input.trim();
+  async function sendPrompt(rawText: string) {
+    const text = rawText.trim();
     if (!text || loading) return;
     setInput("");
     const userMsg: ChatMessage = { id: Date.now().toString(), role: "user", content: text };
@@ -13796,6 +13799,10 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
       setLoading(false);
       setActiveTools([]);
     }
+  }
+
+  async function send() {
+    await sendPrompt(input);
   }
 
   const bg = dark ? "#1a1a2e" : "#ffffff";
@@ -13868,6 +13875,14 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
                     color: mode === 'chat' ? "#fff" : textColor,
                   }}
                 >Chat</button>
+                <button
+                  onClick={() => setMode('system')}
+                  style={{
+                    padding: "4px 10px", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer",
+                    background: mode === 'system' ? "#0f766e" : "transparent",
+                    color: mode === 'system' ? "#fff" : textColor,
+                  }}
+                >System</button>
                 {canWhisper && (
                 <button
                   onClick={() => setMode('whisper')}
@@ -13954,6 +13969,31 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
                   {whisperSending ? "…" : "Inject"}
                 </button>
               </div>
+            </div>
+          )}
+
+          {mode === 'system' && (
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ padding: 12, borderRadius: 10, border: `1px solid ${dark ? "#115e59" : "#99f6e4"}`, background: dark ? "#042f2e" : "#f0fdfa" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: dark ? "#5eead4" : "#0f766e" }}>VELVET CONTROL</div>
+                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.5, color: textColor }}>
+                  Read-only system evidence. This surface cannot queue a Velvet lead, place outreach, edit credentials, or alter deployment settings.
+                </div>
+              </div>
+              {[
+                ["Velvet system state", "Show Velvet system state, qualification counts, and current handoff lifecycle."],
+                ["Qualified leads", "List the current qualified Velvet leads. Do not queue any handoff."],
+                ["Weaklands evidence", "Show Velvet evidence and lifecycle state for lead 480011. Do not take any action."],
+              ].map(([label, prompt]) => (
+                <button
+                  key={label}
+                  disabled={loading}
+                  onClick={() => { setMode('chat'); void sendPrompt(prompt); }}
+                  style={{ textAlign: "left", padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, background: inputBg, color: textColor, cursor: loading ? "not-allowed" : "pointer", fontSize: 12 }}
+                >
+                  <strong>{label}</strong><br /><span style={{ opacity: 0.7 }}>{prompt}</span>
+                </button>
+              ))}
             </div>
           )}
 
