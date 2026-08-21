@@ -16,6 +16,12 @@ on:
     - cron: "5 0 1 * *"   # 00:05 UTC, 1st of every month
   workflow_dispatch:        # allow manual trigger from GitHub Actions UI
 
+# This scheduled maintenance job must not become a release-gating commit check.
+# Failures remain visible as GitHub issues and Actions warnings.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   reset-usage:
     name: Reset Monthly Usage Counters
@@ -27,8 +33,23 @@ jobs:
         env:
           RAILWAY_URL: ${{ vars.RAILWAY_AGENT_URL || 'https://ai-phone-agent-production-6811.up.railway.app' }}
           PROV_SECRET: ${{ secrets.PHONE_AGENT_PROVISIONING_SECRET }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "Triggering monthly usage reset at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+          alert_failure() {
+            local detail="$1"
+            echo "::warning title=Monthly usage reset needs attention::${detail}"
+            gh issue create \
+              --title "ops: monthly usage reset needs attention" \
+              --body "Automated monthly usage reset needs operator attention.\n\n- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\n- Detail: ${detail}\n- Target: ${RAILWAY_URL}\n\nThis is an operational alert. It does not block source deployments." \
+              --label "operations" || echo "::warning title=Monthly usage reset alert issue failed::Could not create the issue; inspect this workflow run."
+          }
+
+          if [ -z "${PROV_SECRET}" ]; then
+            alert_failure "PHONE_AGENT_PROVISIONING_SECRET is not configured in GitHub Actions secrets."
+            exit 0
+          fi
 
           HTTP_CODE=$(curl -s -o /tmp/reset_response.json -w "%{http_code}" \
             --max-time 30 \
@@ -40,8 +61,8 @@ jobs:
           cat /tmp/reset_response.json
 
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "ERROR: Monthly reset failed with HTTP ${HTTP_CODE}"
-            exit 1
+            alert_failure "Monthly reset returned HTTP ${HTTP_CODE}. Response: $(tr '\n' ' ' < /tmp/reset_response.json | head -c 800)"
+            exit 0
           fi
 
           echo "SUCCESS: Monthly usage counters reset."
