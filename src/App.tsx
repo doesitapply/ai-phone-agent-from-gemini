@@ -13717,6 +13717,8 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
   const [loading, setLoading] = useState(false);
   const [activeTools, setActiveTools] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const velvetLeadId = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("velvetLeadId");
+  const velvetConsoleUrl = "https://velvetalchemy.manus.space";
 
   // Auto-select first active call when switching to whisper mode
   useEffect(() => {
@@ -13980,6 +13982,11 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
                   Read-only system evidence. This surface cannot queue a Velvet lead, place outreach, edit credentials, or alter deployment settings.
                 </div>
               </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <a href={`${velvetConsoleUrl}/command-center`} target="_blank" rel="noreferrer" style={{ textAlign: "center", padding: "9px 8px", borderRadius: 10, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 11, fontWeight: 600, textDecoration: "none" }}>Open Velvet Ops ↗</a>
+                <a href={`${velvetConsoleUrl}/smirk-queue`} target="_blank" rel="noreferrer" style={{ textAlign: "center", padding: "9px 8px", borderRadius: 10, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 11, fontWeight: 600, textDecoration: "none" }}>Open Live Queue ↗</a>
+              </div>
+              {velvetLeadId && <a href={`${velvetConsoleUrl}/leads/${encodeURIComponent(velvetLeadId)}`} target="_blank" rel="noreferrer" style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${dark ? "#0e7490" : "#a5f3fc"}`, background: dark ? "#082f49" : "#ecfeff", color: dark ? "#a5f3fc" : "#155e75", fontSize: 12, fontWeight: 600, textDecoration: "none" }}>Open linked Velvet lead #{velvetLeadId} ↗</a>}
               <div style={{ fontSize: 10, fontWeight: 700, color: dark ? "#94a3b8" : "#475569", letterSpacing: 1 }}>READ SYSTEM STATE</div>
               {[
                 ["Velvet system state", "Show Velvet system state, qualification counts, and current handoff lifecycle."],
