@@ -6,10 +6,15 @@ type OperationsRouteDeps = {
   sql: any;
   dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
+  velvet: {
+    receiverConfigured: boolean;
+    workspaceId: string | null;
+    portalUrl: string | null;
+  };
 };
 
 export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps): void {
-  const { dashboardAuth, requireOperator, sql, dbEnabled, getWorkspaceId } = deps;
+  const { dashboardAuth, requireOperator, sql, dbEnabled, getWorkspaceId, velvet } = deps;
 
   app.get("/api/handoffs", dashboardAuth, async (req: Request, res: Response) => {
     if (!dbEnabled) return res.json({ handoffs: [] });
@@ -40,6 +45,41 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
       LIMIT 50
     `;
     res.json({ handoffs });
+  });
+
+  app.get("/api/velvet/portal", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.json({
+        receiverConfigured: velvet.receiverConfigured,
+        workspaceId: velvet.workspaceId,
+        portalUrl: velvet.portalUrl,
+        sourceAttributionAvailable: false,
+        pendingCount: 0,
+        recentHandoffs: [],
+      });
+    }
+    const wsId = getWorkspaceId(req);
+    const [countRows, handoffs] = await Promise.all([
+      sql<{ count: string }[]>`SELECT COUNT(*)::TEXT AS count FROM handoffs WHERE workspace_id = ${wsId} AND status = 'pending'`,
+      sql`
+        SELECT h.id, h.call_sid, h.reason, h.urgency, h.status, h.notes, h.recommended_action,
+               h.transcript_snippet, h.created_at, h.acknowledged_at, h.assigned_to_name,
+               h.assigned_to_phone, h.assigned_to_email, co.name AS contact_name, co.phone_number
+        FROM handoffs h
+        LEFT JOIN contacts co ON h.contact_id = co.id
+        WHERE h.workspace_id = ${wsId}
+        ORDER BY h.created_at DESC
+        LIMIT 20
+      `,
+    ]);
+    res.json({
+      receiverConfigured: velvet.receiverConfigured,
+      workspaceId: velvet.workspaceId,
+      portalUrl: velvet.portalUrl,
+      sourceAttributionAvailable: false,
+      pendingCount: Number(countRows[0]?.count || 0),
+      recentHandoffs: handoffs,
+    });
   });
 
   app.post("/api/handoffs/:id/acknowledge", dashboardAuth, async (req: Request, res: Response) => {
