@@ -13986,7 +13986,10 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
                 <a href={`${velvetConsoleUrl}/command-center`} target="_blank" rel="noreferrer" style={{ textAlign: "center", padding: "9px 8px", borderRadius: 10, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 11, fontWeight: 600, textDecoration: "none" }}>Open Velvet Ops ↗</a>
                 <a href={`${velvetConsoleUrl}/smirk-queue`} target="_blank" rel="noreferrer" style={{ textAlign: "center", padding: "9px 8px", borderRadius: 10, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 11, fontWeight: 600, textDecoration: "none" }}>Open Live Queue ↗</a>
               </div>
-              {velvetLeadId && <a href={`${velvetConsoleUrl}/leads/${encodeURIComponent(velvetLeadId)}`} target="_blank" rel="noreferrer" style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${dark ? "#0e7490" : "#a5f3fc"}`, background: dark ? "#082f49" : "#ecfeff", color: dark ? "#a5f3fc" : "#155e75", fontSize: 12, fontWeight: 600, textDecoration: "none" }}>Open linked Velvet lead #{velvetLeadId} ↗</a>}
+              {velvetLeadId && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <a href={`${velvetConsoleUrl}/leads/${encodeURIComponent(velvetLeadId)}/dossier`} target="_blank" rel="noreferrer" style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${dark ? "#7c3aed" : "#ddd6fe"}`, background: dark ? "#2e1065" : "#f5f3ff", color: dark ? "#ddd6fe" : "#5b21b6", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>Open handoff dossier ↗</a>
+                <a href={`${velvetConsoleUrl}/leads/${encodeURIComponent(velvetLeadId)}`} target="_blank" rel="noreferrer" style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${dark ? "#0e7490" : "#a5f3fc"}`, background: dark ? "#082f49" : "#ecfeff", color: dark ? "#a5f3fc" : "#155e75", fontSize: 12, fontWeight: 600, textDecoration: "none" }}>Open linked lead ↗</a>
+              </div>}
               <div style={{ fontSize: 10, fontWeight: 700, color: dark ? "#94a3b8" : "#475569", letterSpacing: 1 }}>READ SYSTEM STATE</div>
               {[
                 ["Velvet system state", "Show Velvet system state, qualification counts, and current handoff lifecycle."],
