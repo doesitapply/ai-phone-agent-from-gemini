@@ -1,8 +1,21 @@
 # SMIRK
 
-SMIRK is a missed-call recovery system for local service businesses.
+SMIRK is the conversation and execution layer of a controlled customer-acquisition system for local service businesses.
 
-It answers inbound calls when a business owner or crew cannot pick up, captures the caller's problem, writes the call record, creates callback work, alerts the owner, and shows proof in a dashboard.
+Its proven product wedge is missed-call recovery: it answers inbound calls when an owner or crew cannot pick up, captures the caller's problem, writes the call record, creates callback work, alerts the owner, and shows proof in a dashboard.
+
+The broader operating model connects **Velvet Alchemy** and **SMIRK** without pretending that discovery alone is permission to contact someone:
+
+```text
+Velvet discovers and researches a business
+  -> preserves evidence and an external lead identity
+  -> approved/eligible work is handed to SMIRK
+  -> SMIRK records the handoff, conversation, task, and outcome
+  -> conversion and retention stay attached to the same chain
+  -> reliable outcomes return to Velvet to improve future selection
+```
+
+This is the intended **Karpathy loop**: evidence -> policy -> guarded action -> recorded outcome -> reviewed label -> improved policy. It is not an autonomous “score then spam” system, and automatic outcome feedback or full source-to-revenue attribution is not yet implemented.
 
 The narrow product is simple:
 
@@ -18,6 +31,9 @@ Source of truth is always the commands in this section. The snapshot below recor
 
 | Area | Status | Evidence |
 | --- | --- | --- |
+| Velvet inbound handoff | Proven separately | The protected Velvet sender-side test passed `201 RECEIVED` followed by `200 DUPLICATE`; no real prospect was touched. SMIRK’s receiver validates its dedicated inbound bearer and is idempotent. |
+| Velvet source-to-revenue attribution | Not yet implemented | The operator portal explicitly reports `sourceAttributionAvailable: false`; current inbound receipts retain an external ID/payload hash, not a complete immutable acquisition root. |
+| Velvet outcome feedback | Planned | The credential boundary is defined, but the AI Phone Agent source does not yet implement automatic, durable outcome posting back to Velvet. |
 | Live deploy | Must be checked | `npm run -s check:live-is-current` proves whether production is running the current commit. |
 | Final-mile audit | Must be checked | `npm run -s check:smirk-1000-final-mile` separates local `1000/1000` evidence from production readiness. |
 | First-customer gate | Must be checked | `npm run -s check:first-customer-10of10` is the launch-readiness bundle. It requires a clean worktree and live parity. |
@@ -31,6 +47,8 @@ Source of truth is always the commands in this section. The snapshot below recor
 | Smoke cleanup | Guarded | `APP_URL=https://www.smirkcalls.com npm run cleanup:smoke-workspaces` should match 0 smoke workspaces before first customer. |
 
 Blunt status: SMIRK is no longer just "close." The local final-mile implementation is proven, including No-DB demo mode, customer dashboard partitioning, and local Basic chaos isolation. The remaining launch blocker is live parity: production must run the current commit before the signed Stripe proof, dashboard proof, post-call proof, and live Basic chaos proof can honestly count.
+
+For the cross-system operating model, read [`docs/VELVET_SMIRK_CLOSED_LOOP.md`](docs/VELVET_SMIRK_CLOSED_LOOP.md) first. It is the canonical description of what is live, what is target architecture, and what must be recorded before Velvet + SMIRK can claim attributable revenue.
 
 The cleanest one-command status check is:
 
@@ -125,6 +143,7 @@ Important files:
 | `scripts/` | Readiness, deploy, Stripe, cleanup, proof, and safety checks. |
 | `openapi.yaml` | Generated API route inventory for the backend. |
 | `docs/SMIRK_API_BACKEND_AI_CONTEXT.md` | Backend/API handoff for another AI agent: route families, auth, data domains, no-DB mode, external services, and verification gates. |
+| `docs/VELVET_SMIRK_CLOSED_LOOP.md` | Canonical Velvet discovery -> SMIRK execution -> attributable outcome -> Velvet feedback model, including the evidence chain, controls, and current implementation gaps. |
 | `docs/SMIRK_1000_ROADMAP.md` | Current final-mile roadmap from 875/1000 to 1000/1000, including the database reliability path. |
 | `docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md` | Market validation sprint, launch channels, traction ledger, paid-spend cap, and SMS guardrails for the first home-services push. |
 
@@ -205,6 +224,7 @@ Bottom line: the core routes and data model do not need a rewrite to sell the mi
 - Not an SMS product.
 - Not a local-only Ollama app.
 - Not a finished autonomous outbound lead-audit machine.
+- Not yet a fully attributed, self-improving Velvet-to-revenue engine; the immutable acquisition root, durable approval chain, payment/retention linkage, and automatic outcome callback still need implementation.
 - Not legal advice or a substitute for compliance counsel.
 
 ## Plan And Dashboard Boundaries
@@ -311,7 +331,14 @@ OPENROUTER_API_KEY
 GEMINI_API_KEY
 RESEND_API_KEY
 FROM_EMAIL
+VELVET_ALCHEMY_HANDOFF_API_KEY
+VELVET_ALCHEMY_WORKSPACE_ID
+VELVET_ALCHEMY_BASE_URL
+VELVET_ALCHEMY_READ_KEY
+VELVET_ALCHEMY_OUTCOME_KEY
 ```
+
+The Velvet variables are separate least-privilege boundaries. `VELVET_ALCHEMY_HANDOFF_API_KEY` is inbound Velvet -> SMIRK receiver authentication; `VELVET_ALCHEMY_READ_KEY` is intended for read-only Velvet evidence retrieval; `VELVET_ALCHEMY_OUTCOME_KEY` is reserved for outbound outcome feedback. Never reuse, expose, or send these values to the browser or model context.
 
 The first-dollar money path is one verified hosted Starter Payment Link at $197/month. Native Checkout is code-disabled for this launch, so `STRIPE_SECRET_KEY` is not required to open checkout. The fulfillment allowlist must contain the current exact `plink_` ID and may retain only exact provider-inactive historical Starter IDs for already-paid Session recovery.
 
@@ -506,6 +533,8 @@ Dashboard/operator:
 - `GET /api/compliance/dnc`
 - `GET /api/compliance/audit`
 - `POST /api/compliance/check`
+- `POST /api/integrations/velvet/handoffs` — authenticated Velvet -> SMIRK work intake; this writes a handoff/task record and does not place a call.
+- `GET /api/velvet/portal` — operator-only handoff/receiver view; source attribution is explicitly marked unavailable until the attribution spine exists.
 
 OpenAPI route inventory is generated into `openapi.yaml`.
 
@@ -519,6 +548,8 @@ OpenAPI route inventory is generated into `openapi.yaml`.
 - SMS/text response automation is intentionally not sold as live.
 - Autonomous outbound leak auditing is not productized. The included local auditor is draft-only and manual-review by design.
 - Some integrations exist before they are fully productized.
+- The Velvet handoff receiver is proven, but the complete immutable chain from Velvet source evidence through approval, touch, payment, retention, and feedback does not exist yet.
+- Automatic outcome feedback to Velvet is not implemented in this source tree. Do not describe the loop as self-learning until that callback and its reviewed labels are durable.
 
 ## Docker
 

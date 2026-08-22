@@ -1,6 +1,6 @@
 # SMIRK API and Backend Context for AI Agents
 
-Last reviewed from this checkout: 2026-07-08.
+Last reviewed from this checkout: 2026-08-22.
 
 This document is a repo-grounded handoff for another AI agent. It explains the backend, API surface, auth boundaries, data model, product gates, local demo mode, and operational checks without requiring the agent to infer the full system from scattered files.
 
@@ -33,7 +33,7 @@ npm run -s check:openapi
 
 ## Product Shape
 
-SMIRK is a missed-call recovery SaaS for local service businesses.
+SMIRK is a missed-call recovery SaaS for local service businesses and the controlled conversation/execution layer of the broader Velvet + SMIRK operating model.
 
 The narrow product loop is:
 
@@ -47,6 +47,39 @@ Missed call
 ```
 
 The codebase also contains broader operator tooling: agents, compliance, integrations, prospecting, lead search, system health, admin maintenance, workspace provisioning, and proof gates. Treat those as machine-room surfaces unless the user explicitly asks for operator/admin work.
+
+## Velvet + SMIRK Closed Loop
+
+The authoritative system document is [`VELVET_SMIRK_CLOSED_LOOP.md`](VELVET_SMIRK_CLOSED_LOOP.md). Use it before changing any Velvet integration, outbound workflow, attribution schema, or feedback route.
+
+The core distinction is essential:
+
+```text
+Velvet: discover, research, evidence, and qualify an opportunity.
+SMIRK: accept authenticated work, enforce operational controls, execute approved conversation work, and preserve records.
+```
+
+Current implemented boundary:
+
+```text
+Velvet protected sender
+  -> POST /api/integrations/velvet/handoffs
+  -> dedicated bearer + workspace validation + strict payload validation
+  -> idempotency receipt keyed by workspace/source/external ID/payload hash
+  -> SMIRK contact + external_handoff call + pending handoff + open task + call event
+```
+
+The receiver does **not** initiate a phone call. A handoff is internal work intake. It must not be treated as a contact authorization, consent record, or outbound policy decision.
+
+Current gaps that must remain explicit:
+
+| Requirement | State |
+| --- | --- |
+| Full immutable `acquisition_record` root with source evidence | Not implemented in SMIRK. |
+| Velvet-specific route/contactability decision and approval bound to an outreach payload | Not implemented as durable linked records. |
+| Automatic idempotent outcome feedback to Velvet | Not implemented in source. |
+| Stripe/payment/retention linked to the originating Velvet evidence | Not implemented. |
+| Receiver bearer, idempotency, and durable SMIRK handoff/task creation | Implemented and separately sender-side proven. |
 
 ## Runtime Architecture
 
@@ -144,6 +177,7 @@ npm run -s check:auth-regression
 | `calendar-routes.ts` | `/api/appointments*`, `/api/calendar/events`, `/api/calendar/test-booking` | Workspace reads, operator writes/test booking | Appointments and calendar surfaces. |
 | `calendly-routes.ts` | `/api/calendly/webhook`, `/api/calendly/config` | Signed/public webhook, workspace config read | Calendly webhook and config exposure. |
 | `operations-routes.ts` | `/api/handoffs`, `/api/summaries` | Workspace handoffs, operator summaries | Handoff acknowledgment and operator summary list. |
+| `velvet-handoff-routes.ts` | `/api/integrations/velvet/handoffs` | Dedicated Velvet inbound bearer | Strict external handoff intake, receipt/idempotency, and durable internal handoff/task creation. |
 | `proof-routes.ts` | `/api/events`, `/api/public-proof-snapshot` | Operator events, public proof snapshot | Proof/event feed and public masked snapshot. |
 | `settings-routes.ts` | `/api/settings*`, `/api/logs`, `/api/agent/identity`, `/api/config-status` | Operator | Settings, logs, service tests, agent identity. |
 | `agent-routes.ts` | `/api/agents*` | Operator | Agent configurations and activation. |
@@ -183,6 +217,7 @@ High-level entities another agent should understand:
 - `contact_custom_fields`: extracted structured fields and confidence.
 - `appointments`: scheduling records.
 - `handoffs`: human handoff/acknowledgment workflow.
+- `velvet_alchemy_handoff_receipts`: receiver-side idempotency and receipt state keyed by workspace, source, external ID, and payload hash.
 - `call_events` / `request_logs` / audit tables: proof, operations, diagnostics, compliance trail.
 - Prospecting/sequence/lead tables: operator-only outbound/prospecting surfaces.
 
@@ -243,6 +278,19 @@ Public pricing / checkout request
 
 Important files: `src/routes/buyer-routes.ts`, `src/routes/provisioning-routes.ts`, `src/saas.ts`, `src/twilio-provisioning.ts`, `src/monetization-alerts.ts`.
 
+### Velvet Authenticated Handoff Intake
+
+```text
+Velvet protected sender
+  -> POST /api/integrations/velvet/handoffs with dedicated inbound bearer
+  -> constant-time bearer comparison and configured-workspace check
+  -> strict payload parse and external-ID/payload-hash idempotency check
+  -> contact + external_handoff call + handoff + task + call-event writes
+  -> 201 RECEIVED or 200 DUPLICATE
+```
+
+Do not add a “self-test” that claims to prove the Velvet sender and SMIRK receiver use the same secret unless the test executes from Velvet’s protected sender runtime. A SMIRK-only loopback proves only SMIRK’s own configuration.
+
 ### Customer Dashboard
 
 ```text
@@ -281,6 +329,7 @@ Configured integrations visible in code include:
 - CRM/webhook/MCP/plugin tools: operator-configured integrations.
 - Serper/Brave/search/maps/Apollo style lead lookup paths: operator prospecting/lead search.
 - Railway/public host runtime: deployment target for production checks.
+- Velvet Alchemy: separate discovery/evidence system. Its inbound handoff bearer, read key, and planned outcome key are distinct scoped credentials.
 
 Only claim an integration is live when its env vars are configured and the relevant readiness check passes.
 
@@ -351,4 +400,4 @@ Guarded live-write checks require explicit user approval and env confirmations. 
 - Some legacy/operator/prospecting surfaces are broader than the narrow customer product.
 - No-DB mode is a local demo and debugging path, not a replacement for production persistence.
 - Live Stripe/Twilio/Railway proof depends on configured external accounts and explicit approvals.
-
+- The Velvet receiver proof does not imply complete source-to-revenue attribution or automatic learning. Those require the missing acquisition root, approval/touch ledger, conversion linkage, and outcome callback.
