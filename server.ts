@@ -62,6 +62,10 @@ const EnvSchema = z.object({
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
   GOOGLE_ADMIN_EMAILS: z.string().optional(),
   DEMO_OPERATOR_EMAILS: z.string().optional(),
+  SMIRK_OPERATOR_ADMIN_EMAILS: z.string().optional(),
+  VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
+  VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
+  VELVET_ALCHEMY_PORTAL_URL: z.string().url().optional(),
   NODE_ENV: z.enum(["development", "production", "test"]).optional(),
   // OpenClaw Gateway integration
   OPENCLAW_ENABLED: z.enum(["true", "false"]).optional(),
@@ -148,10 +152,6 @@ const EnvSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().optional(),
-  // Velvet Alchemy can create a callback handoff only when both values are set.
-  // This is intentionally separate from all operator, workspace, and telephony keys.
-  VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
-  VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
 });
 
 // ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
@@ -303,6 +303,7 @@ import { registerAdminMaintenanceRoutes } from "./src/routes/admin-maintenance-r
 import { registerAgentRoutes } from "./src/routes/agent-routes.js";
 import { registerApiMiddleware } from "./src/routes/api-middleware.js";
 import { registerAuthRoutes } from "./src/routes/auth-routes.js";
+import { resolveOperatorAdminEmails } from "./src/operator-identity.js";
 import { validateGoogleTokenAudience } from "./src/google-auth-safety.js";
 import { registerBuyerRoutes } from "./src/routes/buyer-routes.js";
 import { registerCalendarRoutes } from "./src/routes/calendar-routes.js";
@@ -791,7 +792,11 @@ const splitCsv = (raw?: string | null) => String(raw || "")
   .filter(Boolean);
 
 const googleClientIds = () => splitCsv(env.GOOGLE_OAUTH_CLIENT_ID);
-const googleAdminEmails = () => splitCsv(env.GOOGLE_ADMIN_EMAILS);
+const googleAdminEmails = () => resolveOperatorAdminEmails({
+  googleAdminEmails: env.GOOGLE_ADMIN_EMAILS,
+  extraOperatorEmails: env.SMIRK_OPERATOR_ADMIN_EMAILS,
+  ownerEmail: env.OWNER_EMAIL,
+});
 const googleDemoOperatorEmails = () => splitCsv(env.DEMO_OPERATOR_EMAILS);
 
 const verifyGoogleIdToken = async (credential: string): Promise<GoogleIdentity> => {
@@ -3779,6 +3784,11 @@ registerOperationsRoutes(app, {
   sql,
   dbEnabled: DB_ENABLED,
   getWorkspaceId,
+  velvet: {
+    receiverConfigured: !!env.VELVET_ALCHEMY_HANDOFF_API_KEY,
+    workspaceId: env.VELVET_ALCHEMY_WORKSPACE_ID || null,
+    portalUrl: env.VELVET_ALCHEMY_PORTAL_URL || null,
+  },
 });
 
 registerAgentRoutes(app, {
