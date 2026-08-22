@@ -12,12 +12,14 @@ import { upsertLead, validateLeadInput, type LeadUpsertInput } from "../leads-up
 import { getCampaigns as getProspectingCampaigns } from "../prospector.js";
 import { checkOutboundCompliance } from "../compliance.js";
 import { handleSmirkChat, loadChatContext, type ChatMessage } from "../smirk-chat.js";
-import { resolveChatWorkspace } from "../chat-route-security.js";
+import { resolveChatWorkspace, type ChatRouteAuthMode } from "../chat-route-security.js";
+import { toSafeChatProviderFailure } from "../chat-provider-error.js";
 
 type LeadRouteDeps = {
   dashboardAuth: RequestHandler;
   chatRateLimit: RequestHandler;
   requireOperator: RequestHandler;
+  resolveVerifiedOwnerChatActor: (req: Request) => Promise<string | null>;
   sql: any;
   dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
@@ -32,6 +34,7 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
     dashboardAuth,
     chatRateLimit,
     requireOperator,
+    resolveVerifiedOwnerChatActor,
     sql,
     dbEnabled,
     getWorkspaceId,
@@ -441,22 +444,30 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.post("/api/chat", dashboardAuth, chatRateLimit, async (req: Request, res: Response) => {
     try {
-      const authMode = (req as any).authMode === "operator"
+      const authenticatedMode: ChatRouteAuthMode | null = (req as any).authMode === "operator"
         ? "operator"
         : (req as any).authMode === "demo_operator"
           ? "demo_operator"
           : (req as any).authMode === "workspace"
             ? "workspace"
             : null;
-      if (!authMode) {
+      if (!authenticatedMode) {
         return res.status(401).json({ error: "Authentication required." });
       }
+      const ownerChatActor = authenticatedMode === "operator"
+        ? await resolveVerifiedOwnerChatActor(req)
+        : null;
+      const accessMode = ownerChatActor
+        ? "owner_operator"
+        : authenticatedMode === "operator"
+          ? "operator_readonly"
+          : authenticatedMode;
       const { messages, workspaceId } = req.body as { messages: ChatMessage[]; workspaceId?: unknown };
       if (!Array.isArray(messages) || messages.length === 0) {
         return res.status(400).json({ error: "messages array required" });
       }
       const workspaceResolution = resolveChatWorkspace({
-        authMode,
+        authMode: authenticatedMode,
         authenticatedWorkspaceId: getWorkspaceId(req),
         requestedWorkspaceId: workspaceId,
       });
@@ -467,11 +478,12 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
         });
       }
       const wsId = workspaceResolution.workspaceId;
-      const result = await handleSmirkChat(messages, wsId, { accessMode: authMode });
+      const result = await handleSmirkChat(messages, wsId, { accessMode, actorEmail: ownerChatActor || undefined });
       res.json(result);
     } catch (err: any) {
       log("error", "SMIRK Chat failed", { error: err.message, stack: err.stack });
-      res.status(500).json({ error: err.message });
+      const failure = toSafeChatProviderFailure(err);
+      res.status(failure.status).json(failure.body);
     }
   });
 
