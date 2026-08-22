@@ -147,10 +147,6 @@ const EnvSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().optional(),
-  // Velvet Alchemy can create a callback handoff only when both values are set.
-  // This is intentionally separate from all operator, workspace, and telephony keys.
-  VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
-  VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
 });
 
 // ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
