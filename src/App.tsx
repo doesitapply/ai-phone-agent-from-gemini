@@ -2056,6 +2056,29 @@ function reviewQueueCallToCall(call: ReviewQueueCall): Call {
   };
 }
 
+function triageIncidentToCall(incident: any): Call {
+  return {
+    id: 0,
+    call_sid: incident.callSid || incident.call_sid || "",
+    direction: "inbound",
+    to_number: "",
+    from_number: incident.fromNumber || incident.from_number || "",
+    status: "completed",
+    started_at: incident.at || "",
+    ended_at: null,
+    duration_seconds: incident.durationSeconds ?? incident.duration_seconds ?? null,
+    agent_name: "SMIRK",
+    message_count: incident.turnCount ?? incident.turn_count ?? 0,
+    contact_name: incident.contactName || incident.contact_name || null,
+    intent: null,
+    outcome: incident.outcome || null,
+    call_summary: incident.summary || null,
+    summary_score: null,
+    next_action: incident.nextAction || incident.next_action || null,
+    sentiment: incident.sentiment || null,
+  };
+}
+
 type TaskBucket = "smirk" | "human" | "info";
 
 type TaskClassification = {
@@ -2910,7 +2933,7 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
         {[
           { label: "Active Calls", value: loading ? "…" : (activeCalls?.length || triage?.activeCalls?.length || 0), sub: (activeCalls?.length || 0) > 0 ? "Live now" : "", tab: "calls" as Tab, tone: "text-[#00ff88]" },
           { label: "Needs Recovery", value: loading ? "…" : (triage?.recovery?.length || 0), sub: (triage?.recovery?.length || 0) > 0 ? "Missed inbound" : "", tab: "recovery" as Tab, tone: "text-amber-400" },
-          { label: "Incidents (7d)", value: loading ? "…" : incidents.length, sub: incidents.length === 0 && !loading ? "All clear" : "", tab: "system_health" as Tab, tone: "text-[#00ff88]" },
+          { label: "Action queue (7d)", value: loading ? "…" : incidents.length, sub: incidents.length === 0 && !loading ? "All clear" : "Decision-ranked", tab: "recovery" as Tab, tone: "text-[#00ff88]" },
           { label: "Total Calls (7d)", value: loading ? "…" : (triage?.recentCalls?.length || recentCalls?.length || 0), sub: "", tab: "calls" as Tab, tone: "text-gray-500" },
         ].map((item) => (
           <button
@@ -3120,12 +3143,15 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
       </div>
 
       <div className="smirk-overview-lower grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        {/* Incident Queue */}
+        {/* Decision-ready action queue */}
         <div className="lg:col-span-2 rounded-xl border border-gray-800 bg-gray-900/60 overflow-hidden">
           <div className="px-5 py-3.5 border-b border-gray-800 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">Incident Queue</h3>
+            <div>
+              <h3 className="text-sm font-semibold text-white">Action Queue</h3>
+              <p className="mt-0.5 text-[10px] text-gray-600">Callbacks with evidence first; incomplete captures require review.</p>
+            </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold">Auto-ranked</span>
+              <span className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold">Decision-ranked</span>
               <button onClick={() => onTabChange('recovery')}
                 className="text-[11px] text-[#00ff88] hover:text-[#00e87a] font-medium transition-colors">View all →</button>
             </div>
@@ -3139,20 +3165,21 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
             {!loading && incidents.length === 0 && (
               <div className="px-5 py-10 text-center">
                 <CheckCircle2 size={24} className="text-[#00ff88] mx-auto mb-2" />
-                <p className="text-sm font-medium text-white">All clear</p>
-                <p className="text-xs text-gray-500 mt-1">No incidents in the last 7 days</p>
+                <p className="text-sm font-medium text-white">Queue clear</p>
+                <p className="text-xs text-gray-500 mt-1">No callback or review decisions in the last 7 days</p>
               </div>
             )}
             {(incidents).slice(0, 20).map((it: any, idx: number) => (
-              <button key={it.call_sid || it.id || idx}
-                onClick={() => onTabChange('recovery')}
+              <button key={it.callSid || it.call_sid || it.id || idx}
+                onClick={() => it.action === "review" ? onCallClick(triageIncidentToCall(it)) : onTabChange('recovery')}
                 className="w-full text-left px-5 py-3.5 hover:bg-gray-800/40 transition-colors">
                 <div className="flex items-start gap-3">
                   <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-md text-[10px] font-bold ${priTone(it.priority)}`}>{it.priority}</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-semibold text-white truncate">{it.label}</div>
+                    <div className="mt-0.5 text-[10px] text-gray-600 line-clamp-1">{it.detail || (it.action === "review" ? "Review the call record before starting contact." : "Open Recovery Desk to continue.")}</div>
                     <div className="text-[11px] text-gray-500 mt-0.5 truncate">
-                      {it.contact_name ? `${it.contact_name} · ` : ''}{fmt.phone(it.from_number)} · {fmt.date(it.at)}
+                      {it.contactName || it.contact_name ? `${it.contactName || it.contact_name} · ` : ''}{fmt.phone(it.fromNumber || it.from_number)} · {fmt.date(it.at)} · {it.action === "review" ? "Review" : "Recovery"}
                     </div>
                   </div>
                   <ChevronRight size={13} className="text-gray-700 shrink-0 mt-0.5" />

@@ -1,5 +1,6 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import { getMockCallIntelligence, getMockCalls, getMockStats } from "../mock-db.js";
+import { buildDecisionReadyIncidents } from "../triage-policy.js";
 
 type DashboardRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -348,16 +349,21 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
         const days = Math.max(1, Math.min(30, parseInt(String(req.query.days || "7"), 10) || 7));
         const recentCalls = getMockCalls().slice(0, limit);
         const recovery = recentCalls.filter((call: any) => call.outcome === "callback_needed");
-        const incidents = recovery.map((call: any, index: number) => ({
-          kind: "recovery",
-          priority: index === 0 ? "P0" : "P1",
-          label: "Recovered missed call: callback needed",
-          call_sid: call.call_sid,
-          at: call.started_at,
-          contact_name: call.contact_name,
-          from_number: call.from_number,
-          status: "open",
-        }));
+        const incidents = buildDecisionReadyIncidents(recovery.map((call: any) => ({
+          callSid: call.call_sid,
+          startedAt: call.started_at,
+          fromNumber: call.from_number || null,
+          contactName: call.contact_name || null,
+          durationSeconds: call.duration_seconds ?? null,
+          turnCount: call.turn_count ?? call.message_count ?? 0,
+          recoveryCallbackStartedAt: call.recovery_call_back_started_at || null,
+          recoveryClosedAt: call.recovery_closed_at || null,
+          recoveryStatus: call.recovery_status || "open",
+          outcome: call.outcome || null,
+          summary: call.call_summary || null,
+          nextAction: call.next_action || null,
+          sentiment: call.sentiment || null,
+        })));
         return res.json({
           ok: true,
           noDbDemo: true,
@@ -387,6 +393,7 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
             co.id as contact_id,
             co.name as contact_name,
             cs.outcome,
+            cs.summary AS call_summary,
             cs.next_action,
             cs.sentiment
           FROM calls c
@@ -424,29 +431,21 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
         `,
       ]);
 
-      const incidents = [] as any[];
-      for (const r of (recovery as any[])) {
-        const needsCallback = !r.recovery_call_back_started_at;
-        const needsClose = !!r.recovery_call_back_started_at && !r.recovery_closed_at;
-        const label = needsCallback
-          ? 'Missed call: callback needed'
-          : needsClose
-            ? 'Recovery: callback in progress'
-            : 'Recovery: in progress';
-        const priority = needsCallback ? 'P0' : needsClose ? 'P1' : 'P2';
-        incidents.push({
-          kind: 'recovery',
-          priority,
-          label,
-          call_sid: r.call_sid,
-          at: r.started_at,
-          contact_name: r.contact_name,
-          from_number: r.from_number,
-          status: r.recovery_status || 'open',
-        });
-      }
-      const priOrder: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
-      incidents.sort((a, b) => (priOrder[a.priority] - priOrder[b.priority]) || (String(b.at).localeCompare(String(a.at))));
+      const incidents = buildDecisionReadyIncidents((recovery as any[]).map((r) => ({
+        callSid: r.call_sid,
+        startedAt: r.started_at,
+        fromNumber: r.from_number || null,
+        contactName: r.contact_name || null,
+        durationSeconds: r.duration_seconds == null ? null : Number(r.duration_seconds),
+        turnCount: r.turn_count == null ? 0 : Number(r.turn_count),
+        recoveryCallbackStartedAt: r.recovery_call_back_started_at || null,
+        recoveryClosedAt: r.recovery_closed_at || null,
+        recoveryStatus: r.recovery_status || "open",
+        outcome: r.outcome || null,
+        summary: r.call_summary || null,
+        nextAction: r.next_action || null,
+        sentiment: r.sentiment || null,
+      })));
 
       res.json({
         ok: true,
