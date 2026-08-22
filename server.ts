@@ -63,6 +63,7 @@ const EnvSchema = z.object({
   GOOGLE_ADMIN_EMAILS: z.string().optional(),
   DEMO_OPERATOR_EMAILS: z.string().optional(),
   SMIRK_OPERATOR_ADMIN_EMAILS: z.string().optional(),
+  SMIRK_OWNER_CHAT_EMAILS: z.string().optional(),
   VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
   VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
   VELVET_ALCHEMY_PORTAL_URL: z.string().url().optional(),
@@ -299,6 +300,7 @@ import { registerAgentRoutes } from "./src/routes/agent-routes.js";
 import { registerApiMiddleware } from "./src/routes/api-middleware.js";
 import { registerAuthRoutes } from "./src/routes/auth-routes.js";
 import { resolveOperatorAdminEmails } from "./src/operator-identity.js";
+import { isVerifiedOwnerChatIdentity, resolveOwnerChatEmails } from "./src/owner-chat-identity.js";
 import { validateGoogleTokenAudience } from "./src/google-auth-safety.js";
 import { registerBuyerRoutes } from "./src/routes/buyer-routes.js";
 import { registerCalendarRoutes } from "./src/routes/calendar-routes.js";
@@ -784,6 +786,10 @@ const googleAdminEmails = () => resolveOperatorAdminEmails({
   ownerEmail: env.OWNER_EMAIL,
 });
 const googleDemoOperatorEmails = () => splitCsv(env.DEMO_OPERATOR_EMAILS);
+const ownerChatEmails = () => resolveOwnerChatEmails({
+  ownerChatEmails: env.SMIRK_OWNER_CHAT_EMAILS,
+  ownerEmail: env.OWNER_EMAIL,
+});
 
 const verifyGoogleIdToken = async (credential: string): Promise<GoogleIdentity> => {
   const idToken = String(credential || "").trim();
@@ -810,6 +816,30 @@ const verifyGoogleIdToken = async (credential: string): Promise<GoogleIdentity> 
     aud: audienceValidation.audience,
     sub: String(body.sub || "").trim() || undefined,
   };
+};
+
+const resolveVerifiedOwnerChatActor = async (req: Request): Promise<string | null> => {
+  if ((req as any).authMode !== "operator") return null;
+  const credential = String(req.headers["x-smirk-google-id-token"] || "").trim();
+  if (!credential) return null;
+  try {
+    const identity = await verifyGoogleIdToken(credential);
+    const allowedOwners = ownerChatEmails();
+    if (!isVerifiedOwnerChatIdentity({ email: identity.email, emailVerified: identity.email_verified }, allowedOwners)) {
+      log("warn", "SMIRK chat owner-tool request denied", {
+        requestId: (req as any).requestId,
+        reason: "identity_not_in_owner_allowlist",
+      });
+      return null;
+    }
+    return identity.email;
+  } catch (error: any) {
+    log("warn", "SMIRK chat owner-tool identity verification failed", {
+      requestId: (req as any).requestId,
+      error: error?.message || String(error),
+    });
+    return null;
+  }
 };
 
 const getWorkspacesForEmail = async (emailRaw: string) => {
@@ -4322,6 +4352,7 @@ registerLeadRoutes(app, {
   dashboardAuth,
   chatRateLimit,
   requireOperator,
+  resolveVerifiedOwnerChatActor,
   sql,
   dbEnabled: DB_ENABLED,
   getWorkspaceId,

@@ -37,6 +37,19 @@ Velvet lead / signal
 
 The existing portal must display only verified receiver and handoff state. Any lead source attribution not currently persisted by the receiver is explicitly marked pending rather than inferred. A later intake contract must require an external lead ID, source, consent basis, contact fields, priority, and idempotency key before auto-outreach is allowed.
 
+### Current Truthful State
+
+The authenticated Velvet -> SMIRK receiver and its idempotent sender-side proof are complete. That means a qualified Velvet payload can become a durable SMIRK work item without creating a phone call. It does **not** mean the mobile portal can yet explain every dollar back to Velvet evidence.
+
+The mobile **Velvet** surface must therefore answer two different questions without blending them:
+
+| Question | Current answer |
+| --- | --- |
+| “What did Velvet deliver, and what SMIRK work exists now?” | The portal and handoff queue can show receiver state, handoffs, tasks, and operational follow-up. |
+| “Why did this lead create revenue, and what should Velvet learn?” | Pending the immutable acquisition root, approval/touch ledger, conversion/retention links, and idempotent outcome feedback. |
+
+Never render the second answer as completed merely because a handoff exists. See [`VELVET_SMIRK_CLOSED_LOOP.md`](VELVET_SMIRK_CLOSED_LOOP.md) for the required evidence chain.
+
 ## Action Boundaries
 
 SMIRK may prepare outreach candidates and show their compliance status. It must not automatically place calls, send SMS, send email, modify billing, change infrastructure configuration, or alter credentials from the mobile command layer without a separate explicit confirmation path and an audit record.

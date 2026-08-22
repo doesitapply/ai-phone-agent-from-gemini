@@ -2,7 +2,7 @@
 
 ## Purpose
 
-SMIRK already contains an authenticated chat bubble with function calling for its own calls, tasks, contacts, settings, agent prompts, and live-call briefings. The Velvet Control Chat extends that existing bubble so an authenticated operator can ask about the **combined operating system** without opening two dashboards.
+SMIRK already contains an authenticated chat bubble with function calling for its own calls, tasks, contacts, settings, agent prompts, and live-call briefings. The Velvet Control Chat extends that existing bubble so a **verified owner operator** can ask about the combined operating system without opening two dashboards.
 
 This is not a general remote-code executor and does not dynamically load arbitrary Manus skills. The production surface is an explicit server-side registry of named, tested tools. That keeps authority inspectable, workspace-scoped, and auditable.
 
@@ -10,10 +10,10 @@ This is not a general remote-code executor and does not dynamically load arbitra
 
 | Tool class | Example capability | Authority | Confirmation requirement |
 |---|---|---|---|
-| System read | Receiver health, active workspace, queued task counts | Read-only | None |
+| System read | Receiver health, active workspace, queued task counts | Read-only operator or workspace context as applicable | None |
 | Velvet read | Qualification state, qualified-lead list, lead evidence, handoff/outcome status | Read-only through a narrow Velvet API key | None |
-| SMIRK record action | Create, update, complete, or cancel a task; create or update a contact; save a briefing; schedule a follow-up; update an approved operator setting or agent prompt | SMIRK operator policy | Latest operator message must exactly match `CONFIRM ACTION <tool_name>` |
-| Contact action | Dial an exact phone target | SMIRK operator policy | Latest operator message must exactly match `CONFIRM CALL <E.164 phone>` |
+| SMIRK record action | Create, update, complete, or cancel a task; create or update a contact; save a briefing; schedule a follow-up; update an approved operator setting or agent prompt | Verified owner mode only | Latest operator message must exactly match `CONFIRM ACTION <tool_name>` |
+| Contact action | Dial an exact phone target | Verified owner mode only | Latest operator message must exactly match `CONFIRM CALL <E.164 phone>` |
 | Secret or infrastructure action | Change credentials, deploy, alter Railway variables, edit provider settings | Never delegated to chat | Outside this tool surface |
 
 ## Cross-System Boundary
@@ -27,6 +27,8 @@ SMIRK will call Velvet only through these configured values:
 | `VELVET_ALCHEMY_OUTCOME_KEY` | SMIRK → Velvet | Existing `outcome:write` key for post-call outcome delivery only |
 
 The read key must not carry `handoff:write`, `outcome:write`, admin, key-management, payment, or deployment authority. The outcome key must never be used to retrieve leads. The inbound Velvet-to-SMIRK bearer remains separate and is not exposed to chat.
+
+The outcome key is a defined capability boundary, not proof that automatic Velvet outcome delivery is live. As of this checkout, the source does not implement durable automatic outbound outcome posting. The operational loop and its current gaps are documented in [`VELVET_SMIRK_CLOSED_LOOP.md`](VELVET_SMIRK_CLOSED_LOOP.md).
 
 ## Initial Tools
 
@@ -47,7 +49,7 @@ For a SMIRK record write, the agent must first gather the exact fields, recap th
 ## Security Invariants
 
 1. Every Velvet call includes the narrow read bearer server-side; it is never sent to the browser or model context.
-2. Tool selection is authenticated, workspace-scoped, and rate-limited by the existing SMIRK chat route.
+2. Shared dashboard-key chat is read-only. Tool-capable mode requires a current verified Google identity matching the configured owner allowlist; it is rate-limited by the existing SMIRK chat route.
 3. Tool output is bounded, redacted, and returned only to the authorized SMIRK operator session.
 4. A remote failure returns an explicit degraded state. It never falls back to invented lead, call, outcome, or configuration data.
 5. A chat request cannot become a mutation merely because the model inferred an intent. CRUD, briefing, agent, setting, and calendar tools are not available until the latest operator message exactly confirms the named tool.
