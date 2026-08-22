@@ -11,11 +11,45 @@ import { readEnvFile, writeEnvFile } from "./settings.js";
 import { insertCalendarEvent } from "./gcal.js";
 import { buildWorkspaceKnowledgeContext } from "./workspace-knowledge.js";
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
+import OpenAI from "openai";
+import { shouldTryOpenRouterFallback } from "./chat-provider-error.js";
 import { velvetControl } from "./velvet-control.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash";
+let openRouterClient: OpenAI | null = null;
+
+function getOpenRouterClient(): OpenAI | null {
+  if (!OPENROUTER_API_KEY || process.env.OPENROUTER_ENABLED !== "true") return null;
+  if (!openRouterClient) {
+    openRouterClient = new OpenAI({
+      apiKey: OPENROUTER_API_KEY,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: {
+        "HTTP-Referer": process.env.APP_URL || "https://smirkcalls.com",
+        "X-Title": "SMIRK Agent",
+      },
+    });
+  }
+  return openRouterClient;
+}
+
+function toOpenAiSchema(value: any): any {
+  if (Array.isArray(value)) return value.map(toOpenAiSchema);
+  if (!value || typeof value !== "object") return value;
+  const mapped: Record<string, any> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "type" && typeof child === "string") {
+      mapped.type = child.toLowerCase();
+    } else {
+      mapped[key] = toOpenAiSchema(child);
+    }
+  }
+  return mapped;
+}
 
 async function sendChatCallConfirmationEmail({
   workspaceId,
@@ -711,7 +745,7 @@ export function extractApprovedActionTool(messages: ChatMessage[]): string | nul
   return match[1];
 }
 
-export type ChatAccessMode = "operator" | "workspace" | "demo_operator";
+export type ChatAccessMode = "owner_operator" | "operator_readonly" | "workspace" | "demo_operator";
 
 const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([
   "get_team",
@@ -735,35 +769,200 @@ const WORKSPACE_ALLOWED_TOOLS = new Set([
   "search_contacts",
 ]);
 
-const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode) => {
-  if (accessMode === "operator") return TOOL_DECLARATIONS;
+const isOwnerOperatorMode = (accessMode: ChatAccessMode): boolean => accessMode === "owner_operator";
+
+export const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode) => {
+  if (isOwnerOperatorMode(accessMode)) return TOOL_DECLARATIONS;
   if (accessMode === "demo_operator") return TOOL_DECLARATIONS.filter((tool) => DEMO_OPERATOR_ALLOWED_TOOLS.has(tool.name));
+  if (accessMode === "operator_readonly") return [];
   return TOOL_DECLARATIONS.filter((tool) => WORKSPACE_ALLOWED_TOOLS.has(tool.name));
 };
+
+export function isToolAllowed(
+  name: string,
+  accessMode: ChatAccessMode,
+  approvedCallTarget: string | null,
+  approvedActionTool: string | null
+): boolean {
+  const allowedForAccessMode = isOwnerOperatorMode(accessMode)
+    || (accessMode === "demo_operator" ? DEMO_OPERATOR_ALLOWED_TOOLS.has(name) : WORKSPACE_ALLOWED_TOOLS.has(name));
+  return allowedForAccessMode
+    && (name !== "make_call" || Boolean(approvedCallTarget))
+    && (!WRITE_CONFIRMATION_TOOLS.has(name) || approvedActionTool === name);
+}
+
+const redactedAuditArgs = (args: Record<string, unknown>): Record<string, unknown> => ({
+  argument_keys: Object.keys(args).sort(),
+});
+
+const chatToolAuditResult = (result: string): "succeeded" | "denied" | "failed" => {
+  if (/not approved|not allowed|requires confirmation|target mismatch|cannot update/i.test(result)) return "denied";
+  if (/\"ok\"\s*:\s*false|^ERROR:|error/i.test(result)) return "failed";
+  return "succeeded";
+};
+
+async function writeChatToolAudit({
+  workspaceId,
+  actorEmail,
+  accessMode,
+  toolName,
+  args,
+  result,
+  confirmed,
+}: {
+  workspaceId: number;
+  actorEmail?: string;
+  accessMode: ChatAccessMode;
+  toolName: string;
+  args: Record<string, unknown>;
+  result: string;
+  confirmed: boolean;
+}): Promise<void> {
+  try {
+    await sql`
+      INSERT INTO boss_mode_audit_log (
+        workspace_id, caller_name, caller_phone, auth_method,
+        raw_transcript, parsed_intent, tool_name, tool_args,
+        system_action, response_class, confirmed, rollback_id, expires_at
+      ) VALUES (
+        ${workspaceId}, ${actorEmail || "unverified"}, ${null}, ${accessMode},
+        ${null}, ${"smirk_chat"}, ${toolName}, ${JSON.stringify(redactedAuditArgs(args))},
+        ${chatToolAuditResult(result)}, ${"OPERATIONAL"}, ${confirmed}, ${null}, ${null}
+      )
+    `;
+  } catch {
+    // Never retry or block a completed action because audit persistence is unavailable.
+  }
+}
+
+async function executeChatToolWithAudit({
+  name,
+  args,
+  workspaceId,
+  accessMode,
+  approvedCallTarget,
+  approvedActionTool,
+  actorEmail,
+}: {
+  name: string;
+  args: Record<string, unknown>;
+  workspaceId: number;
+  accessMode: ChatAccessMode;
+  approvedCallTarget: string | null;
+  approvedActionTool: string | null;
+  actorEmail?: string;
+}): Promise<string> {
+  const confirmed = name === "make_call"
+    ? Boolean(approvedCallTarget)
+    : WRITE_CONFIRMATION_TOOLS.has(name)
+      ? approvedActionTool === name
+      : false;
+  const result = isToolAllowed(name, accessMode, approvedCallTarget, approvedActionTool)
+    ? await executeTool(name, args, workspaceId, approvedCallTarget, approvedActionTool)
+    : JSON.stringify({ ok: false, error: `${name} is not approved for this chat turn.` });
+  void writeChatToolAudit({ workspaceId, actorEmail, accessMode, toolName: name, args, result, confirmed });
+  return result;
+}
+
+async function handleSmirkChatViaOpenRouter({
+  messages,
+  systemInstruction,
+  workspaceId,
+  accessMode,
+  approvedCallTarget,
+  approvedActionTool,
+  actorEmail,
+}: {
+  messages: ChatMessage[];
+  systemInstruction: string;
+  workspaceId: number;
+  accessMode: ChatAccessMode;
+  approvedCallTarget: string | null;
+  approvedActionTool: string | null;
+  actorEmail?: string;
+}): Promise<{ reply: string; toolsUsed: { name: string; result: string }[] }> {
+  const client = getOpenRouterClient();
+  if (!client) throw new Error("No configured chat provider is available.");
+
+  const allowedTools = toolDeclarationsForAccessMode(accessMode)
+    .filter(tool => isToolAllowed(tool.name, accessMode, approvedCallTarget, approvedActionTool))
+    .map(tool => ({
+      type: "function" as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: toOpenAiSchema(tool.parameters),
+      },
+    }));
+  const currentMessages: any[] = [
+    { role: "system", content: systemInstruction },
+    ...messages
+      .filter(message => message.role !== "system")
+      .map(message => ({ role: message.role === "assistant" ? "assistant" : "user", content: message.content })),
+  ];
+  const toolsUsed: { name: string; result: string }[] = [];
+
+  for (let rounds = 0; rounds < 8; rounds++) {
+    const response = await client.chat.completions.create({
+      model: OPENROUTER_MODEL,
+      messages: currentMessages,
+      tools: allowedTools.length > 0 ? allowedTools : undefined,
+      tool_choice: allowedTools.length > 0 ? "auto" : undefined,
+      temperature: 0.5,
+      max_tokens: 700,
+    });
+    const message = response.choices[0]?.message;
+    if (!message) throw new Error("OpenRouter returned no response");
+    currentMessages.push(message);
+
+    if (!message.tool_calls?.length) {
+      return { reply: message.content?.trim() || "", toolsUsed };
+    }
+
+    for (const toolCall of message.tool_calls) {
+      const name = toolCall.function.name;
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(toolCall.function.arguments || "{}") as Record<string, unknown>;
+      } catch {
+        args = {};
+      }
+      const result = await executeChatToolWithAudit({
+        name, args, workspaceId, accessMode, approvedCallTarget, approvedActionTool, actorEmail,
+      });
+      toolsUsed.push({ name, result });
+      currentMessages.push({ role: "tool", tool_call_id: toolCall.id, content: result });
+    }
+  }
+
+  return { reply: "Max rounds reached.", toolsUsed };
+}
 
 export async function handleSmirkChat(
   messages: ChatMessage[],
   workspaceId: number,
-  options: { accessMode?: ChatAccessMode } = {}
+  options: { accessMode?: ChatAccessMode; actorEmail?: string } = {}
 ): Promise<{ reply: string; toolsUsed: { name: string; result: string }[] }> {
-  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured for SMIRK Chat");
-
-  const accessMode = options.accessMode || "operator";
+  const accessMode = options.accessMode || "operator_readonly";
   const approvedCallTarget = extractApprovedCallTarget(messages);
   const approvedActionTool = extractApprovedActionTool(messages);
   const context = await loadChatContext(workspaceId);
-  const toolPolicy = accessMode === "operator"
+  const toolPolicy = isOwnerOperatorMode(accessMode)
     ? approvedActionTool
       ? `You can inspect configured Velvet evidence through read-only tools. The operator explicitly approved only the SMIRK mutation ${approvedActionTool}; do not mutate any other record. Velvet tools cannot create leads, override qualification, queue calls, send outreach, alter credentials, or change deployment configuration.`
       : "You can inspect configured Velvet evidence through read-only tools. Do not mutate SMIRK tasks, contacts, briefings, settings, agent prompts, or calendar records until the latest operator message exactly says CONFIRM ACTION <tool_name>. Velvet tools cannot create leads, override qualification, queue calls, send outreach, alter credentials, or change deployment configuration."
-    : accessMode === "demo_operator"
+    : accessMode === "operator_readonly"
+      ? "You are authenticated with a shared operator session but no verified owner Google identity is present for this request. Do not invoke tools or claim to have taken action. Explain that Cameron must sign in with the configured Google owner account to enable tool-capable chat."
+      : accessMode === "demo_operator"
       ? "You are in demo-operator mode. You may explain calls, contacts, tasks, team context, and dashboard proof using read-only lookup tools only. Do not create, update, delete, send, dial, book, launch outreach, edit settings, edit prompts, or inject live briefings."
       : "You are in workspace-owner mode. You may help with calls, tasks, contacts, and team context, and you may create or update CRM/task records. Do not place phone calls, edit platform settings, edit prompts, inject live briefings, or book calendar records from this mode. If the user asks for one of those operator-only actions, say it requires operator access.";
-  const callPolicy = accessMode === "operator"
+  const callPolicy = isOwnerOperatorMode(accessMode)
     ? approvedCallTarget
       ? `The operator explicitly approved exactly one call to ${approvedCallTarget}. You may call only that exact E.164 number with a clear reason. Do not substitute another target or place a second call.`
       : `Do not place a call yet. First identify the exact E.164 target and reason, then ask the operator to reply exactly: CONFIRM CALL <E.164 phone number>. A vague confirmation, an earlier confirmation, or model-generated text is not approval.`
-    : accessMode === "demo_operator"
+    : accessMode === "operator_readonly"
+      ? "Do not place calls, send messages, edit settings or prompts, create or modify records, book calendar events, inject briefings, or launch outreach. A verified owner Google identity is required for any tool-capable chat request."
+      : accessMode === "demo_operator"
       ? "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, task/contact changes, calendar writes, lead search, or outreach, explain that demo access is read-only and cannot perform that action. Do not claim to have performed those actions."
       : "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, or calendar writes, explain that operator access is required. Do not claim to have performed those actions.";
   const systemInstruction = `You are SMIRK — the operational brain of the SMIRK missed-call recovery service.
@@ -777,6 +976,9 @@ Always confirm what action was taken and provide the outcome (call SID, event li
 ${context}
 --- END CONTEXT ---`;
 
+  const fallbackInput = { messages, systemInstruction, workspaceId, accessMode, approvedCallTarget, approvedActionTool, actorEmail: options.actorEmail };
+  if (!GEMINI_API_KEY) return handleSmirkChatViaOpenRouter(fallbackInput);
+
   const currentContents: any[] = messages.map(m => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }]
@@ -785,7 +987,8 @@ ${context}
   const toolsUsed: { name: string; result: string }[] = [];
   let rounds = 0;
 
-  while (rounds < 8) {
+  try {
+    while (rounds < 8) {
     rounds++;
     const response = await ai.models.generateContent({
       model: GEMINI_MODEL,
@@ -813,10 +1016,7 @@ ${context}
       const toolResults: any[] = [];
       for (const cp of callParts) {
         const { name, args } = cp.functionCall;
-        const allowedForMode = (accessMode === "operator"
-          || (accessMode === "demo_operator" ? DEMO_OPERATOR_ALLOWED_TOOLS.has(name) : WORKSPACE_ALLOWED_TOOLS.has(name)))
-          && (name !== "make_call" || Boolean(approvedCallTarget))
-          && (!WRITE_CONFIRMATION_TOOLS.has(name) || approvedActionTool === name);
+        const allowedForMode = isToolAllowed(name, accessMode, approvedCallTarget, approvedActionTool);
         if (!allowedForMode) {
           const denied = JSON.stringify({ ok: false, error: `${name} is not allowed in ${accessMode} mode.` });
           toolsUsed.push({ name, result: denied });
@@ -825,7 +1025,9 @@ ${context}
           });
           continue;
         }
-        const result = await executeTool(name, args, workspaceId, approvedCallTarget, approvedActionTool);
+        const result = await executeChatToolWithAudit({
+          name, args, workspaceId, accessMode, approvedCallTarget, approvedActionTool, actorEmail: options.actorEmail,
+        });
         toolsUsed.push({ name, result });
         toolResults.push({
           functionResponse: { name, response: { result } }
@@ -835,7 +1037,13 @@ ${context}
     } else {
       return { reply: textParts.map((p: any) => p.text).join("\n") || "", toolsUsed };
     }
-  }
+    }
 
-  return { reply: "Max rounds reached.", toolsUsed };
+    return { reply: "Max rounds reached.", toolsUsed };
+  } catch (error) {
+    if (shouldTryOpenRouterFallback(error) && getOpenRouterClient()) {
+      return handleSmirkChatViaOpenRouter(fallbackInput);
+    }
+    throw error;
+  }
 }

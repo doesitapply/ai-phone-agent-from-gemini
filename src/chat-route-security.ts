@@ -1,4 +1,5 @@
 export type ChatRouteAuthMode = "operator" | "workspace" | "demo_operator";
+export type ChatRouteAuthMode = "operator" | "workspace" | "demo_operator";
 
 type ChatWorkspaceInput = {
   authMode: ChatRouteAuthMode;

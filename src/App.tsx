@@ -2170,6 +2170,7 @@ type WorkspaceSession = {
 
 type OperatorSession = {
   apiKey: string;
+  googleIdToken?: string;
   label: string;
   role: "operator" | "demo_operator";
   capabilities?: string[];
@@ -2404,6 +2405,7 @@ const readOperatorSession = (): OperatorSession | null => {
     const role = normalizeOperatorRole(parsed.role);
     return {
       apiKey: String(parsed.apiKey),
+      googleIdToken: typeof parsed.googleIdToken === "string" && parsed.googleIdToken.trim() ? parsed.googleIdToken : undefined,
       label: String(parsed.label || (role === "demo_operator" ? "SMIRK Demo Operator" : "SMIRK Operator Admin")),
       role,
       capabilities: Array.isArray(parsed.capabilities) ? parsed.capabilities.map((item: unknown) => String(item || "").trim()).filter(Boolean) : [],
@@ -2524,11 +2526,17 @@ const contactDncErrorMessage = (error: unknown, fallback = "Unable to update DNC
 
 // ── API Helper ────────────────────────────────────────────────────────────────
 const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
+  const ownerChatToken = path === "/api/chat" ? readOperatorSession()?.googleIdToken : undefined;
   let res: Response;
   try {
     res = await fetch(path, {
       ...options,
-      headers: { "Content-Type": "application/json", ...getWorkspaceAuthHeaders(), ...options?.headers },
+      headers: {
+        "Content-Type": "application/json",
+        ...getWorkspaceAuthHeaders(),
+        ...(ownerChatToken ? { "X-SMIRK-Google-ID-Token": ownerChatToken } : {}),
+        ...options?.headers,
+      },
     });
   } catch (error) {
     throw new Error(customerSafeErrorMessage(error, CUSTOMER_NETWORK_ERROR));
@@ -12634,6 +12642,7 @@ export default function App() {
         const role = normalizeOperatorRole(body.session.role);
         const nextSession: OperatorSession = {
           apiKey: String(body.session.apiKey),
+          googleIdToken: credential,
           label: String(body.session.label || operatorLabel || (role === "demo_operator" ? "SMIRK Demo Operator" : "SMIRK Operator Admin")),
           role,
           capabilities: Array.isArray(body.session.capabilities) ? body.session.capabilities.map((item: unknown) => String(item || "").trim()).filter(Boolean) : [],
