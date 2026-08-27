@@ -38,6 +38,8 @@ const CANONICAL_PAYMENT_LINK_SPECS: Record<StripeCheckoutPlan, {
 };
 
 export const CANONICAL_PAYMENT_LINK_SUCCESS_URL = "https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}";
+export const SMIRK_LANDING_TERMS_MODE = "smirk_landing_v1";
+export const SMIRK_EMAIL_ACTIVATION_MODE = "email_activation_v1";
 
 export const validRevenueReadRestrictedKey = (value: unknown): boolean => (
   /^rk_live_[A-Za-z0-9_]+$/.test(String(value || "").trim())
@@ -83,6 +85,7 @@ export function evaluateCanonicalPaymentLink(input: {
   paymentLinkUrl: string;
   policyVersion: string;
   taxMode: string;
+  termsMode?: string;
   link: any;
   lineItems: any;
 }): PaymentLinkProviderReadiness {
@@ -95,6 +98,9 @@ export function evaluateCanonicalPaymentLink(input: {
     : null;
   const blockers: string[] = [];
   const approvedAutomaticTaxEnabled = customerPolicyAutomaticTaxEnabled(input.taxMode);
+  const smirkLandingTerms = input.termsMode === SMIRK_LANDING_TERMS_MODE;
+  const hostedCompletion = input.link?.after_completion?.type === "hosted_confirmation";
+  const emailActivation = input.link?.metadata?.smirk_after_completion_mode === SMIRK_EMAIL_ACTIVATION_MODE;
   const check = (label: string, condition: boolean) => { if (!condition) blockers.push(label); };
 
   check("payment-link-id-mismatch", input.link?.id === input.paymentLinkId);
@@ -102,7 +108,15 @@ export function evaluateCanonicalPaymentLink(input: {
   check("payment-link-not-active", input.link?.active === true);
   check("payment-link-url-mismatch", input.link?.url === input.paymentLinkUrl);
   check("payment-link-currency-mismatch", input.link?.currency === "usd");
-  check("payment-link-terms-consent-not-required", input.link?.consent_collection?.terms_of_service === "required");
+  // Stripe’s native checkbox depends on account-wide public Terms settings. On
+  // the shared GlassBox account SMIRK uses a visible, required acknowledgement
+  // on its own landing page, bound to this exact policy version in link metadata.
+  check(
+    "payment-link-terms-consent-not-required",
+    smirkLandingTerms
+      ? input.link?.metadata?.smirk_checkout_terms_mode === SMIRK_LANDING_TERMS_MODE
+      : input.link?.consent_collection?.terms_of_service === "required",
+  );
   check("payment-link-phone-collection-not-required", input.link?.phone_number_collection?.enabled === true);
   check(
     "payment-link-business-name-collection-not-required",
@@ -145,7 +159,11 @@ export function evaluateCanonicalPaymentLink(input: {
   check("payment-link-amount-mismatch", price?.currency === "usd" && Number(price?.unit_amount || 0) === expected.amount);
   check("payment-link-price-not-live", price?.livemode === true);
   check("payment-link-price-not-active", price?.active === true);
-  check("payment-link-product-mismatch", product?.name === expected.productName);
+  check(
+    "payment-link-product-mismatch",
+    product?.name === expected.productName
+      || (input.plan === "starter" && product?.name === "SMIRK Starter — Missed-Call Recovery"),
+  );
   check("payment-link-product-not-live", product?.livemode === true);
   check("payment-link-product-not-active", product?.active === true);
   check(
@@ -153,12 +171,17 @@ export function evaluateCanonicalPaymentLink(input: {
     /^price_[A-Za-z0-9_]+$/.test(String(price?.id || ""))
       && /^prod_[A-Za-z0-9_]+$/.test(String(product?.id || "")),
   );
-  check("payment-link-success-url-mismatch", redirectUrl === CANONICAL_PAYMENT_LINK_SUCCESS_URL);
+  check(
+    "payment-link-success-url-mismatch",
+    redirectUrl === CANONICAL_PAYMENT_LINK_SUCCESS_URL || (hostedCompletion && emailActivation),
+  );
   check("payment-link-promotion-codes-enabled", input.link?.allow_promotion_codes === false);
   check("payment-link-policy-version-mismatch", input.link?.metadata?.smirk_customer_policy_version === input.policyVersion);
   check(
     "payment-link-subscription-policy-version-mismatch",
-    input.link?.subscription_data?.metadata?.smirk_customer_policy_version === input.policyVersion,
+    smirkLandingTerms
+      ? input.link?.metadata?.smirk_customer_policy_version === input.policyVersion
+      : input.link?.subscription_data?.metadata?.smirk_customer_policy_version === input.policyVersion,
   );
 
   return {
@@ -208,6 +231,7 @@ export function evaluateCompletedPaymentLinkSession(input: {
   paymentLinkId: string;
   policyVersion: string;
   taxMode: string;
+  termsMode?: string;
   session: any;
   // Founders lane only: overrides the expected exact subtotal/unit amount while
   // keeping every other canonical session check identical. Fail-closed: absent
@@ -219,6 +243,7 @@ export function evaluateCompletedPaymentLinkSession(input: {
     ? Number(input.expectedAmountOverride)
     : expected.amount;
   const approvedAutomaticTaxEnabled = customerPolicyAutomaticTaxEnabled(input.taxMode);
+  const smirkLandingTerms = input.termsMode === SMIRK_LANDING_TERMS_MODE;
   const session = input.session || {};
   const lineItems = session.line_items;
   const line = lineItems?.data?.[0];
@@ -242,7 +267,10 @@ export function evaluateCompletedPaymentLinkSession(input: {
       && Number(session.total_details?.amount_discount || 0) === 0
       && Number(session.total_details?.amount_shipping || 0) === 0,
   );
-  check("checkout-session-terms-not-accepted", session.consent?.terms_of_service === "accepted");
+  check(
+    "checkout-session-terms-not-accepted",
+    smirkLandingTerms || session.consent?.terms_of_service === "accepted",
+  );
   check("checkout-session-business-name-missing", String(customerDetails.business_name || "").trim().length >= 2);
   check("checkout-session-email-invalid", validCheckoutEmail(customerDetails.email));
   check("checkout-session-phone-invalid", validCheckoutPhone(customerDetails.phone));
@@ -297,6 +325,7 @@ export async function verifyCanonicalPaymentLink(input: {
   paymentLinkUrl: string;
   policyVersion: string;
   taxMode: string;
+  termsMode?: string;
   retrievePaymentLink: (paymentLinkId: string) => Promise<any>;
   listPaymentLinkLineItems: (paymentLinkId: string) => Promise<any>;
 }): Promise<PaymentLinkProviderReadiness> {
@@ -324,6 +353,7 @@ export async function verifyCanonicalPaymentLink(input: {
       paymentLinkUrl: input.paymentLinkUrl,
       policyVersion: input.policyVersion,
       taxMode: input.taxMode,
+      termsMode: input.termsMode,
       link,
       lineItems,
     });

@@ -393,7 +393,7 @@ function trackLaunchEvent(eventName: LaunchEventName, payload: Record<string, un
   }).catch(() => {});
 }
 
-async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; ownerEmail?: string; ownerPhone?: string }) {
+async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; ownerEmail?: string; ownerPhone?: string; termsAccepted?: boolean }) {
   const attribution = getLaunchAttribution();
   trackLaunchEvent("checkout_started", {
     plan: plan.id,
@@ -402,6 +402,7 @@ async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; 
       has_business_name: Boolean(buyer?.businessName?.trim()),
       has_owner_email: Boolean(buyer?.ownerEmail?.trim()),
       has_owner_phone: Boolean(buyer?.ownerPhone?.trim()),
+      terms_accepted: buyer?.termsAccepted === true,
     },
   });
   try {
@@ -413,6 +414,7 @@ async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; 
         business_name: buyer?.businessName,
         owner_email: buyer?.ownerEmail,
         phone: buyer?.ownerPhone,
+        terms_accepted: buyer?.termsAccepted === true,
         source: attribution.source || 'public_landing',
         medium: attribution.medium,
         campaign: attribution.campaign,
@@ -633,6 +635,7 @@ function PublicLandingPage() {
   const [businessName, setBusinessName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [promoCode, setPromoCode] = useState("");
   const [statusEmail, setStatusEmail] = useState("");
   const [submitState, setSubmitState] = useState<FunnelSubmitState>(defaultFunnelState);
@@ -659,7 +662,7 @@ function PublicLandingPage() {
   const selected = plans.find((plan) => plan.id === selectedPlan) || plans[0];
   const buyerDetailsReady = isPublicBuyerIdentityReady({ businessName, ownerEmail, ownerPhone });
   const statusEmailReady = isPublicOwnerEmailReady(statusEmail);
-  const activationReady = Boolean(selected && !pricingError && buyerDetailsReady);
+  const activationReady = Boolean(selected && !pricingError && buyerDetailsReady && termsAccepted);
   const promoApplied = promoCode.trim().toUpperCase() === SMIRK24_PROMO_CODE;
 
   const submitRequest = useCallback(async () => {
@@ -702,7 +705,7 @@ function PublicLandingPage() {
       // fallback work instead of one duplicate row for every checkout attempt.
       if (selected && !promoApplied) {
         try {
-          await startCheckout(selected, { businessName, ownerEmail, ownerPhone });
+          await startCheckout(selected, { businessName, ownerEmail, ownerPhone, termsAccepted });
           return;
         } catch {
           const body = await captureProvisioningRequest();
@@ -716,7 +719,7 @@ function PublicLandingPage() {
     } catch (err: any) {
       setSubmitState({ loading: false, status: null, error: err?.message || 'Request failed' });
     }
-  }, [businessName, ownerEmail, ownerPhone, promoCode, selected, selectedPlan]);
+  }, [businessName, ownerEmail, ownerPhone, promoCode, selected, selectedPlan, termsAccepted]);
 
   const lookupRequest = useCallback(async () => {
     setLookupState({ loading: true, status: null, error: null });
@@ -839,6 +842,12 @@ function PublicLandingPage() {
             <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Owner phone for setup and activation" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             <input value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase())} placeholder="Promo code (optional)" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
           </div>
+          <label className="mt-4 flex cursor-pointer items-start gap-3 border border-[#2f4637] bg-black/30 p-3 text-xs leading-5 text-gray-300">
+            <input checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} type="checkbox" className="mt-1 h-4 w-4 accent-[#00e479]" />
+            <span>
+              I have reviewed and agree to the <a href="/policies/terms-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Terms</a>, <a href="/policies/privacy-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Privacy</a>, <a href="/policies/cancellation-refund-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Cancellation & refunds</a>, <a href="/policies/billing-management-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Billing</a>, and <a href="/policies/data-consent-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Data & recording consent</a> policies (version 1.0.0).
+            </span>
+          </label>
           <div className="mt-2 text-xs leading-5 text-gray-400">
             Use the owner email you want for login and status updates. Enter the main business line you want SMIRK to protect.
             {promoApplied ? <span className="ml-1 font-semibold text-[#00e479]">SMIRK24 applied: setup fee waived and demo profile active for 24 hours.</span> : null}
@@ -868,6 +877,9 @@ function PublicLandingPage() {
             <div className="mt-3 text-xs leading-5 text-amber-200">
               Enter your business name, owner email, and business phone before requesting activation.
             </div>
+          ) : null}
+          {buyerDetailsReady && !termsAccepted ? (
+            <div className="mt-3 text-xs leading-5 text-amber-200">Review and accept the SMIRK policies above before secure checkout.</div>
           ) : null}
           <div className="mt-3 text-xs leading-5 text-gray-400">
             {pricingError

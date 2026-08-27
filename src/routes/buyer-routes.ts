@@ -19,6 +19,7 @@ import {
   buildPlanCheckoutReadiness,
   evaluateCompletedPaymentLinkSession,
   restrictCheckoutReadinessToPlans,
+  SMIRK_LANDING_TERMS_MODE,
   validPaymentLinkId,
   validPaymentLinkUrl,
   validRevenueReadRestrictedKey,
@@ -249,6 +250,7 @@ const getPaymentLinkProviderProof = async (input: {
     const proof = await verifyCanonicalPaymentLink({
       restrictedKey,
       ...input,
+      termsMode: SMIRK_LANDING_TERMS_MODE,
       retrievePaymentLink: async (paymentLinkId) => (
         await getStripeClient().paymentLinks.retrieve(paymentLinkId) as any
       ),
@@ -478,6 +480,7 @@ export async function verifyCheckoutPaymentLinkBeforeFulfillment(
       paymentLinkId,
       policyVersion,
       taxMode,
+      termsMode: SMIRK_LANDING_TERMS_MODE,
       session: completedSession,
       ...(foundersLane ? { expectedAmountOverride: SMIRK_FOUNDERS_CHECKOUT_AMOUNT } : {}),
     });
@@ -796,6 +799,7 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
     const ownerEmail = String((req.body as any)?.owner_email || (req.body as any)?.email || "").trim().toLowerCase();
     const businessName = String((req.body as any)?.business_name || (req.body as any)?.name || "").trim();
     const ownerPhone = String((req.body as any)?.phone || (req.body as any)?.owner_phone || "").trim();
+    const termsAccepted = (req.body as any)?.terms_accepted === true;
     const buyerDetailsReady = businessName.length >= 2
       && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)
       && ownerPhone.replace(/\D/g, "").length >= 7;
@@ -804,6 +808,13 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
         ok: false,
         code: "BUYER_DETAILS_REQUIRED",
         error: "Business name, a valid owner email, and owner phone are required before secure checkout.",
+      });
+    }
+    if (!termsAccepted) {
+      return res.status(400).json({
+        ok: false,
+        code: "SMIRK_TERMS_ACKNOWLEDGEMENT_REQUIRED",
+        error: "Please review and accept SMIRK’s Terms, Privacy, Billing, Cancellation, and Data & Recording Consent policies before secure checkout.",
       });
     }
 
@@ -859,6 +870,13 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
       if (stripeSecretKey) log("warn", "Non-live Stripe key bypassed in favor of verified Payment Link", { plan: plan.id });
       const paymentLinkProof = await refreshSelectedPaymentLinkProof();
       if (paymentLinkProof.ready && paymentLinkProof.binding?.plan === selectedPlanId) {
+        log("info", "SMIRK hosted checkout acknowledgement recorded", {
+          plan: selectedPlanId,
+          policy_version: String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim(),
+          business_name: businessName,
+          owner_email: ownerEmail,
+          owner_phone: ownerPhone,
+        });
         return res.json({ ok: true, checkout_url: paymentLinkProof.binding.paymentLinkUrl, source: "payment_link_fallback" });
       }
       return res.status(503).json({
