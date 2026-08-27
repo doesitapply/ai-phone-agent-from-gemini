@@ -85,3 +85,11 @@ Stripe’s canonical-link editor confirms: business-name collection and required
 The canonical live URL is `https://buy.stripe.com/7sYaEX4fx4nScmbfxo6Zy0m`. It is active, has no promotion codes, does not collect addresses, uses the default Stripe confirmation page, and currently carries `smirk_customer_policy_version=1.0.0`. SMIRK must add the scoped acknowledgement and email-activation metadata before its runtime verifier binds this URL.
 
 The canonical link exposes a Payment Link–specific **Edit metadata** control. This allows SMIRK’s policy version, landing acknowledgement mode, and email-activation mode to be bound without editing the shared GlassBox account profile or any unrelated payment link.
+
+## Deployment Configuration Surface
+
+The production `ai-phone-agent` Railway service exposes 68 service variables, including `APP_URL`, `AUTO_FULFILL_PROVISIONING_REQUESTS`, `FROM_EMAIL`, `FROM_NAME`, `GEMINI_API_KEY`, `ELEVENLABS_API_KEY`, and `ELEVENLABS_ENABLED`. The canonical Starter Payment Link binding must be updated only through the SMIRK-specific Stripe variables; no generic GlassBox account or unrelated product configuration may be changed.
+
+Railway’s current `STRIPE_PAYMENT_LINK_STARTER` points to stale URL `https://buy.stripe.com/4gMeVd5jBcUogCr4SK6Zy0f`, not the canonical August 26 $197 link. It must be replaced with `https://buy.stripe.com/7sYaEX4fx4nScmbfxo6Zy0m`; the canonical `STRIPE_PAYMENT_LINK_STARTER_ID` must be `plink_1U8tw3IoSdlZwew1jZOl3zKS`, and fulfillment must accept only that ID after cutover.
+
+The Railway service exposes all three required SMIRK-specific keys together: `STRIPE_PAYMENT_LINK_STARTER`, `STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS`, and `STRIPE_PAYMENT_LINK_STARTER_ID`. They must be cut over atomically to the canonical August 26 link to prevent successful payment on a legacy link from attaching to the wrong fulfillment contract.

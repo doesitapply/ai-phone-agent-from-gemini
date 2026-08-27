@@ -131,8 +131,8 @@ export function evaluateCanonicalPaymentLink(input: {
   check("payment-link-trial-enabled", input.link?.subscription_data?.trial_period_days === null);
   check(
     "payment-link-optional-items-enabled",
-    input.link?.optional_items === null
-      || (Array.isArray(input.link?.optional_items) && input.link.optional_items.length === 0),
+    !Array.isArray(input.link?.optional_items)
+      || input.link.optional_items.length === 0,
   );
   check("payment-link-shipping-address-collection-enabled", input.link?.shipping_address_collection === null);
   check(
