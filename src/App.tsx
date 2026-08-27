@@ -1446,6 +1446,7 @@ function PublicPricingPage() {
   const [businessName, setBusinessName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const buyerDetailsReady = isPublicBuyerIdentityReady({ businessName, ownerEmail, ownerPhone });
   const pricingUnavailable = Boolean(error && plans.length === 0);
 
@@ -1516,6 +1517,12 @@ function PublicPricingPage() {
               <input type="tel" value={ownerPhone} onChange={(event) => setOwnerPhone(event.target.value)} autoComplete="tel" className="mt-2 w-full border border-[#2f4637] bg-black/50 px-3 py-3 text-sm text-white outline-none focus:border-[#00e479]" placeholder="(555) 555-0123" />
             </label>
           </div>
+          <label className="mt-4 flex cursor-pointer items-start gap-3 border border-[#2f4637] bg-black/30 p-3 text-xs leading-5 text-gray-300">
+            <input checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} type="checkbox" className="mt-1 h-4 w-4 accent-[#00e479]" />
+            <span>
+              I have reviewed and agree to the <a href="/policies/terms-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Terms</a>, <a href="/policies/privacy-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Privacy</a>, <a href="/policies/cancellation-refund-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Cancellation & refunds</a>, <a href="/policies/billing-management-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Billing</a>, and <a href="/policies/data-consent-v1.0.0" target="_blank" rel="noreferrer" className="font-semibold text-[#00e479] underline">Data & recording consent</a> policies (version 1.0.0).
+            </span>
+          </label>
         </div>
 
         <div className="grid gap-6 md:grid-cols-3">
@@ -1537,8 +1544,8 @@ function PublicPricingPage() {
               </ul>
               <div className="space-y-3">
                 <button
-                  disabled={!buyerDetailsReady || plan.checkout_available !== true}
-                  onClick={() => startCheckout(plan, { businessName, ownerEmail, ownerPhone }).catch((err: any) => setError(err?.message || 'Checkout failed'))}
+                  disabled={!buyerDetailsReady || !termsAccepted || plan.checkout_available !== true}
+                  onClick={() => startCheckout(plan, { businessName, ownerEmail, ownerPhone, termsAccepted }).catch((err: any) => setError(err?.message || 'Checkout failed'))}
                   className="inline-flex w-full items-center justify-center bg-[#00ff88] px-4 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   {plan.checkout_available === true ? (plan.cta || `Start ${plan.name.replace('SMIRK AI ', '')}`) : "Checkout unavailable"}
@@ -1557,7 +1564,7 @@ function PublicPricingPage() {
                   </a>
                 ) : null}
                 <div className="border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs leading-5 text-amber-100">
-                  Secure checkout requires business name, owner email, and owner phone. Stripe may ask you to confirm them before payment so activation cannot attach to the wrong workspace. If checkout is unavailable, use Get setup help.
+                  Secure checkout requires business name, owner email, owner phone, and policy acknowledgement. Stripe may ask you to confirm the details before payment so activation cannot attach to the wrong workspace. If checkout is unavailable, use Get setup help.
                 </div>
               </div>
             </div>
