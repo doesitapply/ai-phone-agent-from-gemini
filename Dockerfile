@@ -29,6 +29,9 @@ RUN npm ci --omit=dev
 # Copy built artifacts from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/dist-server ./dist-server
+# Policy documents are served byte-for-byte by the first-dollar verifier and
+# must be present outside the bundled server output at runtime.
+COPY --from=builder /app/public/policies ./public/policies
 
 # Create persistent data directory for SQLite
 RUN mkdir -p /data && chown node:node /data
