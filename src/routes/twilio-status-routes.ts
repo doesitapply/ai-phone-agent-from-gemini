@@ -61,6 +61,7 @@ type TwilioStatusRouteDeps = {
   activeCallTimers: Map<string, ReturnType<typeof setTimeout>>;
   finalizeCallBySid: (callSid: string, status: string, durationSeconds?: number | null) => Promise<TerminalResult>;
   recordWorkspaceCallUsage: (callSid: string, workspaceId: number, durationSeconds: number) => Promise<boolean>;
+  finalizeInboundDemoCall: (callSid: string) => Promise<{ inviteId: number; handoffId: number | null; taskId: number | null; businessName: string } | null>;
   resolveWorkspaceAiKeys: (workspaceId: number, fallback: {
     geminiApiKey?: string;
     openrouterApiKey?: string;
@@ -95,6 +96,7 @@ export function registerTwilioStatusRoutes(app: Express, deps: TwilioStatusRoute
     activeCallTimers,
     finalizeCallBySid,
     recordWorkspaceCallUsage,
+    finalizeInboundDemoCall,
     resolveWorkspaceAiKeys,
     runPostCallIntelligence,
     detectOptOut,
@@ -767,6 +769,26 @@ export function registerTwilioStatusRoutes(app: Express, deps: TwilioStatusRoute
             error: postCallErrorMessage(postCallEnqueueError),
           });
           return res.status(503).send("Post-call processing enqueue retry required");
+        }
+        try {
+          const dossier = await finalizeInboundDemoCall(CallSid);
+          if (dossier) {
+            logEvent(CallSid, "INBOUND_DEMO_DOSSIER_CREATED", {
+              inviteId: dossier.inviteId,
+              handoffId: dossier.handoffId,
+              taskId: dossier.taskId,
+              businessName: dossier.businessName,
+            });
+          }
+        } catch (demoError: any) {
+          // This must never prevent a legitimate customer's call from reaching
+          // the durable post-call worker. The finalizer is idempotent and can be
+          // reconciled by the operator if this non-critical write fails.
+          log("warn", "Inbound demonstration dossier finalization failed", {
+            callSid: CallSid,
+            workspaceId: callWorkspaceId,
+            error: postCallErrorMessage(demoError),
+          });
         }
         // The job and every stage are durable before the 2xx below. This kick is
         // only a latency optimization; the lease-based sweeper is authoritative.

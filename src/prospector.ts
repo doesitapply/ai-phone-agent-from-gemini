@@ -22,7 +22,7 @@
  */
 
 import { sql } from "./db.js";
-import { checkOutboundCompliance, detectOptOut } from "./compliance.js";
+import { checkOutboundCompliance, detectOptOut, getConsentStatus } from "./compliance.js";
 import { generatePersonalizedPitch, SCORE_GATE_DIAL } from "./lead-hunter.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -350,6 +350,17 @@ export async function dialNextLead(
 
   const lead = await getNextLeadToDial(campaignId);
   if (!lead) throw new Error("No pending leads in this campaign");
+
+  // A publicly listed business number is not permission for an AI-generated
+  // sales call. This dialer remains available for customer-supplied, opted-in
+  // campaigns; SMIRK's own prospecting uses the inbound demonstration flow.
+  const consent = await getConsentStatus(lead.phone);
+  if (!consent || consent.revoked || consent.consent_type !== "express_written") {
+    return {
+      blocked: true,
+      reason: "AI outbound calling requires recorded active express written consent. Use the inbound demonstration invitation flow for non-consented prospects.",
+    };
+  }
 
   // Compliance check before dialing
   const compliance = await checkOutboundCompliance(

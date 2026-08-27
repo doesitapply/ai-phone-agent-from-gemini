@@ -312,6 +312,7 @@ import { registerDashboardRoutes } from "./src/routes/dashboard-routes.js";
 import { registerDebugRoutes } from "./src/routes/debug-routes.js";
 import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
+import { buildInboundDemoGreeting, buildInboundDemoSystemContext, createInboundDemoStore, registerInboundDemoRoutes } from "./src/inbound-demo.js";
 import { createPostgresVelvetHandoffStore, registerVelvetHandoffRoutes } from "./src/routes/velvet-handoff-routes.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
@@ -2738,6 +2739,7 @@ registerTwilioStatusRoutes(app, {
   activeCallTimers,
   finalizeCallBySid,
   recordWorkspaceCallUsage,
+  finalizeInboundDemoCall: createInboundDemoStore(sql).finalizeCall,
   resolveWorkspaceAiKeys,
   runPostCallIntelligence,
   detectOptOut,
@@ -2939,6 +2941,16 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   // Resolve caller identity
   const { contact, isNew } = await resolveContact(callerPhone, routedWsId);
+  const inboundDemoInvite = Direction === "outbound-api"
+    ? null
+    : await inboundDemoStore.findActiveForCaller(routedWsId, String(callerPhone || "")).catch(() => null);
+  if (inboundDemoInvite) {
+    await inboundDemoStore.markCallStarted(inboundDemoInvite.id, String(CallSid || "")).catch(() => {});
+    logEvent(CallSid, "INBOUND_DEMO_CALL_STARTED", {
+      inviteId: inboundDemoInvite.id,
+      businessName: inboundDemoInvite.business_name,
+    });
+  }
   logEvent(CallSid, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
     contactId: contact.id,
     phone: callerPhone,
@@ -2995,6 +3007,9 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     callerContext = await buildOutboundContext(contact, CallSid, reasonMatch, notesMatch);
   } else {
     callerContext = buildCallerContext(contact, isNew);
+  }
+  if (inboundDemoInvite) {
+    callerContext = `${callerContext}\n\n${buildInboundDemoSystemContext(inboundDemoInvite)}`;
   }
   if (callerContext) {
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'system', ${`[CONTEXT]${callerContext}`}) ON CONFLICT DO NOTHING`;
@@ -3075,7 +3090,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
       callReason: outboundCallReason,
     });
   }
-  const greeting = dynamicGreeting || staticGreeting;
+  const greeting = inboundDemoInvite ? buildInboundDemoGreeting(inboundDemoInvite) : (dynamicGreeting || staticGreeting);
   logEvent(CallSid, dynamicGreeting ? "DYNAMIC_GREETING_USED" : "STATIC_GREETING_USED", { greeting: greeting.slice(0, 80), fastLiveCalls: FAST_LIVE_CALLS });
   const voice = agent?.voice || "Polly.Matthew-Neural";
   const language = (agent?.language || "en-US") as any;
@@ -4001,6 +4016,14 @@ registerDemoRoutes(app, {
   log,
 });
 
+const inboundDemoStore = createInboundDemoStore(sql);
+registerInboundDemoRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  dbEnabled: DB_ENABLED,
+  store: inboundDemoStore,
+});
+
 registerDebugRoutes(app, {
   dashboardAuth,
   requireOperator,
@@ -4473,6 +4496,7 @@ async function startServer() {
           await initSaasSchema();
           await initSchema();
           await initProspectorSchema();
+          await inboundDemoStore.initSchema();
           await initSequenceSchema();
           await initComplianceSchema();
           await ensureWorkspacePhoneNumbersTable();
