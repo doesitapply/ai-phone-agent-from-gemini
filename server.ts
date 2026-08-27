@@ -321,6 +321,7 @@ import { registerOutboundCallRoutes } from "./src/routes/outbound-call-routes.js
 import { registerProofRoutes } from "./src/routes/proof-routes.js";
 import { registerProvisioningRoutes } from "./src/routes/provisioning-routes.js";
 import { registerProspectingRoutes } from "./src/routes/prospecting-routes.js";
+import { registerPublicPolicyRoutes } from "./src/routes/public-policy-routes.js";
 import { registerRecoveryRoutes } from "./src/routes/recovery-routes.js";
 import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
 import { registerSmsRoutes } from "./src/routes/sms-routes.js";
@@ -3880,6 +3881,8 @@ registerOperatorRoutes(app, {
 // /livez is intentionally dependency-free so Railway can keep the container up
 // even while Postgres is degraded or still attaching.
 // /api/version is a stable lightweight alias for deploy freshness checks.
+registerPublicPolicyRoutes(app);
+
 registerBuyerRoutes(app, {
   publicCheckoutRateLimit,
   publicInviteRateLimit,

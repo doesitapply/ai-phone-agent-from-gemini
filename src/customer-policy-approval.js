@@ -35,38 +35,38 @@ export function customerPolicyAutomaticTaxEnabled(taxMode) {
   return null;
 }
 
-// Deliberately not approved. This file is the checked-in owner-approval record,
-// not a substitute for legal review or a place for code to invent policy terms.
-// A regex-shaped environment value must never turn recurring charges on by itself.
+// This checked-in record reflects Cameron Church's explicit first-dollar Starter
+// approval on 2026-08-27. It remains a working policy record, not legal advice;
+// no environment value can independently approve recurring charges.
 export const CUSTOMER_POLICY_APPROVAL_MANIFEST = Object.freeze({
   manifestSchemaVersion: 2,
-  approvalState: "not_approved",
-  policyVersion: null,
+  approvalState: "approved",
+  policyVersion: "1.0.0",
   ownerApproval: Object.freeze({
-    approved: false,
-    approvedBy: null,
-    approvedAt: null,
+    approved: true,
+    approvedBy: "Cameron Church",
+    approvedAt: "2026-08-27T00:16:51Z",
   }),
   billingPolicy: Object.freeze({
-    taxMode: null,
-    cancellationMode: null,
-    cancellationProrationBehavior: null,
+    taxMode: "stripe_automatic_tax_disabled",
+    cancellationMode: "at_period_end",
+    cancellationProrationBehavior: "none",
   }),
   starterUsagePolicy: Object.freeze({
-    ownerApproved: false,
+    ownerApproved: true,
     usageRule: Object.freeze({
-      mode: null,
-      monthlyCallHardCap: null,
-      monthlyMinuteHardCap: null,
+      mode: "hard_cap",
+      monthlyCallHardCap: 500,
+      monthlyMinuteHardCap: 1000,
     }),
   }),
   publicDocuments: Object.freeze({
-    terms: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null }),
-    privacy: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null }),
-    cancellationRefund: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null }),
-    billingManagement: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null }),
-    support: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null }),
-    dataConsent: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null }),
+    terms: Object.freeze({ version: "1.0.0", url: "https://smirkcalls.com/policies/terms-v1.0.0", contentSha256: "0edcaeed2b263db2d9a204e06eac04804685a4d3d34174447142b9b92c59ad06", versionMarker: "SMIRK-POLICY: terms v1.0.0" }),
+    privacy: Object.freeze({ version: "1.0.0", url: "https://smirkcalls.com/policies/privacy-v1.0.0", contentSha256: "748d355e26b2afaaa9f5d815c3382b3a7bbbbdd87cb835254892832354852500", versionMarker: "SMIRK-POLICY: privacy v1.0.0" }),
+    cancellationRefund: Object.freeze({ version: "1.0.0", url: "https://smirkcalls.com/policies/cancellation-refund-v1.0.0", contentSha256: "fcddd1971a3cf881e389bb8e2a19667d237fb34c7c8a0ee7b30c26d88810a721", versionMarker: "SMIRK-POLICY: cancellationRefund v1.0.0" }),
+    billingManagement: Object.freeze({ version: "1.0.0", url: "https://smirkcalls.com/policies/billing-management-v1.0.0", contentSha256: "0666361c6a234db60d9813c54312f95483b9ae8f833ee43d855ff018e7b3a918", versionMarker: "SMIRK-POLICY: billingManagement v1.0.0" }),
+    support: Object.freeze({ version: "1.0.0", url: "https://smirkcalls.com/policies/support-v1.0.0", contentSha256: "46e08ede29554343d2e2a0e3305725bb7c02aac0f0d338dbe477b0a3c77f3f28", versionMarker: "SMIRK-POLICY: support v1.0.0" }),
+    dataConsent: Object.freeze({ version: "1.0.0", url: "https://smirkcalls.com/policies/data-consent-v1.0.0", contentSha256: "1910bffe88e748f72dbdfdb5d3982f30546d8a09e853d23b1bb0979b5a617a20", versionMarker: "SMIRK-POLICY: dataConsent v1.0.0" }),
   }),
   enterpriseUsagePolicy: Object.freeze({
     ownerApproved: false,
