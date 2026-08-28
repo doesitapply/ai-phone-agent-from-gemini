@@ -132,6 +132,7 @@ IMPORTANT RULES:
 - If the outcome is incomplete, create a task only when the business still owes the caller a concrete action; otherwise use next_action to explain the missing information
 - If an email or phone was mentioned, extract it exactly as spoken
 - Do not create generic FYI, review, summary, "check dashboard", or vague follow_up tasks
+- Administrative statements (for example, who built the agent, a caller claiming to be the owner, or a caller saying an existing task is resolved) are not service outcomes. Do not create tasks for them and do not state that existing tasks were completed, cleared, or resolved unless the transcript shows a verified dashboard action.
 - tasks array should be empty [] when there is no clear owner obligation after the call`;
 
 async function summarizeViaOpenRouter(prompt: string): Promise<CallSummaryResult> {
@@ -568,6 +569,18 @@ export const persistCallSummary = async (
       tasksCreated = uniqueTasks.length;
 
       for (const task of uniqueTasks) {
+        if (task.task_type === "callback") {
+          const existingCallback = await sql<{ id: number }[]>`
+            SELECT id FROM tasks
+            WHERE call_sid = ${callSid}
+              AND workspace_id = ${workspaceId}
+              AND task_type = 'callback'
+              AND status IN ('open', 'in_progress')
+            ORDER BY created_at ASC
+            LIMIT 1
+          `;
+          if (existingCallback.length > 0) continue;
+        }
         const dueAt = new Date(Date.now() + (task.due_in_hours || 24) * 3_600_000).toISOString();
         await sql<any[]>`
           INSERT INTO tasks

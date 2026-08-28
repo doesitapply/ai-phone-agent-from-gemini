@@ -704,12 +704,17 @@ export const addNote = async (
   try {
     const category = input.category || "general";
     await sql`
-      INSERT INTO tasks (contact_id, call_sid, task_type, status, notes)
-      VALUES (${contactId}, ${callSid}, ${"note_" + category}, 'open', ${input.note})
+      UPDATE contacts
+      SET notes = CASE
+        WHEN COALESCE(notes, '') = '' THEN ${`[${category}] ${input.note}`}
+        ELSE notes || E'\n' || ${`[${category}] ${input.note}`}
+      END,
+      updated_at = NOW()
+      WHERE id = ${contactId}
     `;
     const result: ToolResult = {
       success: true,
-      message: "Got it, I've noted that down.",
+      message: "Got it, I've added that to the caller record.",
       data: { note: input.note, category },
     };
     await logToolExecution(callSid, contactId, "add_note", input, result, Date.now() - start);
@@ -789,10 +794,39 @@ export const setCallback = async (
     // Fetch the contact's phone number so the callback executor can dial it directly
     const contactRows = await sql<{ phone_number?: string }[]>`SELECT phone_number FROM contacts WHERE id = ${contactId} LIMIT 1`;
     const phone = contactRows[0]?.phone_number || null;
+    const requestedAt = input.callback_at ? new Date(input.callback_at) : null;
+    const existingRows = await sql<{ id: number }[]>`
+      SELECT id
+      FROM tasks
+      WHERE contact_id = ${contactId}
+        AND call_sid = ${callSid}
+        AND task_type = 'callback'
+        AND status IN ('open', 'in_progress')
+      ORDER BY created_at ASC
+      LIMIT 1
+    `;
+    const existingTaskId = existingRows[0]?.id || null;
+    if (existingTaskId) {
+      await sql`
+        UPDATE tasks
+        SET due_at = COALESCE(${requestedAt && !Number.isNaN(requestedAt.getTime()) ? requestedAt : null}, due_at),
+            notes = CASE WHEN COALESCE(notes, '') = '' THEN ${noteText || "Callback requested"} ELSE notes END
+        WHERE id = ${existingTaskId}
+      `;
+      const result: ToolResult = {
+        success: true,
+        message: input.callback_at
+          ? `I've already captured that callback request for ${input.callback_at}.`
+          : "I've already captured your callback request.",
+        data: { contactId, callback_at: input.callback_at, reason: input.reason, task_id: existingTaskId, deduplicated: true },
+      };
+      await logToolExecution(callSid, contactId, "set_callback", input, result, Date.now() - start);
+      return result;
+    }
     await sql`
       INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, due_at, phone_number)
       VALUES (${contactId}, ${callSid}, 'callback', 'open', ${noteText || "Callback requested"},
-        ${input.callback_at ? new Date(input.callback_at) : null}, ${phone})
+        ${requestedAt && !Number.isNaN(requestedAt.getTime()) ? requestedAt : null}, ${phone})
     `;
     await adjustOpenTasks(contactId, 1);
     const result: ToolResult = {
