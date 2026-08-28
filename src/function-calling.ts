@@ -317,83 +317,6 @@ export const TOOL_DECLARATIONS = [
     },
   },
   {
-    name: "list_open_tasks",
-    description: "List open tasks for the current caller or, for authorized owner/admin callers, the full dashboard task queue. Call this proactively at call start if lookup_contact returns a record with open tasks. Also use when the caller mentions previous issues, dashboard tasks, callbacks, or follow-ups.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        status: { type: Type.STRING, description: "Task status to filter by: 'open', 'in_progress', 'completed', 'cancelled'. Defaults to 'open'." },
-        scope: { type: Type.STRING, description: "Use 'caller' for this caller's tasks. Use 'dashboard' when an owner/admin asks about the dashboard queue, all tasks, or everything shown in the dashboard." },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "complete_task",
-    description: "Mark a task as completed. Use when: (1) the caller confirms an issue is resolved, (2) a new callback or requested follow-up window replaces the old task, (3) you transfer the caller and the task is now owned by the human, or (4) the reason for the task no longer exists. Always complete stale tasks after successful outcomes.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        task_id: { type: Type.NUMBER, description: "The numeric ID of the task to complete" },
-        resolution_notes: { type: Type.STRING, description: "Optional notes about how the task was resolved" },
-      },
-      required: ["task_id"],
-    },
-  },
-  {
-    name: "complete_open_tasks",
-    description: "Mark multiple open tasks as completed. Use caller scope for normal caller follow-ups. Use dashboard scope when an authorized owner/admin says to clear the dashboard, all tasks, all everything, the full queue, or the tasks shown in the dashboard.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        scope: { type: Type.STRING, description: "Use 'caller' for this caller's tasks. Use 'dashboard' to clear all active dashboard tasks in the workspace when the owner/admin asks for all tasks or the dashboard queue." },
-        task_type: { type: Type.STRING, description: "Optional task type to clear, such as 'callback', 'handoff', 'follow_up', or 'support_ticket'. Leave blank to clear all active tasks in the selected scope." },
-        resolution_notes: { type: Type.STRING, description: "Optional note explaining why the tasks were cleared." },
-        limit: { type: Type.NUMBER, description: "Maximum tasks to clear. Defaults to 25 for caller scope and 200 for dashboard scope." },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "update_task",
-    description: "Update a task's status, notes, assignee, or due date.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        task_id: { type: Type.NUMBER, description: "The numeric ID of the task to update" },
-        status: { type: Type.STRING, description: "New status: 'open', 'in_progress', 'completed', 'cancelled'" },
-        notes: { type: Type.STRING, description: "Updated notes for the task" },
-        assigned_to: { type: Type.STRING, description: "Name of person to assign the task to" },
-        due_at: { type: Type.STRING, description: "New due date in ISO 8601 format" },
-      },
-      required: ["task_id"],
-    },
-  },
-  {
-    name: "cancel_task",
-    description: "Cancel an open task. Use when: (1) the caller says a follow-up is no longer needed, (2) the task is superseded by a new callback, requested follow-up window, or resolution, or (3) the task is a duplicate. Always clean up redundant tasks before ending a call.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        task_id: { type: Type.NUMBER, description: "The numeric ID of the task to cancel" },
-        reason: { type: Type.STRING, description: "Reason for cancellation" },
-      },
-      required: ["task_id"],
-    },
-  },
-  {
-    name: "acknowledge_handoff",
-    description: "Acknowledge a pending handoff record. Use when a human has resolved a previous handoff and the caller is calling back to confirm or continue. Closes the handoff loop so the record is not left open indefinitely.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        handoff_id: { type: Type.NUMBER, description: "The numeric ID of the handoff to acknowledge" },
-        notes: { type: Type.STRING, description: "Optional notes about the handoff resolution" },
-      },
-      required: ["handoff_id"],
-    },
-  },
-  {
     name: "route_call",
     description: "Analyze the call and decide the best routing action. Use this whenever: the request is ambiguous, the caller is frustrated or angry, the topic is billing/legal/emergency, the issue is beyond your authority, or you are unsure how to proceed. Do not guess — route. The result will tell you exactly what to do next and you must follow it.",
     parameters: {
@@ -471,6 +394,18 @@ export const dispatchTool = async (
 
   logEvent(callSid, "TOOL_EXECUTED", { tool: functionName, args });
 
+  // A phone number is not a sufficient authentication factor for dashboard
+  // mutations. The live agent may create follow-up work, but task completion,
+  // cancellation, reassignment, and handoff acknowledgement stay in the
+  // authenticated dashboard until a separate call-time verification flow exists.
+  if (["complete_task", "complete_open_tasks", "update_task", "cancel_task", "acknowledge_handoff"].includes(functionName)) {
+    return {
+      success: false,
+      message: "For safety, task changes must be completed in the authenticated dashboard. I can capture a callback request or create a new follow-up task for the owner.",
+      error: "VOICE_TASK_MUTATION_REQUIRES_DASHBOARD_AUTH",
+    };
+  }
+
   switch (functionName) {
     case "create_lead":
       return createLead(callSid, contactId, args as any);
@@ -497,6 +432,16 @@ export const dispatchTool = async (
       } as any);
 
     case "escalate_to_human": {
+      const priorTransfer = await db
+        .prepare("SELECT id FROM handoffs WHERE call_sid = ? LIMIT 1")
+        .get(callSid) as { id?: number } | undefined;
+      if (priorTransfer?.id) {
+        return {
+          success: false,
+          message: "A live transfer was already attempted on this call. Capture a callback request instead of trying another transfer.",
+          error: "LIVE_TRANSFER_ALREADY_ATTEMPTED",
+        };
+      }
       // Grab the last 3 turns as a transcript snippet for context
       const recentMessages = (await db
         .prepare("SELECT role, text FROM messages WHERE call_sid = ? AND role != 'system' ORDER BY id DESC LIMIT 6")
@@ -534,18 +479,6 @@ export const dispatchTool = async (
     case "collect_payment_info":
       return collectPaymentInfo(callSid, contactId, args as any);
 
-    case "list_open_tasks":
-      return listOpenTasks(callSid, contactId, { ...(args as any), caller_phone: callerPhone });
-    case "complete_task":
-      return completeTask(callSid, contactId, args as any);
-    case "complete_open_tasks":
-      return completeOpenTasks(callSid, contactId, { ...(args as any), caller_phone: callerPhone });
-    case "update_task":
-      return updateTask(callSid, contactId, args as any);
-    case "cancel_task":
-      return cancelTask(callSid, contactId, args as any);
-    case "acknowledge_handoff":
-      return acknowledgeHandoff(callSid, contactId, args as any);
     case "route_call":
       return routeCall(callSid, contactId, args as any);
     case "make_outbound_call":
