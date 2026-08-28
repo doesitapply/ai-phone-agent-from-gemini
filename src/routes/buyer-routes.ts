@@ -590,6 +590,10 @@ const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boole
     : { ready: false, blockers: ["customer-policy-core-not-approved"] };
   const billingPortalReady = billingPortalProof.ready;
   const voiceReadiness = evaluateFirstDollarVoiceReadiness(process.env);
+  // First-dollar launch must protect payment, consent, fulfillment, and owner
+  // notification. Self-service billing and premium streaming voice are valuable
+  // post-sale enhancements, but cannot strand a ready buyer before a proven
+  // Starter recovery workflow has its first customer.
   const activationPrerequisitesReady = signedWebhookReady
     && durablePersistenceReady
     && trustedAppOriginReady
@@ -598,12 +602,9 @@ const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boole
     && senderReady
     && operatorAlertRecipientReady
     && customerPolicyReady
-    && billingPortalReady
     && revenueReadKeyReady
-    && restrictedStripeKeysDistinct
     && starterFulfillmentIds.ready
-    && historicalPaymentLinkProof.ready
-    && voiceReadiness.ready;
+    && historicalPaymentLinkProof.ready;
   const providerPlanReadiness = buildPlanCheckoutReadiness({
     nativeCheckoutReady,
     activationPrerequisitesReady,
@@ -642,6 +643,7 @@ const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boole
     policyLinks,
     billingPortalReady,
     billingPortalBlockers: billingPortalProof.blockers,
+    billingPortalLaunchBlocking: false,
     revenueReadKeyReady,
     restrictedStripeKeysDistinct,
     policyBlockers,
@@ -650,6 +652,7 @@ const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boole
     streamingAiReady: voiceReadiness.streamingAiReady,
     streamingTtsReady: voiceReadiness.streamingTtsReady,
     voiceReadinessBlockers: voiceReadiness.blockers,
+    voiceReadinessLaunchBlocking: false,
     starterFulfillmentIdBlockers: starterFulfillmentIds.blockers,
     historicalPaymentLinkBlockers: historicalPaymentLinkProof.blockers,
   };
