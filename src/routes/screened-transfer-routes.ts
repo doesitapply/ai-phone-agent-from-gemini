@@ -8,6 +8,7 @@ import {
   isScreenAccepted,
   WHISPER_GATHER_TIMEOUT_SECONDS,
 } from "../screened-transfer.js";
+import { failedTransferRecovery, hasCallableVoiceNumber } from "../live-call-safety.js";
 
 type ScreenedTransferRouteDeps = {
   sql: any;
@@ -143,7 +144,7 @@ export function registerScreenedTransferRoutes(app: Express, deps: ScreenedTrans
         (
           SELECT t.id FROM tasks t
           WHERE t.call_sid = c.call_sid
-            AND t.task_type = 'callback'
+            AND t.task_type IN ('callback', 'handoff')
             AND t.status IN ('open', 'in_progress')
           ORDER BY t.id DESC
           LIMIT 1
@@ -153,27 +154,29 @@ export function registerScreenedTransferRoutes(app: Express, deps: ScreenedTrans
       LIMIT 1
     `.catch(() => [] as any[]);
     const callbackContext = callbackRows[0];
-    const callbackDigits = String(callbackContext?.caller_phone || "").replace(/\D/g, "");
-    const hasCallableNumber = callbackDigits.length >= 10 && !/^0+$/.test(callbackDigits);
+    const hasCallableNumber = hasCallableVoiceNumber(callbackContext?.caller_phone);
+    const recovery = failedTransferRecovery(callbackContext?.caller_phone);
     if (callbackContext?.existing_task_id) {
       logEvent(callSid, "TRANSFER_CALLBACK_TASK_EXISTS", { taskId: callbackContext.existing_task_id });
-    } else if (callbackContext?.contact_id && callbackContext.workspace_id && hasCallableNumber) {
+    } else if (callbackContext?.workspace_id && (callbackContext.contact_id || !hasCallableNumber)) {
       const created = await sql<{ id: number }[]>`
         INSERT INTO tasks (contact_id, call_sid, workspace_id, task_type, status, notes)
         VALUES (
-          ${callbackContext.contact_id}, ${callSid}, ${callbackContext.workspace_id}, 'callback', 'open',
-          ${`Live transfer to ${targetName || "the requested person"} was not accepted. Return the caller's request promptly at ${callbackContext.caller_phone}.`}
+          ${callbackContext.contact_id || null}, ${callSid}, ${callbackContext.workspace_id}, ${recovery.taskType}, 'open',
+          ${hasCallableNumber
+            ? `Live transfer to ${targetName || "the requested person"} was not accepted. Return the caller's request promptly at ${callbackContext.caller_phone}.`
+            : `Live transfer to ${targetName || "the requested person"} was not accepted. Caller ID was unavailable; review the call record and recover the caller if contact details become available.`}
         )
         RETURNING id
       `.catch((e: any) => {
         log("warn", "Failed to create deterministic transfer callback task", { callSid, error: e?.message });
         return [] as { id: number }[];
       });
-      if (created[0]?.id) logEvent(callSid, "TRANSFER_CALLBACK_TASK_CREATED", { taskId: created[0].id, callerPhone: callbackContext.caller_phone });
+      if (created[0]?.id) logEvent(callSid, "TRANSFER_CALLBACK_TASK_CREATED", { taskId: created[0].id, taskType: recovery.taskType, callerPhone: callbackContext.caller_phone || null });
     }
 
     if (hasCallableNumber) {
-      const completeMsg = "I couldn't connect you just now, but I have your number and have sent a callback request to the owner. You'll hear back as soon as they are available.";
+      const completeMsg = recovery.spokenText;
       await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${completeMsg})`.catch(() => {});
       t.say({ voice: "Polly.Matthew-Neural" as any }, completeMsg);
       t.hangup();
@@ -181,6 +184,8 @@ export function registerScreenedTransferRoutes(app: Express, deps: ScreenedTrans
       return res.send(t.toString());
     }
 
+    const anonymousMsg = recovery.spokenText;
+    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${anonymousMsg})`.catch(() => {});
     const g: any = t.gather({
       input: ["speech"],
       action: `${appUrl}/api/twilio/process`,
@@ -191,7 +196,7 @@ export function registerScreenedTransferRoutes(app: Express, deps: ScreenedTrans
       speechModel: "phone_call",
       enhanced: true,
     });
-    g.say({ voice: "Polly.Matthew-Neural" as any }, fallbackMsg);
+    g.say({ voice: "Polly.Matthew-Neural" as any }, anonymousMsg);
     t.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
     res.type("text/xml");
     res.send(t.toString());

@@ -21,6 +21,7 @@ import { GoogleGenAI, Type, FunctionCallingConfigMode } from "@google/genai";
 import twilio from "twilio";
 import { db } from "./db.js";
 import { logEvent } from "./events.js";
+import { isVoiceDashboardMutation, voiceDashboardMutationRefusal } from "./live-call-safety.js";
 import {
   createLead,
   createClientOnboardingIntake,
@@ -409,10 +410,10 @@ export const dispatchTool = async (
   // mutations. The live agent may create follow-up work, but task completion,
   // cancellation, reassignment, and handoff acknowledgement stay in the
   // authenticated dashboard until a separate call-time verification flow exists.
-  if (["complete_task", "complete_open_tasks", "update_task", "cancel_task", "acknowledge_handoff"].includes(functionName)) {
+  if (isVoiceDashboardMutation(functionName)) {
     return {
       success: false,
-      message: "For safety, task changes must be completed in the authenticated dashboard. I can capture a callback request or create a new follow-up task for the owner.",
+      message: voiceDashboardMutationRefusal(),
       error: "VOICE_TASK_MUTATION_REQUIRES_DASHBOARD_AUTH",
     };
   }
