@@ -127,6 +127,60 @@ export function registerScreenedTransferRoutes(app: Express, deps: ScreenedTrans
       log("warn", "Failed to persist transfer fallback message", { callSid, error: e?.message })
     );
 
+    // A failed live transfer must create one durable callback obligation before
+    // control returns to the caller. When Twilio supplied a caller number, no
+    // further model decision is needed and no repeat transfer should occur.
+    const callbackRows = await sql<{
+      contact_id: number | null;
+      workspace_id: number | null;
+      caller_phone: string | null;
+      existing_task_id: number | null;
+    }[]>`
+      SELECT
+        c.contact_id,
+        c.workspace_id,
+        CASE WHEN c.direction = 'outbound' THEN c.to_number ELSE c.from_number END AS caller_phone,
+        (
+          SELECT t.id FROM tasks t
+          WHERE t.call_sid = c.call_sid
+            AND t.task_type = 'callback'
+            AND t.status IN ('open', 'in_progress')
+          ORDER BY t.id DESC
+          LIMIT 1
+        ) AS existing_task_id
+      FROM calls c
+      WHERE c.call_sid = ${callSid}
+      LIMIT 1
+    `.catch(() => [] as any[]);
+    const callbackContext = callbackRows[0];
+    const callbackDigits = String(callbackContext?.caller_phone || "").replace(/\D/g, "");
+    const hasCallableNumber = callbackDigits.length >= 10 && !/^0+$/.test(callbackDigits);
+    if (callbackContext?.existing_task_id) {
+      logEvent(callSid, "TRANSFER_CALLBACK_TASK_EXISTS", { taskId: callbackContext.existing_task_id });
+    } else if (callbackContext?.contact_id && callbackContext.workspace_id && hasCallableNumber) {
+      const created = await sql<{ id: number }[]>`
+        INSERT INTO tasks (contact_id, call_sid, workspace_id, task_type, status, notes)
+        VALUES (
+          ${callbackContext.contact_id}, ${callSid}, ${callbackContext.workspace_id}, 'callback', 'open',
+          ${`Live transfer to ${targetName || "the requested person"} was not accepted. Return the caller's request promptly at ${callbackContext.caller_phone}.`}
+        )
+        RETURNING id
+      `.catch((e: any) => {
+        log("warn", "Failed to create deterministic transfer callback task", { callSid, error: e?.message });
+        return [] as { id: number }[];
+      });
+      if (created[0]?.id) logEvent(callSid, "TRANSFER_CALLBACK_TASK_CREATED", { taskId: created[0].id, callerPhone: callbackContext.caller_phone });
+    }
+
+    if (hasCallableNumber) {
+      const completeMsg = "I couldn't connect you just now, but I have your number and have sent a callback request to the owner. You'll hear back as soon as they are available.";
+      await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${completeMsg})`.catch(() => {});
+      t.say({ voice: "Polly.Matthew-Neural" as any }, completeMsg);
+      t.hangup();
+      res.type("text/xml");
+      return res.send(t.toString());
+    }
+
     const g: any = t.gather({
       input: ["speech"],
       action: `${appUrl}/api/twilio/process`,

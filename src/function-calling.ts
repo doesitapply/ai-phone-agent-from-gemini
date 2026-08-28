@@ -317,6 +317,17 @@ export const TOOL_DECLARATIONS = [
     },
   },
   {
+    name: "list_open_tasks",
+    description: "List only the open tasks associated with the current caller. Do not use this to inspect the dashboard queue, another caller's tasks, or internal operations.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        status: { type: Type.STRING, description: "Task status to filter by: 'open', 'in_progress', 'completed', or 'cancelled'. Defaults to 'open'." },
+      },
+      required: [],
+    },
+  },
+  {
     name: "route_call",
     description: "Analyze the call and decide the best routing action. Use this whenever: the request is ambiguous, the caller is frustrated or angry, the topic is billing/legal/emergency, the issue is beyond your authority, or you are unsure how to proceed. Do not guess — route. The result will tell you exactly what to do next and you must follow it.",
     parameters: {
@@ -479,6 +490,8 @@ export const dispatchTool = async (
     case "collect_payment_info":
       return collectPaymentInfo(callSid, contactId, args as any);
 
+    case "list_open_tasks":
+      return listOpenTasks(callSid, contactId, { status: args.status as string | undefined, scope: "caller", caller_phone: callerPhone });
     case "route_call":
       return routeCall(callSid, contactId, args as any);
     case "make_outbound_call":
