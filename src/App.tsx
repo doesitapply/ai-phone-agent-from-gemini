@@ -1871,6 +1871,7 @@ type Stats = {
   totalCalls?: number;
   calls_today?: number;
   callsToday?: number;
+  todayCalls?: number;
   avg_duration?: number;
   avgDurationSeconds?: number;
   open_tasks?: number;
@@ -1879,6 +1880,7 @@ type Stats = {
   totalContacts?: number;
   calls_this_week?: number;
   callsThisWeek?: number;
+  weekCalls?: number;
   callsThisMonth?: number;
   activeCalls?: number;
   completedCalls?: number;
@@ -2968,7 +2970,7 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
           { label: "Live now", value: activeCalls.length, sub: activeCalls.length ? "Call in progress" : "No active calls", tab: "calls" as Tab, tone: "text-[#00ff88]" },
           { label: "Needs recovery", value: stats?.openTasks ?? 0, sub: (stats?.openTasks ?? 0) ? "Open owner actions" : "Queue clear", tab: "recovery" as Tab, tone: "text-amber-400" },
           { label: "Open handoffs", value: stats?.pendingHandoffs ?? 0, sub: (stats?.pendingHandoffs ?? 0) ? "Needs a decision" : "Nothing waiting", tab: "handoffs" as Tab, tone: "text-violet-300" },
-          { label: "Calls captured", value: stats?.totalCalls ?? stats?.total_calls ?? 0, sub: `${stats?.callsToday ?? 0} today · ${stats?.callsThisWeek ?? 0} this week`, tab: "calls" as Tab, tone: "text-gray-400" },
+          { label: "Calls captured", value: stats?.totalCalls ?? stats?.total_calls ?? 0, sub: `${stats?.callsToday ?? stats?.todayCalls ?? 0} today · ${stats?.callsThisWeek ?? stats?.weekCalls ?? 0} this week`, tab: "calls" as Tab, tone: "text-gray-400" },
         ].map((item) => (
           <button
             key={item.label}
