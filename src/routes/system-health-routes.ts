@@ -145,14 +145,14 @@ export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRoute
       enterpriseUsageReady: customerPolicyApproval.enterpriseUsageReady,
     });
     paymentPass = paymentLinkConfiguration.ready;
-    paymentWarn = false;
+    paymentWarn = paymentLinkConfiguration.deferredPlanWarnings.length > 0;
     check(
       'payment_path',
       'Payment Link Configuration',
       paymentLinkConfiguration.ready,
-      false,
+      paymentWarn,
       paymentLinkConfiguration.ready
-        ? `Starter $197/month URL + exact current/historical plink_ fulfillment IDs are configured and Pro/Agency are disabled; provider verification is not checked here and remains required`
+        ? `Starter $197/month checkout and exact fulfillment IDs are configured.${paymentLinkConfiguration.deferredPlanWarnings.length ? ` Pro/Agency remain intentionally deferred: ${paymentLinkConfiguration.deferredPlanWarnings.join(', ')}.` : ''} Provider verification is not checked here.`
         : paymentLinkConfiguration.configuredPlans.length > 0
           ? `Payment Link configuration blocked: ${paymentLinkConfiguration.blockers.join(', ')}; provider verification is not checked here`
           : 'Paid signup blocked — configure the exact Starter $197/month URL + current/historical plink_ fulfillment IDs and keep Pro/Agency disabled; provider verification is not checked here'

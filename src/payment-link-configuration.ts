@@ -16,11 +16,12 @@ export type PaymentLinkConfigurationEnvironment = Partial<Record<
 
 export type PaymentLinkConfigurationReadiness = {
   ready: boolean;
-  configuredCorePlans: Array<"starter" | "pro">;
+  configuredCorePlans: Array<"starter">;
   configuredPlans: PaymentLinkPlan[];
   enterpriseConfigured: boolean;
   starterFulfillmentIds: string[];
   blockers: string[];
+  deferredPlanWarnings: string[];
   providerVerification: "not_checked";
 };
 
@@ -37,8 +38,9 @@ export function evaluatePaymentLinkConfiguration(
   // Broader policy readiness does not expand the active first-dollar launch.
   void enterpriseUsageReady;
   const blockers: string[] = [];
+  const deferredPlanWarnings: string[] = [];
   const configuredPlans: PaymentLinkPlan[] = [];
-  const completePlans: Array<{ plan: PaymentLinkPlan; url: string; id: string }> = [];
+  const completeStarterPlans: Array<{ plan: "starter"; url: string; id: string }> = [];
 
   for (const plan of Object.keys(PLAN_ENV_KEYS) as PaymentLinkPlan[]) {
     const keys = PLAN_ENV_KEYS[plan];
@@ -47,31 +49,34 @@ export function evaluatePaymentLinkConfiguration(
     if (!url && !id) continue;
 
     configuredPlans.push(plan);
+    if (plan !== "starter") {
+      if (!url || !id) deferredPlanWarnings.push(`${plan}-payment-link-pair-incomplete`);
+      else if (!validPaymentLinkUrl(url)) deferredPlanWarnings.push(`${plan}-payment-link-url-invalid`);
+      else if (!validPaymentLinkId(id)) deferredPlanWarnings.push(`${plan}-payment-link-id-invalid`);
+      else deferredPlanWarnings.push(`${plan}-payment-link-deferred-until-post-first-dollar-review`);
+      continue;
+    }
     if (!url || !id) {
       blockers.push(`${plan}-payment-link-pair-incomplete`);
       continue;
     }
     if (!validPaymentLinkUrl(url)) blockers.push(`${plan}-payment-link-url-invalid`);
     if (!validPaymentLinkId(id)) blockers.push(`${plan}-payment-link-id-invalid`);
-    if (validPaymentLinkUrl(url) && validPaymentLinkId(id)) completePlans.push({ plan, url, id });
+    if (validPaymentLinkUrl(url) && validPaymentLinkId(id)) completeStarterPlans.push({ plan, url, id });
   }
 
-  const configuredCorePlans = completePlans
-    .filter((offer): offer is typeof offer & { plan: "starter" | "pro" } => offer.plan === "starter" || offer.plan === "pro")
-    .map((offer) => offer.plan);
+  const configuredCorePlans = completeStarterPlans.map((offer) => offer.plan);
   if (!configuredCorePlans.includes("starter")) blockers.push("starter-payment-link-pair-missing");
-  if (configuredPlans.includes("pro")) blockers.push("pro-payment-link-out-of-first-dollar-scope");
 
   for (const field of ["url", "id"] as const) {
     const seen = new Set<string>();
-    for (const offer of completePlans) {
+    for (const offer of completeStarterPlans) {
       if (seen.has(offer[field])) blockers.push(`duplicate-payment-link-${field}`);
       seen.add(offer[field]);
     }
   }
 
   const enterpriseConfigured = configuredPlans.includes("enterprise");
-  if (enterpriseConfigured) blockers.push("enterprise-payment-link-out-of-first-dollar-scope");
 
   const starterFulfillmentIds = evaluateStarterPaymentLinkFulfillmentIds({
     currentId: env.STRIPE_PAYMENT_LINK_STARTER_ID,
@@ -86,6 +91,7 @@ export function evaluatePaymentLinkConfiguration(
     enterpriseConfigured,
     starterFulfillmentIds: starterFulfillmentIds.ids,
     blockers,
+    deferredPlanWarnings,
     providerVerification: "not_checked",
   };
 }
