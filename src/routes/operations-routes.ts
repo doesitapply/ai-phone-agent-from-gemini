@@ -31,6 +31,10 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
         h.transcript_snippet,
         h.created_at,
         h.acknowledged_at,
+        h.last_action,
+        h.last_action_at,
+        h.resolution_notes,
+        h.resolved_at,
         h.assigned_to_name,
         h.assigned_to_phone,
         h.assigned_to_email,
@@ -82,34 +86,77 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
     });
   });
 
-  app.post("/api/handoffs/:id/acknowledge", dashboardAuth, async (req: Request, res: Response) => {
+  app.post("/api/handoffs/:id/acknowledge", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });
     const wsId = getWorkspaceId(req);
-    const handoffRows = await sql<{ call_sid: string; contact_id: number | null }[]>`
-      UPDATE handoffs SET status = 'acknowledged', acknowledged_at = NOW()
+    const handoffRows = await sql<{ id: number }[]>`
+      UPDATE handoffs
+      SET status = CASE WHEN status = 'pending' THEN 'acknowledged' ELSE status END,
+          acknowledged_at = COALESCE(acknowledged_at, NOW()),
+          last_action = 'acknowledged',
+          last_action_at = NOW()
       WHERE id = ${id} AND workspace_id = ${wsId}
-      RETURNING call_sid, contact_id
+      RETURNING id
     `;
     if (!handoffRows.length) return res.status(404).json({ error: "Handoff not found." });
-    const handoff = handoffRows[0];
-    const taskRows = await sql<{ id: number; contact_id: number | null }[]>`
-      UPDATE tasks SET status = 'completed', completed_at = NOW()
-      WHERE call_sid = ${handoff.call_sid}
-        AND workspace_id = ${wsId}
-        AND task_type = 'handoff'
-        AND status IN ('open', 'in_progress')
-      RETURNING id, contact_id
-    `;
-    const contactId = handoff.contact_id || taskRows[0]?.contact_id;
-    if (contactId && taskRows.length > 0) {
-      await sql`
-        UPDATE contacts SET open_tasks = GREATEST(open_tasks - ${taskRows.length}, 0)
-        WHERE id = ${contactId} AND workspace_id = ${wsId}
-      `.catch(() => {});
+    res.json({ success: true, status: "acknowledged" });
+  });
+
+  app.post("/api/handoffs/:id/action", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });
+    const action = String(req.body?.action || "").trim();
+    const resolutionNotes = String(req.body?.resolution_notes || "").trim();
+    if (!["queue_callback", "complete", "reopen"].includes(action)) {
+      return res.status(400).json({ error: "Choose queue_callback, complete, or reopen." });
     }
-    res.json({ success: true, completedTasks: taskRows.length });
+    if (action === "complete" && !resolutionNotes) {
+      return res.status(400).json({ error: "A completion note is required so the outcome remains auditable." });
+    }
+    const wsId = getWorkspaceId(req);
+    const handoffs = await sql<{ call_sid: string; contact_id: number | null }[]>`
+      SELECT call_sid, contact_id FROM handoffs WHERE id = ${id} AND workspace_id = ${wsId} LIMIT 1
+    `;
+    const handoff = handoffs[0];
+    if (!handoff) return res.status(404).json({ error: "Handoff not found." });
+
+    if (action === "queue_callback" && handoff.contact_id) {
+      await sql`
+        INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, workspace_id, post_call_artifact_key)
+        SELECT ${handoff.contact_id}, ${handoff.call_sid}, 'callback', 'open',
+          ${resolutionNotes || "Callback requested from Handoffs"}, ${wsId}, ${`handoff_${id}_callback`}
+        WHERE NOT EXISTS (
+          SELECT 1 FROM tasks
+          WHERE call_sid = ${handoff.call_sid} AND workspace_id = ${wsId}
+            AND task_type = 'callback' AND status IN ('open', 'in_progress')
+        )
+        ON CONFLICT (call_sid, post_call_artifact_key) WHERE call_sid IS NOT NULL AND post_call_artifact_key IS NOT NULL DO NOTHING
+      `;
+    }
+
+    const status = action === "complete" ? "completed" : action === "reopen" ? "pending" : "in_progress";
+    const updated = await sql`
+      UPDATE handoffs
+      SET status = ${status},
+          acknowledged_at = COALESCE(acknowledged_at, NOW()),
+          last_action = ${action},
+          last_action_at = NOW(),
+          resolution_notes = CASE WHEN ${!!resolutionNotes} THEN ${resolutionNotes} ELSE resolution_notes END,
+          resolved_at = CASE WHEN ${action === "complete"} THEN NOW() ELSE NULL END
+      WHERE id = ${id} AND workspace_id = ${wsId}
+      RETURNING id, status, last_action, last_action_at, resolution_notes, resolved_at
+    `;
+    if (action === "complete") {
+      await sql`
+        UPDATE tasks SET status = 'completed', completed_at = NOW()
+        WHERE call_sid = ${handoff.call_sid} AND workspace_id = ${wsId}
+          AND task_type = 'handoff' AND status IN ('open', 'in_progress')
+      `;
+    }
+    res.json({ success: true, handoff: updated[0] });
   });
 
   app.get("/api/summaries", dashboardAuth, requireOperator, async (req: Request, res: Response) => {

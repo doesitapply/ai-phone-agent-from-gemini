@@ -592,6 +592,10 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS recommended_action TEXT`;
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS notes TEXT`;
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS last_action TEXT`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS last_action_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS resolution_notes TEXT`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`;
   await sql`ALTER TABLE plugin_tools ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE field_definitions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;

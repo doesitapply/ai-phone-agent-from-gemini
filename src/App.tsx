@@ -4842,6 +4842,10 @@ type Handoff = {
   phone_number?: string;
   created_at: string;
   acknowledged_at?: string;
+  last_action?: string;
+  last_action_at?: string;
+  resolution_notes?: string;
+  resolved_at?: string;
   assigned_to_name?: string;
   assigned_to_phone?: string;
   assigned_to_email?: string;
@@ -5059,6 +5063,8 @@ function HandoffsPage() {
   // Escalations state
   const [handoffs, setHandoffs] = useState<Handoff[]>([]);
   const [handoffsLoading, setHandoffsLoading] = useState(true);
+  const [handoffBusyId, setHandoffBusyId] = useState<number | null>(null);
+  const [expandedHandoffId, setExpandedHandoffId] = useState<number | null>(null);
   // Team state
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [teamLoading, setTeamLoading] = useState(true);
@@ -5087,10 +5093,37 @@ function HandoffsPage() {
   const acknowledge = async (id: number) => {
     try {
       await api(`/api/handoffs/${id}/acknowledge`, { method: "POST" });
-      addToast({ type: "success", message: "Handoff acknowledged" });
+      addToast({ type: "success", message: "Handoff acknowledged — choose the next action." });
       loadHandoffs();
     } catch {
       addToast({ type: "error", message: "Failed to acknowledge" });
+    }
+  };
+
+  const actOnHandoff = async (handoff: Handoff, action: "queue_callback" | "complete" | "reopen") => {
+    const prompt = action === "complete"
+      ? "What was the outcome? This note is saved with the handoff."
+      : action === "queue_callback"
+        ? "Optional callback note (for example, who should call and by when):"
+        : "Optional note for reopening this handoff:";
+    const note = window.prompt(prompt, "");
+    if (note === null) return;
+    if (action === "complete" && !note.trim()) {
+      addToast({ type: "warning", message: "Add a short outcome note before closing a handoff." });
+      return;
+    }
+    setHandoffBusyId(handoff.id);
+    try {
+      await api(`/api/handoffs/${handoff.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action, resolution_notes: note.trim() || undefined }),
+      });
+      addToast({ type: "success", message: action === "complete" ? "Handoff completed and recorded." : action === "queue_callback" ? "Callback queued." : "Handoff reopened." });
+      loadHandoffs();
+    } catch (error) {
+      addToast({ type: "error", message: errorMessage(error, "Unable to update this handoff right now.") });
+    } finally {
+      setHandoffBusyId(null);
     }
   };
 
@@ -5256,6 +5289,7 @@ function HandoffsPage() {
                       <p className={`text-xs ${muted} mt-1 line-clamp-2`}>{h.transcript_snippet}</p>
                     )}
                     {h.notes && <p className={`text-xs ${muted} mt-1`}>{h.notes}</p>}
+                    {h.resolution_notes && <p className="mt-2 rounded-lg border border-emerald-900/50 bg-emerald-950/20 px-3 py-2 text-xs text-emerald-200">Outcome: {h.resolution_notes}</p>}
                     {/* Assigned to */}
                     {h.assigned_to_name && (
                       <div className="flex items-center gap-2 mt-2 px-2 py-1 rounded-lg bg-violet-950/40 border border-violet-900/30 w-fit">
@@ -5273,13 +5307,24 @@ function HandoffsPage() {
                       )}
                     </div>
                   </div>
-                  {h.status === "pending" && (
-                    <button onClick={() => acknowledge(h.id)}
-                      className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition-colors">
-                      Acknowledge
-                    </button>
-                  )}
+                  <button onClick={() => setExpandedHandoffId(expandedHandoffId === h.id ? null : h.id)}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition-colors">
+                    {expandedHandoffId === h.id ? "Close" : "Open"}
+                  </button>
                 </div>
+                {expandedHandoffId === h.id && (
+                  <div className="mt-4 border-t border-gray-800 pt-3">
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">Choose the next move</div>
+                    <div className="flex flex-wrap gap-2">
+                      {h.phone_number && <a href={`tel:${h.phone_number}`} className="inline-flex items-center gap-1.5 rounded-lg border border-[#00ff88]/50 bg-[#00ff88]/10 px-3 py-2 text-xs font-bold text-[#00ff88]"><PhoneCall size={13} /> Call {fmt.phone(h.phone_number)}</a>}
+                      {h.status === "pending" && <button onClick={() => acknowledge(h.id)} disabled={handoffBusyId === h.id} className="rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-200">Take ownership</button>}
+                      {h.status !== "completed" && <button onClick={() => actOnHandoff(h, "queue_callback")} disabled={handoffBusyId === h.id} className="rounded-lg border border-amber-700/70 px-3 py-2 text-xs font-semibold text-amber-200">Queue callback</button>}
+                      {h.status !== "completed" && <button onClick={() => actOnHandoff(h, "complete")} disabled={handoffBusyId === h.id} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white">Mark resolved</button>}
+                      {h.status === "completed" && <button onClick={() => actOnHandoff(h, "reopen")} disabled={handoffBusyId === h.id} className="rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-200">Reopen</button>}
+                    </div>
+                    {h.transcript_snippet && <div className="mt-3 rounded-lg bg-black/30 p-3 text-xs leading-5 text-gray-400">{h.transcript_snippet}</div>}
+                  </div>
+                )}
               </div>
             ))}
           </div>
