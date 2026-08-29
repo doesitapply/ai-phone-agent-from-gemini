@@ -327,17 +327,17 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 /* The public site keeps its own zero-radius treatment. These rules only reshape
    the signed-in product into the denser, operator-first console. */
 .smirk-ops-shell {
-  --ops-bg: #080b09;
-  --ops-raised: #0d1210;
-  --ops-raised-2: #121a16;
-  --ops-raised-3: #18221d;
-  --ops-border: rgba(171, 202, 178, 0.14);
-  --ops-border-strong: rgba(171, 202, 178, 0.24);
-  --ops-text: #eef4ef;
-  --ops-muted: #8d9b92;
-  --ops-faint: #5c6b61;
-  --ops-signal: #a9f552;
-  --ops-signal-soft: rgba(169, 245, 82, 0.10);
+  --ops-bg: #0a0a0a;
+  --ops-raised: #131313;
+  --ops-raised-2: #181818;
+  --ops-raised-3: #202020;
+  --ops-border: rgba(255, 255, 255, 0.12);
+  --ops-border-strong: rgba(0, 228, 121, 0.42);
+  --ops-text: #f5f7f5;
+  --ops-muted: #9ba39d;
+  --ops-faint: #68716a;
+  --ops-signal: #00e479;
+  --ops-signal-soft: rgba(0, 228, 121, 0.10);
   --ops-blue: #68adff;
   --ops-danger: #ff716f;
   background-color: var(--ops-bg) !important;
@@ -468,16 +468,19 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
   margin: 0 !important;
   color: var(--ops-text) !important;
   font-family: var(--font-display) !important;
-  font-size: clamp(24px, 2.4vw, 34px) !important;
+  font-size: clamp(26px, 2.8vw, 38px) !important;
   font-weight: 700 !important;
-  letter-spacing: 0 !important;
+  letter-spacing: -0.04em !important;
 }
 
 .smirk-overview-page__heading p,
 .smirk-calls-page__heading p {
   margin: 6px 0 0 !important;
   color: var(--ops-muted) !important;
-  font-size: 13px !important;
+  font-family: var(--font-body) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
 }
 
 .smirk-overview-page__status {
@@ -504,26 +507,27 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 }
 
 .smirk-overview-actions {
-  border-bottom: 1px solid var(--ops-border);
-  padding-bottom: 16px;
+  border: 1px solid var(--ops-border);
+  background: rgba(255, 255, 255, 0.015);
+  padding: 10px !important;
 }
 
 .smirk-overview-actions button,
 .smirk-overview-page .smirk-overview-panel button,
 .smirk-overview-kpis > button {
-  border-radius: 7px !important;
+  border-radius: 0 !important;
 }
 
 .smirk-overview-kpis {
   gap: 0 !important;
   overflow: hidden;
   border: 1px solid var(--ops-border);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--ops-raised) !important;
 }
 
 .smirk-overview-kpis > button {
-  min-height: 116px;
+  min-height: 128px;
   border: 0 !important;
   border-right: 1px solid var(--ops-border) !important;
   border-radius: 0 !important;
@@ -535,13 +539,38 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 .smirk-overview-kpis > button:hover { background: rgba(169, 245, 82, 0.045) !important; }
 .smirk-overview-kpis > button > div:first-child { color: var(--ops-muted) !important; }
 .smirk-overview-kpis > button > div:nth-child(2) { font-size: 32px !important; }
+.smirk-overview-kpis > button > div:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 9px !important; font-weight: 700; letter-spacing: 0.12em !important; }
 
 .smirk-overview-panel,
 .smirk-overview-lower > div {
   border-color: var(--ops-border) !important;
-  border-radius: 8px !important;
+  border-radius: 0 !important;
   background: var(--ops-raised) !important;
   box-shadow: none !important;
+}
+
+.smirk-overview-page [class*="rounded-xl"],
+.smirk-overview-page [class*="rounded-lg"],
+.smirk-overview-page [class*="rounded-md"] {
+  border-radius: 0 !important;
+}
+
+.smirk-overview-page .smirk-overview-panel > div:first-child,
+.smirk-overview-page .smirk-overview-lower > div > div:first-child {
+  border-color: var(--ops-border) !important;
+}
+
+.smirk-overview-page button {
+  font-family: var(--font-body) !important;
+}
+
+.smirk-overview-page button:hover {
+  box-shadow: inset 2px 0 0 var(--ops-signal);
+}
+
+.smirk-overview-page button[class*="bg-\[\#00ff88\]"] {
+  background: var(--ops-signal) !important;
+  color: #061009 !important;
 }
 
 .smirk-overview-panel [class*="bg-gray-950"],

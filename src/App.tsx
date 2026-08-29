@@ -2884,8 +2884,8 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
     <div className="smirk-overview-page p-5 space-y-5 max-w-7xl mx-auto">
       <div className="smirk-overview-page__heading">
         <div>
-          <h2>Overview</h2>
-          <p>What needs a human next.</p>
+          <h2>Today</h2>
+          <p>Calls, callbacks, and decisions that need you.</p>
         </div>
         <div className="flex items-center gap-3">
           {lastRefreshedAt && <span className="text-[10px] uppercase tracking-widest text-gray-600">Live · {lastRefreshedAt.toLocaleTimeString()}</span>}
@@ -2940,20 +2940,21 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
 
       {/* Quick Actions */}
       <div className="smirk-overview-actions flex flex-wrap gap-2">
-        <button onClick={() => onTabChange('prospecting')}
+        <button onClick={() => onTabChange('handoffs')}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00ff88] text-black text-xs font-bold hover:bg-[#00e87a] transition-colors">
-          <Target size={13} /> Find Prospects
+          <ArrowUpRight size={13} /> Review Handoffs
+          {(stats?.pendingHandoffs ?? 0) > 0 && <span className="px-1.5 py-0.5 bg-black/15 text-[9px] font-black">{stats?.pendingHandoffs}</span>}
         </button>
         <button onClick={() => onTabChange('recovery')}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 transition-colors">
-          <RotateCcw size={13} /> Recovery Desk
-          {(triage?.recovery?.length || 0) > 0 && (
-            <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-white">{triage.recovery.length}</span>
+          <RotateCcw size={13} /> Recovery Queue
+          {(stats?.openTasks ?? 0) > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-white">{stats?.openTasks}</span>
           )}
         </button>
         <button onClick={() => onTabChange('calls')}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 transition-colors">
-          <Phone size={13} /> All Calls
+          <Phone size={13} /> Call Records
         </button>
         <button onClick={() => onTabChange('contacts')}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 transition-colors">
