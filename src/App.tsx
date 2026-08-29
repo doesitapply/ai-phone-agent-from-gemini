@@ -2573,6 +2573,7 @@ const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   try {
     res = await fetch(path, {
       ...options,
+      cache: options?.cache ?? "no-store",
       headers: {
         "Content-Type": "application/json",
         ...getWorkspaceAuthHeaders(),
@@ -2794,31 +2795,38 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
   const [proofCallLoading, setProofCallLoading] = useState<"proof" | "static" | null>(null);
   const [lastProofCall, setLastProofCall] = useState<{ label: string; sid: string; at: string } | null>(null);
   const [callIntel, setCallIntel] = useState<CallIntelligence | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
 
-  useEffect(() => {
-    let mounted = true;
+  const refreshDashboard = useCallback(async () => {
     setLoading(true);
-    Promise.all([
+    try {
+      const [triageData, healthData, intelligenceData] = await Promise.all([
       api<any>("/api/triage?days=7&limit=80"),
       api<any>("/api/system-health").catch(() => null),
       api<CallIntelligence>("/api/call-intelligence?days=30").catch(() => null),
-    ])
-      .then(([triageData, healthData, intelligenceData]) => {
-        if (!mounted) return;
-        setTriage(triageData);
-        setTriageErr(null);
-        setProofChecks(Array.isArray(healthData?.checks) ? healthData.checks : []);
-        setCallIntel(intelligenceData);
-      })
-      .catch((e) => { if (mounted) setTriageErr(e instanceof Error ? e.message : "Failed to load triage"); })
-      .finally(() => { if (mounted) setLoading(false); });
-    return () => { mounted = false; };
+      ]);
+      setTriage(triageData);
+      setTriageErr(null);
+      setProofChecks(Array.isArray(healthData?.checks) ? healthData.checks : []);
+      setCallIntel(intelligenceData);
+      setLastRefreshedAt(new Date());
+    } catch (e) {
+      setTriageErr(e instanceof Error ? e.message : "Failed to refresh the operator queue");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshDashboard();
+    const interval = window.setInterval(() => void refreshDashboard(), 10_000);
+    return () => window.clearInterval(interval);
+  }, [refreshDashboard]);
 
   const incidents: any[] = triage?.incidents || [];
   const proofLoopCheck = proofChecks.find((check) => check?.id === "proof_loop");
   const proofCheckById = Object.fromEntries(proofChecks.map((check) => [check.id, check]));
-  const proofReady = proofLoopCheck?.status === "pass";
+  const proofReady = proofLoopCheck?.status !== "fail" && !!proofLoopCheck;
   const proofStatusTone =
     proofLoopCheck?.status === "pass"
       ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
@@ -2879,9 +2887,15 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
           <h2>Overview</h2>
           <p>What needs a human next.</p>
         </div>
-        <div className="smirk-overview-page__status">
-          <span className={activeCalls.length > 0 ? "is-live" : ""} />
-          {activeCalls.length > 0 ? `${activeCalls.length} live call${activeCalls.length === 1 ? "" : "s"}` : "Standing by"}
+        <div className="flex items-center gap-3">
+          {lastRefreshedAt && <span className="text-[10px] uppercase tracking-widest text-gray-600">Live · {lastRefreshedAt.toLocaleTimeString()}</span>}
+          <button onClick={() => void refreshDashboard()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 px-3 py-1.5 text-[11px] font-semibold text-gray-300 hover:border-[#00ff88] hover:text-[#00ff88] disabled:opacity-50">
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Refresh
+          </button>
+          <div className="smirk-overview-page__status">
+            <span className={activeCalls.length > 0 ? "is-live" : ""} />
+            {activeCalls.length > 0 ? `${activeCalls.length} live call${activeCalls.length === 1 ? "" : "s"}` : "Standing by"}
+          </div>
         </div>
       </div>
 
@@ -2950,10 +2964,10 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
       {/* KPI strip — 4 unique metrics */}
       <div className="smirk-overview-kpis grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: "Active Calls", value: loading ? "…" : (activeCalls?.length || triage?.activeCalls?.length || 0), sub: (activeCalls?.length || 0) > 0 ? "Live now" : "", tab: "calls" as Tab, tone: "text-[#00ff88]" },
-          { label: "Needs Recovery", value: loading ? "…" : (triage?.recovery?.length || 0), sub: (triage?.recovery?.length || 0) > 0 ? "Missed inbound" : "", tab: "recovery" as Tab, tone: "text-amber-400" },
-          { label: "Action queue (7d)", value: loading ? "…" : incidents.length, sub: incidents.length === 0 && !loading ? "All clear" : "Decision-ranked", tab: "recovery" as Tab, tone: "text-[#00ff88]" },
-          { label: "Total Calls (7d)", value: loading ? "…" : (triage?.recentCalls?.length || recentCalls?.length || 0), sub: "", tab: "calls" as Tab, tone: "text-gray-500" },
+          { label: "Live now", value: activeCalls.length, sub: activeCalls.length ? "Call in progress" : "No active calls", tab: "calls" as Tab, tone: "text-[#00ff88]" },
+          { label: "Needs recovery", value: stats?.openTasks ?? 0, sub: (stats?.openTasks ?? 0) ? "Open owner actions" : "Queue clear", tab: "recovery" as Tab, tone: "text-amber-400" },
+          { label: "Open handoffs", value: stats?.pendingHandoffs ?? 0, sub: (stats?.pendingHandoffs ?? 0) ? "Needs a decision" : "Nothing waiting", tab: "handoffs" as Tab, tone: "text-violet-300" },
+          { label: "Calls captured", value: stats?.totalCalls ?? stats?.total_calls ?? 0, sub: `${stats?.callsToday ?? 0} today · ${stats?.callsThisWeek ?? 0} this week`, tab: "calls" as Tab, tone: "text-gray-400" },
         ].map((item) => (
           <button
             key={item.label}
@@ -2981,9 +2995,9 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
             <span className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${proofStatusTone}`}>
               {proofLoopCheck ? `Loop ${proofLoopCheck.status}` : "Loop unchecked"}
             </span>
-            <button onClick={() => onTabChange('system_health')}
+            <button onClick={() => void refreshDashboard()}
               className="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-[11px] font-semibold text-gray-300 transition-colors hover:border-[#00ff88] hover:text-[#00ff88]">
-              Check loop
+              Refresh proof
             </button>
           </div>
         </div>

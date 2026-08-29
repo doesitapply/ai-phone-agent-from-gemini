@@ -3,6 +3,7 @@ import type { Workspace } from "../saas.js";
 import { evaluateCustomerPolicyApproval } from "../customer-policy-approval.js";
 import { describeFirstDollarVoiceHealth } from "../first-dollar-voice-readiness.js";
 import { evaluatePaymentLinkConfiguration } from "../payment-link-configuration.js";
+import { evaluateProofLoopReadiness } from "../proof-loop-readiness.js";
 
 type OpsServiceStatus = {
   id: string;
@@ -203,18 +204,37 @@ export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRoute
         : 'Callback executor blocked — configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER'
     );
 
-    const proofLoopPass = dbPass && aiPass && twilioPass && ownerAlertsPass && callbackPass && paymentPass;
-    const proofLoopWarn = dbPass && aiPass && twilioPass && callbackPass && (ownerAlertsWarn || paymentWarn);
+    let completeProofCalls = 0;
+    try {
+      const proofRows = await sql`
+        SELECT COUNT(DISTINCT c.call_sid) as count
+        FROM calls c
+        JOIN call_summaries cs ON cs.call_sid = c.call_sid
+        JOIN tasks t ON t.call_sid = c.call_sid
+          AND t.task_type IN ('callback', 'follow_up', 'handoff', 'escalate_to_human')
+        JOIN call_events ce ON ce.call_sid = c.call_sid
+          AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+        WHERE c.workspace_id = ${getWorkspaceId(req) || 1}
+      `;
+      completeProofCalls = Number(proofRows[0]?.count || 0);
+    } catch {
+      completeProofCalls = 0;
+    }
+    const proofLoop = evaluateProofLoopReadiness({
+      databaseReady: dbPass,
+      aiReady: aiPass,
+      twilioReady: twilioPass,
+      ownerAlertsReady: ownerAlertsPass,
+      callbackReady: callbackPass,
+      paymentReady: paymentPass,
+      completeProofCalls,
+    });
     check(
       'proof_loop',
       'Missed-Call Proof Loop',
-      proofLoopPass,
-      proofLoopWarn,
-      proofLoopPass
-        ? 'Ready to test summary + owner email + callback task + dashboard proof'
-        : proofLoopWarn
-          ? 'Almost ready, but paid signup or owner alerts still need final real-world configuration'
-          : 'Not ready for end-to-end proof yet — fix the failed dependency checks above first'
+      proofLoop.status === 'pass',
+      proofLoop.status === 'warn',
+      proofLoop.detail,
     );
 
     check('auth', 'Dashboard Auth', true, false, 'Session valid — you are authenticated');
