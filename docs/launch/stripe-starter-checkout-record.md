@@ -93,3 +93,11 @@ The production `ai-phone-agent` Railway service exposes 68 service variables, in
 Railway’s current `STRIPE_PAYMENT_LINK_STARTER` points to stale URL `https://buy.stripe.com/4gMeVd5jBcUogCr4SK6Zy0f`, not the canonical August 26 $197 link. It must be replaced with `https://buy.stripe.com/7sYaEX4fx4nScmbfxo6Zy0m`; the canonical `STRIPE_PAYMENT_LINK_STARTER_ID` must be `plink_1U8tw3IoSdlZwew1jZOl3zKS`, and fulfillment must accept only that ID after cutover.
 
 The Railway service exposes all three required SMIRK-specific keys together: `STRIPE_PAYMENT_LINK_STARTER`, `STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS`, and `STRIPE_PAYMENT_LINK_STARTER_ID`. They must be cut over atomically to the canonical August 26 link to prevent successful payment on a legacy link from attaching to the wrong fulfillment contract.
+
+## Current Deployment State
+
+Railway reports `fix: keep Starter launch gate focused on sale safeguards` as the active, successful GitHub deployment. Earlier payment-link and policy commits are retained as removed deployment history, while the latest service version is the only active release.
+
+### Railway deployment incident — 2026-08-29
+
+Railway subsequently reported an upstream **GCP deployment-start incident**. The active service remained on `fix: deduplicate callbacks and suppress administrative tasks`, while newer `main` commits, including dashboard live-refresh, Starter-only health alignment, handoff controls, and the control-first dashboard visual refresh, remained queued. This is an external hosting queue condition rather than a failed SMIRK build. Live dashboard validation must wait until Railway processes the queued releases.
