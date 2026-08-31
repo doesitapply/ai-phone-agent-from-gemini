@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { SetupWizard } from "./components/SetupWizard";
+import { BusinessKnowledgePackPanel } from "./components/BusinessKnowledgePackPanel";
 import { normalizeStrictMailbox } from "./email-safety";
 import { normalizePublicHttpsUrl, normalizeTrustedProductionAppUrl } from "./public-url-safety";
 
@@ -7442,6 +7443,14 @@ function BusinessDataPage() {
         <h2 className="text-xl font-bold text-white">CRM / Business Data</h2>
         <p className="text-sm text-gray-500 mt-1">Teach Smirk the real facts for this workspace: business profile, website facts, CRM imports, contacts, and grounding preview.</p>
       </div>
+
+      <BusinessKnowledgePackPanel
+        api={api}
+        sources={knowledgeSources}
+        profile={wsProfile}
+        onContextChanged={setKnowledgeContext}
+        onToast={addToast}
+      />
 
       {wsProfile !== null && (
         <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">

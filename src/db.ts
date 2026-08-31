@@ -23,7 +23,7 @@ import postgres from "postgres";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 export const DB_ENABLED = !!DATABASE_URL;
-export const DB_URL_MASKED = DATABASE_URL ? DATABASE_URL.replace(/:[^:@]+@/, ":****@") : "MISSING";
+export const DB_URL_MASKED = DATABASE_URL ? DATABASE_URL.replace(/\/\/[^@]*@/, "//****:****@") : "MISSING";
 console.log("[db] DATABASE_URL:", DB_URL_MASKED);
 
 // In earlier versions we hard-required DATABASE_URL and crashed at import time.
@@ -430,6 +430,24 @@ export async function initSchema(): Promise<void> {
       updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS workspace_knowledge_packs (
+      id             SERIAL PRIMARY KEY,
+      workspace_id   INTEGER NOT NULL DEFAULT 1,
+      title          TEXT NOT NULL,
+      status         TEXT NOT NULL DEFAULT 'draft',
+      source_ids     JSONB NOT NULL DEFAULT '[]'::jsonb,
+      identity       JSONB NOT NULL DEFAULT '{}'::jsonb,
+      quote_policy   TEXT NOT NULL DEFAULT 'do_not_quote',
+      review_notes   TEXT,
+      reviewed_at    TIMESTAMPTZ,
+      activated_at   TIMESTAMPTZ,
+      created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT workspace_knowledge_packs_status_check CHECK (status IN ('draft', 'active', 'archived')),
+      CONSTRAINT workspace_knowledge_packs_quote_policy_check CHECK (quote_policy IN ('do_not_quote', 'starting_at', 'range', 'fixed', 'custom_quote_required'))
+    )
+  `;
 
   // ── Custom field definitions (what fields operators want captured) ─────────
   await sql`
@@ -601,8 +619,11 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE field_definitions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE contact_custom_fields ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE workspace_knowledge_sources ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE workspace_knowledge_packs ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`CREATE INDEX IF NOT EXISTS idx_workspace_knowledge_sources_ws ON workspace_knowledge_sources(workspace_id, updated_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_workspace_knowledge_packs_ws ON workspace_knowledge_packs(workspace_id, status, updated_at DESC)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_workspace_knowledge_pack ON workspace_knowledge_packs(workspace_id) WHERE status = 'active'`;
   // Tables defined in this file also need workspace_id
 
   // ── Lead Hunter tables ────────────────────────────────────────────────────

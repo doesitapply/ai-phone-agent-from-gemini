@@ -1,4 +1,10 @@
 import { sql } from "./db.js";
+import {
+  buildBusinessKnowledgePackContext,
+  normalizeCreateKnowledgePackInput,
+  type CreateKnowledgePackInput,
+  type WorkspaceKnowledgePack,
+} from "./business-knowledge-pack.js";
 
 export type WorkspaceKnowledgeSource = {
   id: number;
@@ -28,9 +34,13 @@ export type KnowledgeImportResult = {
   importedFields: number;
 };
 
+type KnowledgePackDbRow = Omit<WorkspaceKnowledgePack, "source_ids" | "identity"> & {
+  source_ids: number[] | string | null;
+  identity: Record<string, string> | string | null;
+};
+
 const MAX_IMPORT_CHARS = 200_000;
 const MAX_EXCERPT_CHARS = 12_000;
-const MAX_AGENT_CONTEXT_CHARS = 4_000;
 
 const PHONE_KEYS = new Set(["phone", "phone_number", "mobile", "cell", "cell_phone", "telephone", "number"]);
 const NAME_KEYS = new Set(["name", "full_name", "customer", "customer_name", "contact", "contact_name"]);
@@ -167,6 +177,103 @@ export async function deleteWorkspaceKnowledgeSource(workspaceId: number, id: nu
   return rows.length > 0;
 }
 
+const parseJsonArray = (value: unknown): number[] => {
+  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  if (!Array.isArray(parsed)) return [];
+  return Array.from(new Set(parsed.map(Number).filter((item) => Number.isSafeInteger(item) && item > 0)));
+};
+
+const parseJsonObject = (value: unknown): Record<string, string> => {
+  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  return Object.fromEntries(Object.entries(parsed as Record<string, unknown>)
+    .map(([key, rawValue]) => [String(key), String(rawValue ?? "").trim()] as const)
+    .filter(([, rawValue]) => Boolean(rawValue)));
+};
+
+const mapKnowledgePackRow = (row: KnowledgePackDbRow): WorkspaceKnowledgePack => ({
+  ...row,
+  source_ids: parseJsonArray(row.source_ids),
+  identity: parseJsonObject(row.identity),
+  status: row.status === "active" || row.status === "archived" ? row.status : "draft",
+});
+
+export async function listWorkspaceKnowledgePacks(workspaceId: number): Promise<WorkspaceKnowledgePack[]> {
+  const rows = await sql<KnowledgePackDbRow[]>`
+    SELECT id, workspace_id, title, status, source_ids, identity, quote_policy, review_notes,
+           reviewed_at, activated_at, created_at, updated_at
+    FROM workspace_knowledge_packs
+    WHERE workspace_id = ${workspaceId}
+    ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END, updated_at DESC, id DESC
+    LIMIT 20
+  `;
+  return rows.map(mapKnowledgePackRow);
+}
+
+export async function createWorkspaceKnowledgePack(
+  workspaceId: number,
+  payload: CreateKnowledgePackInput,
+): Promise<WorkspaceKnowledgePack> {
+  const input = normalizeCreateKnowledgePackInput(payload);
+  if (input.sourceIds.length === 0) throw new Error("Select at least one imported source before creating a Business Knowledge Pack.");
+  const sources = await listWorkspaceKnowledgeSources(workspaceId);
+  const availableIds = new Set(sources.map((source) => source.id));
+  const missingSourceIds = input.sourceIds.filter((id) => !availableIds.has(id));
+  if (missingSourceIds.length > 0) throw new Error("One or more selected knowledge sources are unavailable in this workspace.");
+
+  const rows = await sql<KnowledgePackDbRow[]>`
+    INSERT INTO workspace_knowledge_packs
+      (workspace_id, title, status, source_ids, identity, quote_policy, review_notes, updated_at)
+    VALUES
+      (${workspaceId}, ${input.title}, 'draft', ${JSON.stringify(input.sourceIds)}::jsonb,
+       ${JSON.stringify(input.identity)}::jsonb, ${input.quotePolicy}, ${input.reviewNotes}, NOW())
+    RETURNING id, workspace_id, title, status, source_ids, identity, quote_policy, review_notes,
+              reviewed_at, activated_at, created_at, updated_at
+  `;
+  return mapKnowledgePackRow(rows[0]);
+}
+
+export async function activateWorkspaceKnowledgePack(workspaceId: number, id: number): Promise<WorkspaceKnowledgePack> {
+  const packs = await sql<KnowledgePackDbRow[]>`
+    SELECT id, workspace_id, title, status, source_ids, identity, quote_policy, review_notes,
+           reviewed_at, activated_at, created_at, updated_at
+    FROM workspace_knowledge_packs
+    WHERE workspace_id = ${workspaceId} AND id = ${id}
+    LIMIT 1
+  `;
+  if (!packs[0]) throw new Error("Business Knowledge Pack not found in this workspace.");
+  const selectedSourceIds = parseJsonArray(packs[0].source_ids);
+  const sources = await listWorkspaceKnowledgeSources(workspaceId);
+  const availableIds = new Set(sources.map((source) => source.id));
+  if (selectedSourceIds.length === 0 || selectedSourceIds.some((sourceId) => !availableIds.has(sourceId))) {
+    throw new Error("This pack has no complete source set. Review it and create a new pack before activation.");
+  }
+
+  await sql`
+    UPDATE workspace_knowledge_packs
+    SET status = 'draft', updated_at = NOW()
+    WHERE workspace_id = ${workspaceId} AND status = 'active' AND id <> ${id}
+  `;
+  const activated = await sql<KnowledgePackDbRow[]>`
+    UPDATE workspace_knowledge_packs
+    SET status = 'active', reviewed_at = NOW(), activated_at = NOW(), updated_at = NOW()
+    WHERE workspace_id = ${workspaceId} AND id = ${id}
+    RETURNING id, workspace_id, title, status, source_ids, identity, quote_policy, review_notes,
+              reviewed_at, activated_at, created_at, updated_at
+  `;
+  return mapKnowledgePackRow(activated[0]);
+}
+
+export async function deactivateWorkspaceKnowledgePacks(workspaceId: number): Promise<number> {
+  const rows = await sql<{ id: number }[]>`
+    UPDATE workspace_knowledge_packs
+    SET status = 'archived', updated_at = NOW()
+    WHERE workspace_id = ${workspaceId} AND status = 'active'
+    RETURNING id
+  `;
+  return rows.length;
+}
+
 export async function importWorkspaceKnowledge(workspaceId: number, payload: ImportPayload): Promise<KnowledgeImportResult> {
   const content = String(payload.content || "").trim();
   if (!content) throw new Error("Import content is required.");
@@ -208,11 +315,11 @@ export async function importWorkspaceKnowledge(workspaceId: number, payload: Imp
       if (!fieldValue.trim()) continue;
       await sql`
         INSERT INTO contact_custom_fields (contact_id, workspace_id, field_key, field_value, source, human_confirmed, updated_at)
-        VALUES (${contactId}, ${workspaceId}, ${normalizedKey}, ${fieldValue.trim().slice(0, 1_000)}, 'knowledge_import', true, NOW())
+        VALUES (${contactId}, ${workspaceId}, ${normalizedKey}, ${fieldValue.trim().slice(0, 1_000)}, 'knowledge_import', false, NOW())
         ON CONFLICT (contact_id, field_key) DO UPDATE SET
           field_value = EXCLUDED.field_value,
           source = 'knowledge_import',
-          human_confirmed = true,
+          human_confirmed = false,
           updated_at = NOW()
       `;
       importedFields += 1;
@@ -238,24 +345,11 @@ export async function importWorkspaceKnowledge(workspaceId: number, payload: Imp
 }
 
 export async function buildWorkspaceKnowledgeContext(workspaceId: number): Promise<string> {
-  const sources = await listWorkspaceKnowledgeSources(workspaceId).catch(() => []);
-  if (sources.length === 0) {
-    return "=== WORKSPACE KNOWLEDGE ===\nNo uploaded workspace knowledge yet. Do not invent prices, policies, service details, warranties, or customer facts. Ask for confirmation or create a callback task when details are missing.\n=== END WORKSPACE KNOWLEDGE ===";
+  const activePack = (await listWorkspaceKnowledgePacks(workspaceId).catch(() => [])).find((pack) => pack.status === "active");
+  if (activePack) {
+    const sourceSet = new Set(activePack.source_ids);
+    const sources = (await listWorkspaceKnowledgeSources(workspaceId)).filter((source) => sourceSet.has(source.id));
+    return buildBusinessKnowledgePackContext(activePack, sources);
   }
-
-  const lines = sources.slice(0, 8).map((source) => {
-    const excerpt = (source.raw_excerpt || "").replace(/\s+/g, " ").trim().slice(0, 500);
-    return [
-      `Source: ${source.title} (${source.source_type}, ${source.record_count} rows, ${source.imported_contacts} contacts)`,
-      `Summary: ${source.summary}`,
-      excerpt ? `Excerpt: ${excerpt}` : "",
-    ].filter(Boolean).join("\n");
-  });
-
-  const body = lines.join("\n\n").slice(0, MAX_AGENT_CONTEXT_CHARS);
-  return `=== WORKSPACE KNOWLEDGE ===
-Use these uploaded workspace facts when answering callers. If the answer is not present in the business profile, caller history, or uploaded knowledge, do not guess. Say you can have the owner confirm it and capture the caller's need.
-
-${body}
-=== END WORKSPACE KNOWLEDGE ===`;
+  return "=== WORKSPACE KNOWLEDGE ===\nNo approved Business Knowledge Pack is active for this workspace. Do not use imported sources as caller-facing facts. Do not invent prices, policies, service details, warranties, or customer facts. Ask for confirmation or create a callback task when details are missing.\n=== END WORKSPACE KNOWLEDGE ===";
 }

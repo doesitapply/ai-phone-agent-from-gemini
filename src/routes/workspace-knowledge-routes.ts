@@ -1,8 +1,12 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import {
+  activateWorkspaceKnowledgePack,
   buildWorkspaceKnowledgeContext,
+  createWorkspaceKnowledgePack,
+  deactivateWorkspaceKnowledgePacks,
   deleteWorkspaceKnowledgeSource,
   importWorkspaceKnowledge,
+  listWorkspaceKnowledgePacks,
   listWorkspaceKnowledgeSources,
 } from "../workspace-knowledge.js";
 import { activationIdentityForAuthMode } from "../activation-provenance.js";
@@ -44,17 +48,92 @@ export function registerWorkspaceKnowledgeRoutes(app: Express, deps: WorkspaceKn
       if (!dbEnabled) {
         return res.json({
           sources: [],
+          packs: [],
           agent_context: "Database is not connected yet. Add Postgres before importing workspace knowledge.",
         });
       }
       const wsId = getWorkspaceId(req);
       const workspaceAuth = (req as Request & { workspaceAuth?: { id?: number } }).workspaceAuth;
       const id = workspaceAuth?.id ?? wsId;
-      const sources = await listWorkspaceKnowledgeSources(id);
-      const agent_context = await buildWorkspaceKnowledgeContext(id);
-      return res.json({ sources, agent_context });
+      const [sources, packs, agent_context] = await Promise.all([
+        listWorkspaceKnowledgeSources(id),
+        listWorkspaceKnowledgePacks(id),
+        buildWorkspaceKnowledgeContext(id),
+      ]);
+      return res.json({ sources, packs, agent_context });
     } catch (err: any) {
       log("error", "GET /api/workspace/knowledge failed", { error: err.message });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/workspace/knowledge/packs", dashboardAuth, async (req: Request, res: Response) => {
+    try {
+      if (!dbEnabled) return res.status(503).json({ error: "Connect Postgres before creating a Business Knowledge Pack." });
+      const wsId = getWorkspaceId(req);
+      const workspaceAuth = (req as Request & { workspaceAuth?: { id?: number } }).workspaceAuth;
+      const id = workspaceAuth?.id ?? wsId;
+      const pack = await createWorkspaceKnowledgePack(id, req.body || {});
+      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
+      await createActivationEvent({
+        workspace_id: id,
+        provisioning_request_id: await checkoutProvisioningRequestId(id),
+        event_type: "business_knowledge_pack_drafted",
+        status: "info",
+        actor: activationIdentity.actor,
+        detail: { pack_id: pack.id, source_count: pack.source_ids.length, quote_policy: pack.quote_policy },
+      });
+      return res.status(201).json({ pack });
+    } catch (err: any) {
+      log("error", "POST /api/workspace/knowledge/packs failed", { error: err.message });
+      return res.status(/select|required|unavailable/i.test(err.message || "") ? 400 : 500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/workspace/knowledge/packs/:id/activate", dashboardAuth, async (req: Request, res: Response) => {
+    try {
+      if (!dbEnabled) return res.status(503).json({ error: "Connect Postgres before activating a Business Knowledge Pack." });
+      const packId = Number(req.params.id);
+      if (!Number.isSafeInteger(packId) || packId < 1) return res.status(400).json({ error: "Invalid Business Knowledge Pack ID." });
+      const wsId = getWorkspaceId(req);
+      const workspaceAuth = (req as Request & { workspaceAuth?: { id?: number } }).workspaceAuth;
+      const id = workspaceAuth?.id ?? wsId;
+      const pack = await activateWorkspaceKnowledgePack(id, packId);
+      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
+      await createActivationEvent({
+        workspace_id: id,
+        provisioning_request_id: await checkoutProvisioningRequestId(id),
+        event_type: "business_knowledge_pack_activated",
+        status: "complete",
+        actor: activationIdentity.actor,
+        detail: { pack_id: pack.id, source_count: pack.source_ids.length, quote_policy: pack.quote_policy },
+      });
+      return res.json({ pack, agent_context: await buildWorkspaceKnowledgeContext(id) });
+    } catch (err: any) {
+      log("error", "POST /api/workspace/knowledge/packs/:id/activate failed", { error: err.message });
+      return res.status(/not found|source set|review/i.test(err.message || "") ? 400 : 500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/workspace/knowledge/packs/reset", dashboardAuth, async (req: Request, res: Response) => {
+    try {
+      if (!dbEnabled) return res.status(503).json({ error: "Connect Postgres before resetting Business Knowledge Pack context." });
+      const wsId = getWorkspaceId(req);
+      const workspaceAuth = (req as Request & { workspaceAuth?: { id?: number } }).workspaceAuth;
+      const id = workspaceAuth?.id ?? wsId;
+      const deactivated = await deactivateWorkspaceKnowledgePacks(id);
+      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
+      await createActivationEvent({
+        workspace_id: id,
+        provisioning_request_id: await checkoutProvisioningRequestId(id),
+        event_type: "business_knowledge_pack_deactivated",
+        status: "info",
+        actor: activationIdentity.actor,
+        detail: { deactivated },
+      });
+      return res.json({ ok: true, deactivated, agent_context: await buildWorkspaceKnowledgeContext(id) });
+    } catch (err: any) {
+      log("error", "POST /api/workspace/knowledge/packs/reset failed", { error: err.message });
       return res.status(500).json({ error: err.message });
     }
   });
