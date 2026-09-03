@@ -39,6 +39,7 @@
 - [x] Define an outcome-based offer architecture for voicemail recovery, full phone-operations suite, and paid implementation without inventing unvalidated value claims.
 - [x] Audit API routes and interface flows for placeholder, mock, fixture, seed, demo, or fabricated customer data that can reach a user-facing surface.
 - [x] Remove all production mock-data fallbacks from workspace, dashboard, call, contact, task, and profile routes; return an explicit unavailable state instead of fabricated records when durable storage is unavailable.
+- [x] Replace the remaining fabricated caller details in the public recovery preview with a clearly labeled workflow format that contains no mock customer data.
 - [ ] Exercise authenticated and public launch-critical endpoints against the live service after Railway has an active current deployment, and record failures precisely.
 - [x] Trace each launch-critical pipeline from checkout through provisioning, call intake, callback task, alert, and dashboard display; identify unproven transitions.
 - [ ] Implement only the approved package, pricing, and reliability changes with payment-provider and regression-test verification.

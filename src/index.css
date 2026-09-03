@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Instrument+Serif:ital@0;1&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 /* ── SMIRK Design Tokens ─────────────────────────────────────────────────── */
@@ -28,18 +28,19 @@
 }
 
 .smirk-public {
-  --public-paper: #F4F1EA;
-  --public-paper-2: #EBE6DC;
-  --public-paper-3: #E0D9CC;
-  --public-ink: #171C19;
-  --public-ink-soft: #3D4540;
-  --public-muted: #6B736E;
-  --public-forest: #1F6B45;
-  --public-forest-deep: #164F33;
-  --public-live: #C8E86A;
-  --public-line: #D9D2C6;
-  --public-serif: "Instrument Serif", ui-serif, Georgia, serif;
-  --public-sans: "Figtree", ui-sans-serif, system-ui, sans-serif;
+  --public-paper: #0b0d0c;
+  --public-paper-2: #111513;
+  --public-paper-3: #1a201c;
+  --public-ink: #f1f5f1;
+  --public-ink-soft: #bac4bc;
+  --public-muted: #7f8b82;
+  --public-forest: #00e479;
+  --public-forest-deep: #00b961;
+  --public-live: #b7fa73;
+  --public-line: rgba(219, 235, 223, 0.16);
+  --public-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --public-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --public-mono: "JetBrains Mono", ui-monospace, monospace;
   background: var(--public-paper) !important;
   color: var(--public-ink) !important;
   font-family: var(--public-sans) !important;
@@ -999,24 +1000,26 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 }
 
 /* ── Public marketing rebuild ─────────────────────────────────────────────── */
-/* Public pages deliberately use a separate editorial language from the signed-in
-   owner desk. These overrides retain the established React routes and flows,
-   but remove the dark-console treatment from buyer-facing surfaces. */
+/* Public pages keep the product's operator character without faking a control
+   room. Green is reserved for a confirmed state or a consequential action. */
 .smirk-public {
   min-height: 100vh;
-  background: var(--public-paper) !important;
+  background:
+    radial-gradient(900px 520px at 93% -8%, rgba(0, 228, 121, 0.075), transparent 64%),
+    radial-gradient(680px 380px at -5% 28%, rgba(99, 140, 111, 0.075), transparent 68%),
+    var(--public-paper) !important;
   color: var(--public-ink) !important;
   font-family: var(--public-sans) !important;
 }
 
-.smirk-public main { background: var(--public-paper) !important; }
+.smirk-public main { background: transparent !important; }
 
 .smirk-public header {
   position: relative;
   z-index: 10;
   border-color: var(--public-line) !important;
-  background: rgba(244, 241, 234, 0.92) !important;
-  box-shadow: none !important;
+  background: rgba(11, 13, 12, 0.90) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025) !important;
   backdrop-filter: blur(14px);
 }
 
@@ -1024,9 +1027,9 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 .smirk-public h2,
 .smirk-public h3 {
   color: var(--public-ink) !important;
-  font-family: var(--public-serif) !important;
-  font-weight: 400 !important;
-  letter-spacing: -0.035em !important;
+  font-family: var(--public-display) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.045em !important;
   text-transform: none !important;
 }
 
@@ -1035,8 +1038,8 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 
 .smirk-public .font-mono,
 .smirk-public [class*="uppercase"] {
-  font-family: var(--public-sans) !important;
-  letter-spacing: 0.13em !important;
+  font-family: var(--public-mono) !important;
+  letter-spacing: 0.10em !important;
 }
 
 .smirk-public .font-mono {
@@ -1074,13 +1077,13 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 .smirk-public [class*="bg-[#00ff88]"],
 .smirk-public [class*="bg-[#00e479]"] {
   background-color: var(--public-forest) !important;
-  color: #fff !important;
+  color: #07110b !important;
 }
 
 .smirk-public [class*="border-[#00e479]"],
-.smirk-public [class*="border-emerald"] { border-color: rgba(31, 107, 69, 0.42) !important; }
+.smirk-public [class*="border-emerald"] { border-color: rgba(0, 228, 121, 0.42) !important; }
 .smirk-public [class*="bg-[#00e479]/"],
-.smirk-public [class*="bg-emerald"] { background-color: rgba(31, 107, 69, 0.08) !important; }
+.smirk-public [class*="bg-emerald"] { background-color: rgba(0, 228, 121, 0.08) !important; }
 
 .smirk-public a,
 .smirk-public button,
@@ -1090,14 +1093,14 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 
 .smirk-public a[href],
 .smirk-public button { transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease; }
-.smirk-public a:hover { color: var(--public-forest) !important; }
+.smirk-public a:hover { color: var(--public-live) !important; }
 
 .smirk-public input,
 .smirk-public textarea,
 .smirk-public select {
   border-color: var(--public-line) !important;
-  border-radius: 8px !important;
-  background: rgba(255, 255, 255, 0.48) !important;
+  border-radius: 4px !important;
+  background: rgba(5, 8, 6, 0.52) !important;
   color: var(--public-ink) !important;
   box-shadow: none !important;
 }
@@ -1108,12 +1111,12 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 .smirk-public textarea:focus,
 .smirk-public select:focus {
   border-color: var(--public-forest) !important;
-  box-shadow: 0 0 0 3px rgba(31, 107, 69, 0.12) !important;
+  box-shadow: 0 0 0 3px rgba(0, 228, 121, 0.12) !important;
 }
 
 .smirk-public .smirk-public-logo {
   color: var(--public-ink) !important;
-  font-family: var(--public-sans) !important;
+  font-family: var(--public-display) !important;
   font-size: 17px !important;
   font-weight: 700 !important;
   letter-spacing: -0.04em !important;
@@ -1127,18 +1130,41 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 
 .smirk-public .smirk-public-preview {
   overflow: hidden;
-  border: 1px solid #2e362f !important;
-  border-radius: 14px !important;
-  background: #121614 !important;
+  border: 1px solid rgba(183, 250, 115, 0.32) !important;
+  border-radius: 0 !important;
+  background: linear-gradient(155deg, #131a16 0%, #0d110f 78%) !important;
   color: #e8eee6 !important;
-  box-shadow: 0 20px 48px rgba(30, 37, 31, 0.20) !important;
+  box-shadow: 14px 14px 0 rgba(0, 228, 121, 0.055), 0 24px 58px rgba(0, 0, 0, 0.32) !important;
 }
 
 .smirk-public .smirk-public-preview * { color: inherit; }
 .smirk-public .smirk-public-preview__eyebrow { color: #c8e86a !important; }
-.smirk-public .smirk-public-preview__row { border-color: rgba(232, 238, 230, 0.14) !important; background: #1c211e !important; }
-.smirk-public .smirk-public-preview__tag { border: 1px solid rgba(200, 232, 106, 0.34); color: #c8e86a !important; }
-.smirk-public .smirk-public-preview__action { border-top: 1px solid rgba(232, 238, 230, 0.14); background: #121614 !important; }
+.smirk-public .smirk-public-preview__row { border-color: rgba(232, 238, 230, 0.12) !important; background: rgba(255, 255, 255, 0.035) !important; }
+.smirk-public .smirk-public-preview__tag { border: 1px solid rgba(200, 232, 106, 0.34); border-radius: 0 !important; color: #c8e86a !important; }
+.smirk-public .smirk-public-preview__action { border-top: 1px solid rgba(232, 238, 230, 0.12); background: rgba(0, 0, 0, 0.20) !important; }
+
+.smirk-public .smirk-signal-label {
+  color: #9bffb5 !important;
+  text-shadow: 0 0 18px rgba(0, 228, 121, 0.20);
+}
+
+/* Optional daylight mode, deliberately mineral rather than bright white. */
+.smirk-public[data-surface="stone"] {
+  --public-paper: #d9d9d2;
+  --public-paper-2: #c9cac1;
+  --public-paper-3: #b8bbb0;
+  --public-ink: #151a16;
+  --public-ink-soft: #3d4940;
+  --public-muted: #687068;
+  --public-line: rgba(27, 35, 29, 0.20);
+  background: var(--public-paper) !important;
+}
+
+.smirk-public[data-surface="stone"] main { background: transparent !important; }
+.smirk-public[data-surface="stone"] header { background: rgba(217, 217, 210, 0.92) !important; }
+.smirk-public[data-surface="stone"] input,
+.smirk-public[data-surface="stone"] textarea,
+.smirk-public[data-surface="stone"] select { background: rgba(255, 255, 255, 0.35) !important; }
 
 .smirk-public [style*="backgroundImage"],
 .smirk-public [style*="background-image"] { background-image: none !important; }

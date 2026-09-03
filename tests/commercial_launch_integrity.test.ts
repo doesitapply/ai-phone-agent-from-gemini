@@ -21,3 +21,12 @@ test("retired SMIRK24 code cannot create a public trial workspace or bypass chec
   assert.match(app, /if \(selected\) \{\s*try \{\s*await startCheckout\(selected, \{ businessName, ownerEmail, ownerPhone, termsAccepted \}\);/s);
   assert.doesNotMatch(app, /SMIRK24 applied: setup fee waived/i);
 });
+
+test("public recovery preview explains the workflow without fabricated customer data", () => {
+  assert.match(app, /Workflow format only—not live customer data/);
+  assert.match(app, /Name & number captured/);
+  assert.match(app, /Issue summarized/);
+  assert.doesNotMatch(app, /Maria Alvarez/);
+  assert.doesNotMatch(app, /418 Maple St, Sparks/);
+  assert.doesNotMatch(app, /elderly parent home/);
+});

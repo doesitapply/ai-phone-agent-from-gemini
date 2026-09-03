@@ -467,20 +467,20 @@ function PublicPolicyLinks({ links }: { links: PublicPolicyLink[] }) {
 
 function PublicDashboardPreview() {
   const rows = [
-    { label: "Who", value: "Maria Alvarez" },
-    { label: "Need", value: "No AC · elderly parent home" },
-    { label: "Where", value: "418 Maple St, Sparks" },
-    { label: "When", value: "Call after 2:00 p.m." },
+    { label: "Caller", value: "Name & number captured" },
+    { label: "Need", value: "Issue summarized" },
+    { label: "Location", value: "Address confirmed" },
+    { label: "Window", value: "Best callback time noted" },
   ];
 
   return (
     <div className="smirk-public-preview p-5">
       <div className="mb-5 flex items-center justify-between gap-3 border-b border-white/10 pb-4">
         <div>
-          <div className="smirk-public-preview__eyebrow text-[10px] font-semibold uppercase tracking-[0.18em]">Recovered call</div>
-          <div className="mt-1 text-base font-semibold">One callback waiting</div>
+          <div className="smirk-public-preview__eyebrow text-[10px] font-semibold uppercase tracking-[0.18em]">Recovery format</div>
+          <div className="mt-1 text-base font-semibold">What the owner receives</div>
         </div>
-        <div className="smirk-public-preview__tag px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.11em]">Urgent</div>
+        <div className="smirk-public-preview__tag px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.11em]">Actionable</div>
       </div>
       <div className="grid gap-px overflow-hidden border border-white/10 bg-white/10">
         {rows.map((row) => (
@@ -493,11 +493,11 @@ function PublicDashboardPreview() {
       <div className="smirk-public-preview__action mt-5 flex items-center justify-between gap-4 pt-4">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#9aa39b]">Next action</div>
-          <div className="mt-1 text-sm font-medium">Call Maria now</div>
+          <div className="mt-1 text-sm font-medium">Review and call back</div>
         </div>
         <PhoneCall size={18} className="text-[#c8e86a]" />
       </div>
-      <p className="mt-4 text-[10px] leading-4 text-[#9aa39b]">Illustrative example. A real owner sees the caller, issue, urgency, and callback window—not an invented revenue score.</p>
+      <p className="mt-4 text-[10px] leading-4 text-[#9aa39b]">Workflow format only—not live customer data. A real owner sees the caller, issue, urgency, and callback window.</p>
     </div>
   );
 }
@@ -751,10 +751,9 @@ function PublicLandingPage() {
       </header>
 
       <main className="relative overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: 'linear-gradient(#00e479 1px, transparent 1px), linear-gradient(90deg, #00e479 1px, transparent 1px)', backgroundSize: '34px 34px' }} />
         <div className="relative mx-auto grid max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[1.02fr_0.98fr] lg:py-16">
         <section className="flex flex-col justify-center">
-          <div className="mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
+          <div className="smirk-signal-label mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
             <PhoneMissed size={14} /> Missed-call recovery for shops that work with their hands
           </div>
           <h1 className="max-w-3xl text-5xl font-black leading-[0.94] tracking-tight sm:text-6xl lg:text-7xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
@@ -773,9 +772,9 @@ function PublicLandingPage() {
           </div>
           <div className="mt-9 grid gap-3 sm:grid-cols-3">
             {[
-              ['1', 'missed call answered'],
-              ['5', 'facts worth calling back on'],
-              ['1', 'clear callback task'],
+              ['01', 'caller captured'],
+              ['02', 'need qualified'],
+              ['03', 'clear callback task'],
             ].map(([value, label]) => (
               <div key={label} className="border border-[#173321] bg-black/40 p-4">
                 <div className="font-mono text-2xl font-bold text-white">{value}</div>
@@ -799,7 +798,7 @@ function PublicLandingPage() {
           <PublicDashboardPreview />
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
-              <div className="mt-5 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start recovery setup</div>
+              <div className="smirk-signal-label mt-5 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start recovery setup</div>
               <div className="mt-1 text-sm text-gray-300">One Starter plan. Tell us which line needs protection and where the owner should receive setup and alert information.</div>
             </div>
             {selected ? <div className="bg-[#00ff88] px-3 py-2 font-mono text-xs font-black text-black">${selected.price}/{selected.interval}</div> : null}
