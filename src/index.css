@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Instrument+Serif:ital@0;1&display=swap");
 @import "tailwindcss";
 
 /* ── SMIRK Design Tokens ─────────────────────────────────────────────────── */
@@ -27,14 +28,21 @@
 }
 
 .smirk-public {
-  --green: #00E479;
-  background: #0A0A0A !important;
-}
-
-.smirk-public *,
-.smirk-public *::before,
-.smirk-public *::after {
-  border-radius: 0 !important;
+  --public-paper: #F4F1EA;
+  --public-paper-2: #EBE6DC;
+  --public-paper-3: #E0D9CC;
+  --public-ink: #171C19;
+  --public-ink-soft: #3D4540;
+  --public-muted: #6B736E;
+  --public-forest: #1F6B45;
+  --public-forest-deep: #164F33;
+  --public-live: #C8E86A;
+  --public-line: #D9D2C6;
+  --public-serif: "Instrument Serif", ui-serif, Georgia, serif;
+  --public-sans: "Figtree", ui-sans-serif, system-ui, sans-serif;
+  background: var(--public-paper) !important;
+  color: var(--public-ink) !important;
+  font-family: var(--public-sans) !important;
 }
 
 .smirk-public .bg-emerald-400,
@@ -988,4 +996,311 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
   .smirk-overview-page,
   .smirk-calls-page,
   .smirk-call-detail-panel { animation: none !important; }
+}
+
+/* ── Public marketing rebuild ─────────────────────────────────────────────── */
+/* Public pages deliberately use a separate editorial language from the signed-in
+   owner desk. These overrides retain the established React routes and flows,
+   but remove the dark-console treatment from buyer-facing surfaces. */
+.smirk-public {
+  min-height: 100vh;
+  background: var(--public-paper) !important;
+  color: var(--public-ink) !important;
+  font-family: var(--public-sans) !important;
+}
+
+.smirk-public main { background: var(--public-paper) !important; }
+
+.smirk-public header {
+  position: relative;
+  z-index: 10;
+  border-color: var(--public-line) !important;
+  background: rgba(244, 241, 234, 0.92) !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(14px);
+}
+
+.smirk-public h1,
+.smirk-public h2,
+.smirk-public h3 {
+  color: var(--public-ink) !important;
+  font-family: var(--public-serif) !important;
+  font-weight: 400 !important;
+  letter-spacing: -0.035em !important;
+  text-transform: none !important;
+}
+
+.smirk-public h1 { line-height: 0.96 !important; }
+.smirk-public h2 { line-height: 1.02 !important; }
+
+.smirk-public .font-mono,
+.smirk-public [class*="uppercase"] {
+  font-family: var(--public-sans) !important;
+  letter-spacing: 0.13em !important;
+}
+
+.smirk-public .font-mono {
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+.smirk-public .text-white,
+.smirk-public .text-gray-100,
+.smirk-public .text-gray-200 { color: var(--public-ink) !important; }
+.smirk-public .text-gray-300,
+.smirk-public .text-gray-400,
+.smirk-public .text-gray-500,
+.smirk-public .text-gray-600 { color: var(--public-ink-soft) !important; }
+.smirk-public .text-emerald-200,
+.smirk-public .text-emerald-300,
+.smirk-public .text-emerald-400,
+.smirk-public .text-\[\#00e479\] { color: var(--public-forest) !important; }
+
+.smirk-public [class*="border-[#173321]"],
+.smirk-public [class*="border-[#2f4637]"],
+.smirk-public .border-gray-800,
+.smirk-public .border-gray-700 { border-color: var(--public-line) !important; }
+
+.smirk-public [class*="bg-[#0a0a0a]"],
+.smirk-public [class*="bg-[#0d100d]"],
+.smirk-public [class*="bg-[#101510]"],
+.smirk-public [class*="bg-[#07100b]"],
+.smirk-public [class*="bg-[#0d160f]"],
+.smirk-public [class*="bg-black"] {
+  background-color: var(--public-paper-2) !important;
+  background-image: none !important;
+}
+
+.smirk-public [class*="bg-[#00ff88]"],
+.smirk-public [class*="bg-[#00e479]"] {
+  background-color: var(--public-forest) !important;
+  color: #fff !important;
+}
+
+.smirk-public [class*="border-[#00e479]"],
+.smirk-public [class*="border-emerald"] { border-color: rgba(31, 107, 69, 0.42) !important; }
+.smirk-public [class*="bg-[#00e479]/"],
+.smirk-public [class*="bg-emerald"] { background-color: rgba(31, 107, 69, 0.08) !important; }
+
+.smirk-public a,
+.smirk-public button,
+.smirk-public input,
+.smirk-public textarea,
+.smirk-public select { font-family: var(--public-sans) !important; }
+
+.smirk-public a[href],
+.smirk-public button { transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease; }
+.smirk-public a:hover { color: var(--public-forest) !important; }
+
+.smirk-public input,
+.smirk-public textarea,
+.smirk-public select {
+  border-color: var(--public-line) !important;
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.48) !important;
+  color: var(--public-ink) !important;
+  box-shadow: none !important;
+}
+
+.smirk-public input::placeholder,
+.smirk-public textarea::placeholder { color: var(--public-muted) !important; }
+.smirk-public input:focus,
+.smirk-public textarea:focus,
+.smirk-public select:focus {
+  border-color: var(--public-forest) !important;
+  box-shadow: 0 0 0 3px rgba(31, 107, 69, 0.12) !important;
+}
+
+.smirk-public .smirk-public-logo {
+  color: var(--public-ink) !important;
+  font-family: var(--public-sans) !important;
+  font-size: 17px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.04em !important;
+}
+
+.smirk-public .smirk-public-logo__dot {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--public-live);
+}
+
+.smirk-public .smirk-public-preview {
+  overflow: hidden;
+  border: 1px solid #2e362f !important;
+  border-radius: 14px !important;
+  background: #121614 !important;
+  color: #e8eee6 !important;
+  box-shadow: 0 20px 48px rgba(30, 37, 31, 0.20) !important;
+}
+
+.smirk-public .smirk-public-preview * { color: inherit; }
+.smirk-public .smirk-public-preview__eyebrow { color: #c8e86a !important; }
+.smirk-public .smirk-public-preview__row { border-color: rgba(232, 238, 230, 0.14) !important; background: #1c211e !important; }
+.smirk-public .smirk-public-preview__tag { border: 1px solid rgba(200, 232, 106, 0.34); color: #c8e86a !important; }
+.smirk-public .smirk-public-preview__action { border-top: 1px solid rgba(232, 238, 230, 0.14); background: #121614 !important; }
+
+.smirk-public [style*="backgroundImage"],
+.smirk-public [style*="background-image"] { background-image: none !important; }
+
+@media (max-width: 720px) {
+  .smirk-public h1 { font-size: clamp(42px, 12vw, 58px) !important; }
+  .smirk-public header { position: sticky; top: 0; }
+}
+
+/* ── Signed-in owner desk rebuild ─────────────────────────────────────────── */
+/* Deliberately keep the desk dark for calls and task triage, but remove the
+   terminal/war-room visual language. Lime now means a live or ready state. */
+.smirk-ops-shell {
+  --ops-bg: #101512;
+  --ops-raised: #171e19;
+  --ops-raised-2: #1D261F;
+  --ops-raised-3: #263129;
+  --ops-border: rgba(220, 231, 221, 0.12);
+  --ops-border-strong: rgba(200, 232, 106, 0.48);
+  --ops-text: #F5F7F2;
+  --ops-muted: #ABB7AD;
+  --ops-faint: #748177;
+  --ops-signal: #C8E86A;
+  --ops-signal-soft: rgba(200, 232, 106, 0.11);
+  --ops-blue: #8AB4F8;
+  --ops-danger: #FF928D;
+  background-color: var(--ops-bg) !important;
+  background-image: none !important;
+  color: var(--ops-text) !important;
+  font-family: "Figtree", Inter, system-ui, sans-serif !important;
+}
+
+.smirk-ops-shell .smirk-ops-sidebar,
+.smirk-ops-shell .smirk-command-rail,
+.smirk-ops-shell .smirk-ops-header {
+  background: rgba(18, 24, 20, 0.97) !important;
+  border-color: var(--ops-border) !important;
+}
+
+.smirk-ops-shell .smirk-ops-sidebar > div:first-child { padding: 20px 16px 16px !important; }
+.smirk-ops-shell .smirk-ops-sidebar nav { padding: 16px 10px 10px !important; }
+.smirk-ops-shell .smirk-ops-sidebar nav button {
+  min-height: 42px;
+  margin: 2px 0;
+  border-left: 0 !important;
+  border-radius: 8px !important;
+  color: var(--ops-muted) !important;
+  font-family: "Figtree", Inter, system-ui, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  text-transform: none !important;
+}
+
+.smirk-ops-shell .smirk-ops-sidebar nav button:hover {
+  background: rgba(255,255,255,0.045) !important;
+  color: var(--ops-text) !important;
+}
+
+.smirk-ops-shell .smirk-ops-sidebar nav button.border-\[\#00e479\] {
+  background: var(--ops-signal-soft) !important;
+  border-color: transparent !important;
+  color: var(--ops-signal) !important;
+  box-shadow: inset 2px 0 0 var(--ops-signal);
+}
+
+.smirk-ops-shell .smirk-ops-header {
+  height: 64px !important;
+  padding-inline: 22px !important;
+}
+
+.smirk-ops-shell .smirk-ops-header .font-mono,
+.smirk-ops-shell .smirk-ops-sidebar .font-mono,
+.smirk-ops-shell .smirk-command-rail .font-mono {
+  font-family: "Figtree", Inter, system-ui, sans-serif !important;
+  letter-spacing: 0.03em !important;
+}
+
+.smirk-ops-shell .smirk-ops-main {
+  top: 64px !important;
+  padding: 20px !important;
+}
+
+.smirk-ops-shell .smirk-mobile-nav { top: 64px !important; background: #171e19 !important; }
+.smirk-ops-shell .smirk-mobile-nav button { font-family: "Figtree", Inter, system-ui, sans-serif !important; text-transform: none !important; }
+
+.smirk-ops-shell .smirk-command-rail { background: #141a16 !important; }
+.smirk-ops-shell .smirk-command-rail > div > div:first-child { border-color: var(--ops-border) !important; }
+
+.smirk-ops-shell .smirk-overview-page,
+.smirk-ops-shell .smirk-calls-page { max-width: 1320px !important; }
+
+.smirk-ops-shell .smirk-overview-page__heading h2,
+.smirk-ops-shell .smirk-calls-page__heading h2 {
+  font-family: "Instrument Serif", Georgia, serif !important;
+  font-size: clamp(34px, 3vw, 48px) !important;
+  font-weight: 400 !important;
+  letter-spacing: -0.04em !important;
+}
+
+.smirk-ops-shell .smirk-overview-page__heading p,
+.smirk-ops-shell .smirk-calls-page__heading p {
+  font-family: "Figtree", Inter, system-ui, sans-serif !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.smirk-ops-shell .smirk-overview-kpis,
+.smirk-ops-shell .smirk-overview-panel,
+.smirk-ops-shell .smirk-overview-lower > div,
+.smirk-ops-shell .smirk-call-ledger,
+.smirk-ops-shell .smirk-call-command-bar {
+  border-radius: 12px !important;
+}
+
+.smirk-ops-shell .smirk-overview-kpis > button:first-child { border-radius: 12px 0 0 12px !important; }
+.smirk-ops-shell .smirk-overview-kpis > button:last-child { border-radius: 0 12px 12px 0 !important; }
+.smirk-ops-shell .smirk-state-pill { border-radius: 999px !important; padding: 4px 8px !important; }
+.smirk-ops-shell .smirk-call-row__glyph,
+.smirk-ops-shell .smirk-call-detail-header__glyph { border-radius: 10px !important; }
+
+.smirk-ops-shell .smirk-call-row:hover,
+.smirk-ops-shell .smirk-call-row:focus-visible { box-shadow: inset 3px 0 0 var(--ops-signal) !important; }
+
+@media (max-width: 720px) {
+  .smirk-ops-shell .smirk-ops-main { top: 64px !important; padding: 0 !important; }
+  .smirk-ops-shell .smirk-calls-page,
+  .smirk-ops-shell .smirk-overview-page { padding: 24px 16px 88px !important; }
+  .smirk-ops-shell .smirk-overview-page__heading h2,
+  .smirk-ops-shell .smirk-calls-page__heading h2 { font-size: 36px !important; }
+}
+
+/* Secure access is part of the product, not a default admin-login template. */
+.smirk-access-screen {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 80% 4%, rgba(200, 232, 106, 0.11), transparent 28%),
+    #101512 !important;
+  color: #f5f7f2 !important;
+  font-family: "Figtree", Inter, system-ui, sans-serif !important;
+}
+
+.smirk-access-screen h1,
+.smirk-access-screen h2 {
+  font-family: "Instrument Serif", Georgia, serif !important;
+  font-weight: 400 !important;
+  letter-spacing: -0.03em !important;
+}
+
+.smirk-access-screen [class*="rounded-3xl"],
+.smirk-access-screen [class*="rounded-2xl"] {
+  border-radius: 14px !important;
+}
+
+.smirk-access-screen [class*="bg-gray-900"],
+.smirk-access-screen [class*="bg-gray-950"] {
+  background-color: #171e19 !important;
+}
+
+.smirk-access-screen input,
+.smirk-access-screen textarea {
+  border-radius: 8px !important;
+  border-color: rgba(220, 231, 221, 0.18) !important;
+  background: #101512 !important;
 }

@@ -22,3 +22,11 @@
 - [ ] Add reliable CRM-import adapters for the smallest high-value export formats, beginning with CSV contact, company, and service data.
 - [x] Bind the active workspace knowledge pack into live-call context with verified-answer, conditional-answer, and escalation behavior.
 - [x] Add regression tests for workspace isolation, fact provenance, pricing guardrails, and uncertainty escalation.
+
+## Product UI and Brand Rebuild
+
+- [x] Inventory every public, onboarding, and signed-in SMIRK surface and identify prototype-like visual debt, redundant navigation, and nonessential controls.
+- [x] Establish a unified visual system that separates credible public marketing from the operational owner desk while retaining the verified Starter product scope.
+- [x] Rebuild public landing, pricing, comparison, industry, policy, and setup surfaces around clear missed-call-recovery value and only verified claims; approved policy bodies remain byte-stable by design.
+- [x] Rebuild the signed-in owner desk into a mobile-first Calls, Tasks, Alerts, and Settings operating model without breaking existing call, handoff, and proof functionality.
+- [x] Validate desktop and mobile visual hierarchy, keyboard/accessibility basics, API behavior, and no-regression launch readiness before any production release.

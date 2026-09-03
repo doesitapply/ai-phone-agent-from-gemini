@@ -440,14 +440,8 @@ async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; 
 
 function PublicLogo() {
   return (
-    <a href="/" className="flex items-center gap-3 text-sm font-black tracking-[0.14em] text-[#00e479]">
-      <span
-        className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black"
-        style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}
-      >
-        S
-      </span>
-      <span>SMIRK</span>
+    <a href="/" className="smirk-public-logo flex items-center gap-1" aria-label="SMIRK home">
+      <span>SMIRK</span><span className="smirk-public-logo__dot">.</span>
     </a>
   );
 }
@@ -473,43 +467,37 @@ function PublicPolicyLinks({ links }: { links: PublicPolicyLink[] }) {
 
 function PublicDashboardPreview() {
   const rows = [
-    { name: "Marcus Vance", issue: "Main-line backup", value: "$1,850", tone: "Emergency", score: "94%" },
-    { name: "Elena Rostova", issue: "No AC / elderly parent home", value: "$350", tone: "Urgent", score: "90%" },
-    { name: "Dave Miller", issue: "Commercial panel estimate", value: "$4,500", tone: "Quote", score: "88%" },
+    { label: "Who", value: "Maria Alvarez" },
+    { label: "Need", value: "No AC · elderly parent home" },
+    { label: "Where", value: "418 Maple St, Sparks" },
+    { label: "When", value: "Call after 2:00 p.m." },
   ];
 
   return (
-    <div className="border border-[#284332] bg-[#07100b] p-4 shadow-2xl shadow-black/35">
-      <div className="mb-4 flex items-center justify-between gap-3 border-b border-[#173321] pb-3">
+    <div className="smirk-public-preview p-5">
+      <div className="mb-5 flex items-center justify-between gap-3 border-b border-white/10 pb-4">
         <div>
-          <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-[#00e479]">Basic dash</div>
-          <div className="mt-1 text-sm font-semibold text-white">Missed calls that need action</div>
+          <div className="smirk-public-preview__eyebrow text-[10px] font-semibold uppercase tracking-[0.18em]">Recovered call</div>
+          <div className="mt-1 text-base font-semibold">One callback waiting</div>
         </div>
-        <div className="border border-[#31533e] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-gray-300">Illustrative example</div>
+        <div className="smirk-public-preview__tag px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.11em]">Urgent</div>
       </div>
-      <div className="grid gap-2">
+      <div className="grid gap-px overflow-hidden border border-white/10 bg-white/10">
         {rows.map((row) => (
-          <div key={row.name} className="grid grid-cols-[1fr_auto] gap-3 border border-[#173321] bg-black/45 p-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-bold text-white">{row.name}</span>
-                <span className="border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-amber-200">{row.tone}</span>
-              </div>
-              <div className="mt-1 truncate text-xs text-gray-400">{row.issue}</div>
-            </div>
-            <div className="text-right">
-              <div className="font-mono text-sm font-black text-[#00ff88]">{row.score}</div>
-              <div className="mt-1 text-[10px] text-gray-500">{row.value}</div>
-            </div>
+          <div key={row.label} className="smirk-public-preview__row grid grid-cols-[82px_1fr] gap-3 px-4 py-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#9aa39b]">{row.label}</div>
+            <div className="text-sm font-medium">{row.value}</div>
           </div>
         ))}
       </div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-3">
-        {["Who called?", "What happened?", "Who calls back?"].map((item) => (
-          <div key={item} className="border border-[#173321] bg-[#0d160f] px-3 py-2 text-xs font-semibold text-gray-200">{item}</div>
-        ))}
+      <div className="smirk-public-preview__action mt-5 flex items-center justify-between gap-4 pt-4">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#9aa39b]">Next action</div>
+          <div className="mt-1 text-sm font-medium">Call Maria now</div>
+        </div>
+        <PhoneCall size={18} className="text-[#c8e86a]" />
       </div>
-      <p className="mt-3 text-[10px] leading-4 text-gray-500">Fictional example data. Names, confidence percentages, and dollar amounts are illustrative—not customer results or a live feed.</p>
+      <p className="mt-4 text-[10px] leading-4 text-[#9aa39b]">Illustrative example. A real owner sees the caller, issue, urgency, and callback window—not an invented revenue score.</p>
     </div>
   );
 }
@@ -767,27 +755,27 @@ function PublicLandingPage() {
         <div className="relative mx-auto grid max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[1.02fr_0.98fr] lg:py-16">
         <section className="flex flex-col justify-center">
           <div className="mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
-            <PhoneMissed size={14} /> Missed-call recovery for local service businesses
+            <PhoneMissed size={14} /> Missed-call recovery for shops that work with their hands
           </div>
           <h1 className="max-w-3xl text-5xl font-black leading-[0.94] tracking-tight sm:text-6xl lg:text-7xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
             Catch the job calls you miss while you are already working.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-gray-300">
-            SMIRK answers missed calls, captures the problem and urgency, then leaves your team with the only things that matter: who called, what they need, how urgent it is, who calls back, and whether it got handled.
+            When you cannot pick up, SMIRK takes the intake, captures the job details, and leaves one clear callback task for the person who can actually help.
           </p>
           <div className="mt-7 flex flex-wrap gap-3">
             <a href="#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
-              <PhoneForwarded size={16} /> Protect missed calls
+              <PhoneForwarded size={16} /> Start recovery setup
             </a>
-            <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
-              See $197 plans
+            <a href="#how-it-works" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+              See how it works
             </a>
           </div>
           <div className="mt-9 grid gap-3 sm:grid-cols-3">
             {[
-              ['Live', 'answers the call'],
-              ['5', 'questions owners need'],
-              ['Task', 'callback work queued'],
+              ['1', 'missed call answered'],
+              ['5', 'facts worth calling back on'],
+              ['1', 'clear callback task'],
             ].map(([value, label]) => (
               <div key={label} className="border border-[#173321] bg-black/40 p-4">
                 <div className="font-mono text-2xl font-bold text-white">{value}</div>
@@ -795,7 +783,7 @@ function PublicLandingPage() {
               </div>
             ))}
           </div>
-          <div className="mt-8 border-l-2 border-[#00e479] pl-4 text-sm leading-6 text-gray-400">
+          <div id="how-it-works" className="mt-8 border-l-2 border-[#00e479] pl-4 text-sm leading-6 text-gray-400">
             Built for {INDUSTRY_SLUGS.map((slug, idx) => (
               <React.Fragment key={slug}>
                 {idx > 0 ? ", " : ""}
@@ -812,7 +800,7 @@ function PublicLandingPage() {
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <div className="mt-5 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start recovery setup</div>
-              <div className="mt-1 text-sm text-gray-300">Pick a plan, tell us where missed-call alerts go, and get routed into the correct setup step.</div>
+              <div className="mt-1 text-sm text-gray-300">One Starter plan. Tell us which line needs protection and where the owner should receive setup and alert information.</div>
             </div>
             {selected ? <div className="bg-[#00ff88] px-3 py-2 font-mono text-xs font-black text-black">${selected.price}/{selected.interval}</div> : null}
           </div>
@@ -1113,22 +1101,8 @@ function PublicComparePage() {
 }
 
 function PublicLaunchPage() {
-  const [proofSnapshot, setProofSnapshot] = useState<PublicProofSnapshot | null>(null);
-
   useEffect(() => {
     trackLaunchEvent("launch_page_view", { channel: "proof_page" });
-    let active = true;
-    fetch("/api/public-proof-snapshot")
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => {
-        if (active && data) setProofSnapshot(data);
-      })
-      .catch(() => {
-        if (active) setProofSnapshot(null);
-      });
-    return () => {
-      active = false;
-    };
   }, []);
 
   const proofSteps = [
@@ -1137,12 +1111,6 @@ function PublicLaunchPage() {
     ["3", "The owner receives a concise email alert and a callback-ready summary."],
     ["4", "The callback task stays visible until a person handles the next step."],
   ];
-  const proofMetrics = proofSnapshot?.available === true ? [
-    ["Calls recorded", proofSnapshot.totalCalls],
-    ["Summaries generated", proofSnapshot.summariesGenerated],
-    ["Callback tasks created", proofSnapshot.callbackTasksCreated],
-    ["Complete proof loops", proofSnapshot.completeProofCalls],
-  ] : [];
 
   return (
     <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -1216,20 +1184,7 @@ function PublicLaunchPage() {
                 </div>
               ))}
             </div>
-            {proofMetrics.length > 0 ? (
-              <div className="mt-8">
-                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#849585]">Published proof-workspace activity</div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {proofMetrics.map(([label, value]) => (
-                    <div key={String(label)} className="border border-[#2f4637] bg-[#101510]/80 p-4">
-                      <div className="font-mono text-2xl font-black text-[#00e479]">{Number(value).toLocaleString()}</div>
-                      <div className="mt-1 text-xs uppercase tracking-[0.08em] text-gray-400">{label}</div>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-3 text-xs leading-5 text-gray-500">These counters come only from the explicitly designated proof workspace. They demonstrate product behavior; they are not a revenue, conversion, or customer-savings claim.</p>
-              </div>
-            ) : null}
+            <p className="mt-7 max-w-3xl text-sm leading-6 text-gray-500">Proof should be visible where it matters: in the owner’s call record, alert, and callback task after a real test call. SMIRK does not use public counters as a substitute for that verification.</p>
           </div>
         </section>
 
@@ -1486,8 +1441,8 @@ function PublicPricingPage() {
           <div className="mb-4 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
             <PhoneMissed size={14} /> Missed-call recovery
           </div>
-          <h1 className="max-w-3xl text-4xl font-black leading-[0.96] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Simple plans for protecting missed job calls.</h1>
-          <p className="mt-4 max-w-2xl text-lg leading-8 text-gray-300">Starter keeps owners focused on Calls, Contacts, and Tasks. Pro opens the full suite when the business is ready for deeper operations.</p>
+          <h1 className="max-w-3xl text-4xl font-black leading-[0.96] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>One plan you can buy today.</h1>
+          <p className="mt-4 max-w-2xl text-lg leading-8 text-gray-300">Starter is missed-call recovery: the line, the owner desk, the call record, and one clear callback path. Broader configurations are intentionally not for sale yet.</p>
           </div>
           <PublicDashboardPreview />
         </div>
@@ -1526,7 +1481,7 @@ function PublicPricingPage() {
           </label>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid max-w-lg gap-6">
           {plans.map((plan) => (
             <div key={plan.id} className="border border-[#2f4637] bg-[#101510]/90 p-6">
               <div className="mb-4">
@@ -1663,8 +1618,8 @@ function PublicSuccessPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <div className="max-w-3xl mx-auto rounded-3xl border border-emerald-500/20 bg-gray-900/80 p-8 text-center">
+    <div className="smirk-public min-h-screen px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="mx-auto max-w-3xl rounded-2xl border border-[#2f4637] bg-[#101510]/80 p-8 text-center">
         <div className={`mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full ${paymentConfirmed ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-200'}`}>
           {paymentConfirmed ? <CheckCircle2 size={28} /> : <ShieldCheck size={28} />}
         </div>
@@ -1730,8 +1685,8 @@ function PublicCancelPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <div className="max-w-3xl mx-auto rounded-3xl border border-amber-500/20 bg-gray-900/80 p-8 text-center">
+    <div className="smirk-public min-h-screen px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="mx-auto max-w-3xl rounded-2xl border border-amber-500/20 bg-[#101510]/80 p-8 text-center">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/15 text-amber-300">
           <AlertCircle size={28} />
         </div>
@@ -2263,7 +2218,7 @@ const normalizeWorkspacePlan = (plan: unknown): WorkspacePlan => {
 
 const workspacePlanHasFullSuite = (plan: WorkspacePlan) => plan === "pro" || plan === "enterprise";
 
-const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "contacts", "tasks"]);
+const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "handoffs", "tasks", "settings"]);
 const PRO_WORKSPACE_TABS = new Set<Tab>([
   "dashboard",
   "review",
@@ -5069,7 +5024,7 @@ function TeamMemberModal({ member, onSave, onClose }: {
 }
 
 // ── Handoffs Page ─────────────────────────────────────────────────────────────
-function HandoffsPage() {
+function HandoffsPage({ ownerView = false }: { ownerView?: boolean }) {
   const { dark } = useTheme();
   const [activeTab, setActiveTab] = useState<"escalations" | "team">("escalations");
   const [queueFilter, setQueueFilter] = useState<"all" | "pending">(() => (
@@ -5204,8 +5159,8 @@ function HandoffsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold">Handoffs &amp; Team</h2>
-          <p className={`text-xs ${muted} mt-0.5`}>Manage your team roster and urgent callback routing</p>
+          <h2 className="text-lg font-bold">{ownerView ? "Alerts that need a person" : "Handoffs & Team"}</h2>
+          <p className={`text-xs ${muted} mt-0.5`}>{ownerView ? "Urgent callers, transfer requests, and callbacks that still need a clear next step." : "Manage your team roster and urgent callback routing"}</p>
         </div>
         <div className="flex items-center gap-2">
           {pending.length > 0 && (
@@ -5228,35 +5183,39 @@ function HandoffsPage() {
         </div>
       </div>
 
-      {/* Tab switcher */}
-      <div className="flex gap-1 p-1 rounded-xl bg-gray-900 border border-gray-800 w-fit">
-        {(["escalations", "team"] as const).map((t) => (
-          <button key={t} onClick={() => setActiveTab(t)}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all capitalize ${
-              activeTab === t
-                ? "bg-violet-700 text-white"
-                : `${muted} hover:text-white`
-            }`}>
-            {t === "escalations" ? `Handoffs${pending.length > 0 ? ` (${pending.length})` : ""}` : `Team (${team.length})`}
-          </button>
-        ))}
-      </div>
+      {!ownerView && (
+        <div className="flex gap-1 p-1 rounded-xl bg-gray-900 border border-gray-800 w-fit">
+          {(["escalations", "team"] as const).map((t) => (
+            <button key={t} onClick={() => setActiveTab(t)}
+              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all capitalize ${
+                activeTab === t
+                  ? "bg-violet-700 text-white"
+                  : `${muted} hover:text-white`
+              }`}>
+              {t === "escalations" ? `Handoffs${pending.length > 0 ? ` (${pending.length})` : ""}` : `Team (${team.length})`}
+            </button>
+          ))}
+        </div>
+      )}
 
-      <div className="grid gap-3 md:grid-cols-5">
-        {[
+      <div className={`grid gap-3 ${ownerView ? "sm:grid-cols-2" : "md:grid-cols-5"}`}>
+        {(ownerView ? [
+          ["Needs attention", pending.length, "Urgent callbacks or human requests"],
+          ["Resolved", handoffs.filter((h) => h.status === "completed").length, "Recorded outcomes"],
+        ] : [
           ["Pending", pending.length, "Needs human attention"],
           ["Routed", transferred, "Owner callback routed"],
           ["Routable team", routableTeam, "Active members with phone"],
           ["Client intake", intakeTeam, "Can call in onboarding"],
           ["Missing number", missingTransferNumbers, "Assigned but no callback number"],
-        ].map(([label, value, helper]) => (
-          <button key={label} type="button" disabled={label !== "Pending" || pending.length === 0}
-            onClick={() => { if (label === "Pending") openPendingQueue(); }}
+        ]).map(([label, value, helper]) => (
+          <button key={label} type="button" disabled={label !== "Pending" && label !== "Needs attention" || pending.length === 0}
+            onClick={() => { if (label === "Pending" || label === "Needs attention") openPendingQueue(); }}
             className={`rounded-xl border p-3 text-left ${card} ${label === "Pending" && pending.length > 0 ? "hover:border-red-700 hover:bg-red-950/20 cursor-pointer" : "cursor-default"}`}>
             <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-gray-500">{label}</div>
             <div className="mt-1 text-2xl font-black text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>{value}</div>
             <div className="mt-1 text-xs text-gray-500">{helper}</div>
-            {label === "Pending" && pending.length > 0 && <div className="mt-2 text-[10px] font-bold uppercase tracking-wide text-red-400">Open human queue →</div>}
+            {(label === "Pending" || label === "Needs attention") && pending.length > 0 && <div className="mt-2 text-[10px] font-bold uppercase tracking-wide text-red-400">Open human queue →</div>}
           </button>
         ))}
       </div>
@@ -5350,7 +5309,7 @@ function HandoffsPage() {
       )}
 
       {/* ── TEAM TAB ── */}
-      {activeTab === "team" && (
+      {!ownerView && activeTab === "team" && (
         <div className="space-y-4">
           {/* Add member button */}
           <div className="flex items-center justify-between">
@@ -13052,8 +13011,14 @@ export default function App() {
     { id: "tasks",      label: "Tasks",      icon: <ListTodo size={15} />, badge: taskCount },
     { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
   ];
+  const ownerDeskTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
+    { id: "calls", label: "Calls", icon: <Phone size={15} /> },
+    { id: "tasks", label: "Tasks", icon: <ListTodo size={15} />, badge: taskCount },
+    { id: "handoffs", label: "Alerts", icon: <BellRing size={15} /> },
+    { id: "settings", label: "Settings", icon: <Settings size={15} /> },
+  ];
   const visiblePrimaryTabs = isCustomerView
-    ? primaryTabs.filter((t) => customerVisibleTabs.has(t.id))
+    ? ownerDeskTabs.filter((t) => customerVisibleTabs.has(t.id))
     : isDemoOperator
       ? primaryTabs.filter((t) => demoOperatorVisibleTabs.has(t.id))
       : [...primaryTabs, { id: "workspaces" as Tab, label: "Admin", icon: <ShieldCheck size={15} /> }];
@@ -13078,7 +13043,9 @@ export default function App() {
   const overflowTabs = allOverflowTabs
     .filter((t) => visibleForSession(t.id))
     .filter((t) => !visiblePrimaryTabs.some((primary) => primary.id === t.id));
-  const mobileCoreTabIds = new Set<Tab>(["dashboard", "calls", "recovery", "prospecting", "velvet"]);
+  const mobileCoreTabIds = isCustomerView
+    ? new Set<Tab>(["calls", "tasks", "handoffs", "settings"])
+    : new Set<Tab>(["dashboard", "calls", "recovery", "prospecting", "velvet"]);
   const mobileCoreTabs = [...visiblePrimaryTabs, ...overflowTabs]
     .filter((tabItem) => mobileCoreTabIds.has(tabItem.id))
     .map((tabItem) => ({
@@ -13127,7 +13094,7 @@ export default function App() {
 
   if (inviteState.loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="smirk-access-screen min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
         <div>
           <Loader2 size={28} className="animate-spin mx-auto mb-4 text-emerald-400" />
           <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Checking your secure invite…</h1>
@@ -13139,7 +13106,7 @@ export default function App() {
 
   if (inviteState.error && !inviteState.preview) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="smirk-access-screen min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
         <div className="max-w-md">
           <AlertTriangle size={28} className="mx-auto mb-4 text-amber-400" />
           <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Invite link issue</h1>
@@ -13155,7 +13122,7 @@ export default function App() {
 
   if (pathname.startsWith("/invite/") && inviteState.preview) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="smirk-access-screen min-h-screen flex items-center justify-center bg-gray-950 text-white px-6" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
         <div className="w-full max-w-lg rounded-3xl border border-emerald-500/25 bg-gray-900/80 p-8 text-center">
           <ShieldCheck size={34} className="mx-auto mb-4 text-emerald-300" />
           <div className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-emerald-300">Secure owner access</div>
@@ -13175,7 +13142,7 @@ export default function App() {
 
   if (!workspaceSession && !operatorSession) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white px-6 py-10" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="smirk-access-screen min-h-screen bg-gray-950 text-white px-6 py-10" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
         <div className="max-w-5xl mx-auto grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-3xl border border-gray-800 bg-gray-900/70 p-8">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300 mb-4">
@@ -13390,14 +13357,12 @@ export default function App() {
           <aside className={`smirk-ops-sidebar hidden lg:flex fixed left-0 top-0 z-50 h-screen flex-col border-r border-[#3b4b3d] bg-[#1c1b1b] transition-[width] duration-200 ${leftRailCollapsed ? "w-[64px]" : "w-[220px]"}`}>
             <div className="border-b border-[#3b4b3d] p-4">
               <div className={`flex items-center ${leftRailCollapsed ? "justify-center" : "gap-3"}`}>
-                <div className="flex h-9 w-9 items-center justify-center bg-[#00ff88]" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)' }}>
-                  <span className="text-lg font-black text-black" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
-                </div>
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#c8e86a] text-sm font-black text-[#152019]">S</div>
                 {!leftRailCollapsed && <div>
-                  <h1 className="text-[18px] font-black leading-none tracking-tight text-[#00e479]" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>{isCustomerView ? "SMIRK" : "SMIRK OS"}</h1>
+                  <h1 className="text-[18px] font-black leading-none tracking-tight text-[#c8e86a]">SMIRK</h1>
                   <div className="mt-1 flex items-center gap-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#00e479] animate-pulse" />
-                    <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">{isCustomerView ? (workspacePlanHasFullSuite(workspacePlan) ? "Pro suite" : "Basic dash") : isDemoOperator ? "Demo read-only" : "Ops active"}</span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#c8e86a]" />
+                    <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">{isCustomerView ? "Owner desk" : isDemoOperator ? "Demo workspace" : "Operations"}</span>
                   </div>
                 </div>}
               </div>
@@ -13475,7 +13440,7 @@ export default function App() {
                 className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] text-[#b9cbb9] lg:hidden">
                 <Layers size={15} />
               </button>
-              <span className="font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-[#00e479]">{isCustomerView ? "SMIRK" : "SMIRK OS"}</span>
+              <span className="font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-[#c8e86a]">{isCustomerView ? "SMIRK" : "SMIRK Operations"}</span>
               <span className="hidden h-4 w-px bg-[#3b4b3d] sm:block" />
               <div className="hidden min-w-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[#b9cbb9] sm:flex">
                 <span className="truncate">{currentWorkspace?.name || workspaceSession?.workspaceName || operatorSession?.label || 'Operator Command'}</span>
@@ -13547,7 +13512,7 @@ export default function App() {
           {/* Mobile Nav Drawer */}
           {mobileMenuOpen && (
             <div className="smirk-mobile-nav fixed left-0 right-0 top-12 z-50 max-h-[calc(100vh-3rem)] overflow-y-auto border-b border-[#3b4b3d] bg-[#1c1b1b] lg:hidden">
-              <div className="border-b border-[#3b4b3d] px-5 py-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[#849585]">Run the revenue loop</div>
+              <div className="border-b border-[#3b4b3d] px-5 py-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-[#849585]">Workspace</div>
               {mobileCoreTabs.map((t) => (
                 <button key={t.id} onClick={() => { navigateToTab(t.id); setMobileMenuOpen(false); setMobileMoreOpen(false); }}
                   className={`flex w-full items-center gap-3 px-5 py-3.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] transition-colors ${
@@ -13611,7 +13576,7 @@ export default function App() {
             <>
             <div className="border-b border-[#3b4b3d] p-4">
               <div className="flex items-center justify-between gap-3">
-                <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#e5e2e1]">Command Rail</div>
+                <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#e5e2e1]">At a glance</div>
                 <button
                   onClick={() => setCommandRailCollapsed(true)}
                   className="flex h-7 w-7 items-center justify-center border border-[#3b4b3d] bg-[#201f1f] text-[#849585] hover:border-[#00e479] hover:text-[#00e479]"
@@ -13621,15 +13586,15 @@ export default function App() {
                 </button>
               </div>
               <div className="mt-1 flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#00e479]" />
-                <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-[#b9cbb9]">{isDemoOperator ? "Read-only demo" : "AI assistant active"}</span>
+                <span className="h-1.5 w-1.5 rounded-full bg-[#c8e86a]" />
+                <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-[#b9cbb9]">{isDemoOperator ? "Read-only demo" : "Line standing by"}</span>
               </div>
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto p-4">
               <div className="border border-[#3b4b3d] bg-[#2a2a2a] p-3">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#00e479]">SMIRK Insight</span>
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#c8e86a]">Today</span>
                   <span className="font-mono text-[10px] text-[#849585]">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 </div>
                 <p className="text-xs leading-5 text-[#e5e2e1]">
@@ -13744,7 +13709,7 @@ export default function App() {
             )}
             {activeTab === 'analytics' && visibleForSession('analytics') && <AnalyticsPage />}
             {activeTab === 'tasks' && <TasksPage />}
-            {activeTab === 'handoffs' && visibleForSession('handoffs') && <HandoffsPage />}
+            {activeTab === 'handoffs' && visibleForSession('handoffs') && <HandoffsPage ownerView={isCustomerView} />}
             {activeTab === 'recovery' && visibleForSession('recovery') && <RecoveryDeskPage />}
             {activeTab === 'calendar' && visibleForSession('calendar') && <CalendarPage />}
             {activeTab === 'integrations' && visibleForSession('integrations') && <IntegrationsPage />}
