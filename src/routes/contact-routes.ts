@@ -1,6 +1,5 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import { addToDNC, removeFromDNC } from "../compliance.js";
-import { getMockContactDetail, getMockContacts } from "../mock-db.js";
 
 const CONTACT_STATUSES = new Set(["active", "lead", "customer", "inactive", "bad_number"]);
 
@@ -21,10 +20,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
       const limit = Math.min(parseInt(req.query.limit as string || "50"), 100);
       const offset = parseInt(req.query.offset as string || "0");
       const includeAnonymous = req.query.include_anonymous === "true";
-      if (!dbEnabled) {
-        const contacts = getMockContacts(includeAnonymous);
-        return res.json({ contacts: contacts.slice(offset, offset + limit), total: contacts.length });
-      }
+      if (!dbEnabled) return res.status(503).json({ error: "Live contact data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
       const contacts = includeAnonymous
         ? await sql`
             SELECT
@@ -109,11 +105,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
     const wsId = getWorkspaceId(req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
-    if (!dbEnabled) {
-      const detail = getMockContactDetail(id);
-      if (!detail) return res.status(404).json({ error: "Contact not found." });
-      return res.json(detail);
-    }
+    if (!dbEnabled) return res.status(503).json({ error: "Live contact data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const contactRows = await sql`SELECT * FROM contacts WHERE id = ${id} AND workspace_id = ${wsId}`;
     if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
     const calls = await sql`SELECT * FROM calls WHERE contact_id = ${id} AND workspace_id = ${wsId} ORDER BY started_at DESC LIMIT 20`;
@@ -145,11 +137,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
     const wsId = getWorkspaceId(req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
-    if (!dbEnabled) {
-      const detail = getMockContactDetail(id);
-      if (!detail) return res.status(404).json({ error: "Contact not found." });
-      return res.json(detail);
-    }
+    if (!dbEnabled) return res.status(503).json({ error: "Live contact data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const [contactRows, calls, tasks, appointments, summaries, customFields] = await Promise.all([
       sql`
         SELECT
@@ -310,7 +298,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   });
 
   app.get("/api/field-definitions", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
-    if (!dbEnabled) return res.json([]);
+    if (!dbEnabled) return res.status(503).json({ error: "Field definitions are unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const fields = await sql`SELECT * FROM field_definitions ORDER BY sort_order ASC, label ASC`;
     res.json(fields);
   });

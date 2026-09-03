@@ -23,7 +23,7 @@ expect("portal session binds exact workspace customer, configuration, and truste
   helper.includes("input.workspace?.stripe_customer_id")
   && helper.includes("configuration: input.configurationId")
   && helper.includes('new URL("/?billing=portal_return", trustedOrigin)'));
-expect("portal readiness fails closed on exact live feature configuration",
+expect("portal readiness fails closed on exact live feature configuration while remaining nonblocking for the Starter launch",
   helper.includes("configuration?.livemode !== true")
   && helper.includes("configuration?.active !== true")
   && helper.includes("invoice_history?.enabled !== true")
@@ -34,7 +34,7 @@ expect("portal readiness fails closed on exact live feature configuration",
   && helper.includes("portal-cancellation-mode-mismatch")
   && helper.includes("portal-cancellation-proration-mismatch")
   && helper.includes("portal-restricted-key-not-distinct")
-  && buyer.includes("&& billingPortalReady"));
+  && buyer.includes("billingPortalLaunchBlocking: false"));
 expect("portal configuration proof is cached", buyer.includes("BILLING_PORTAL_PROOF_CACHE_MS") && buyer.includes("billingPortalProofCache"));
 expect("workspace settings expose the authenticated portal path", app.includes('api<{ ok: boolean; url: string }>("/api/billing/portal"') && app.includes("Manage billing"));
 expect("local and Railway env checks require dedicated portal credentials",

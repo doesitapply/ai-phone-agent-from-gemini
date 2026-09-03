@@ -13,7 +13,6 @@ import {
   removeMember,
   updateWorkspace,
 } from "../saas.js";
-import { getMockWorkspaces } from "../mock-db.js";
 import { resolveTrustedProductionAppOrigin } from "../public-url-safety.js";
 import { hasWorkspaceBillingEntitlement } from "../billing-safety.js";
 
@@ -66,16 +65,7 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
 
   app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
     const isOperatorAccess = (req as any).authMode === "operator" || (req as any).authMode === "demo_operator";
-    if (!dbEnabled) {
-      const workspaces = getMockWorkspaces().map(maskWorkspaceSecrets);
-      return res.json({
-        workspaces,
-        plans: PLAN_LIMITS,
-        currentWorkspaceId: workspaces[0]?.id || null,
-        customerMode: !isOperatorAccess,
-        noDbDemo: true,
-      });
-    }
+    if (!dbEnabled) return res.status(503).json({ error: "Live workspace data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const workspaceAuth = (req as any).workspaceAuth;
     if (workspaceAuth) {
       const workspace = await getWorkspaceById(workspaceAuth.id);
@@ -123,24 +113,7 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-      if (!dbEnabled) {
-        const workspace = getMockWorkspaces().find((item) => Number(item.id) === id) as any;
-        if (!workspace) return res.status(404).json({ error: "Workspace not found" });
-        return res.json({
-          workspace: maskWorkspaceSecrets(workspace),
-          stats: {
-            totalCalls: 0,
-            callsThisMonth: workspace.calls_this_month || 0,
-            minutesThisMonth: workspace.minutes_this_month || 0,
-            totalContacts: 0,
-            openTasks: 0,
-            upcomingAppointments: 0,
-            recentCalls: [],
-          },
-          members: [],
-          noDbDemo: true,
-        });
-      }
+      if (!dbEnabled) return res.status(503).json({ error: "Live workspace data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
       const workspace = await getWorkspaceById(id);
       if (!workspace) return res.status(404).json({ error: "Workspace not found" });
       const stats = await getWorkspaceStats(id);
@@ -202,9 +175,7 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-      if (!dbEnabled) {
-        return res.json({ members: [] });
-      }
+      if (!dbEnabled) return res.status(503).json({ error: "Live workspace data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
       const members = await getWorkspaceMembers(id);
       return res.json({ members: members.map(redactWorkspaceMember) });
     } catch (err) {
@@ -232,22 +203,7 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-      if (!dbEnabled) {
-        const workspace = getMockWorkspaces().find((item) => Number(item.id) === id) as any;
-        if (!workspace) return res.status(404).json({ error: "Workspace not found" });
-        return res.json({
-          allowed: true,
-          calls_this_month: workspace.calls_this_month || 0,
-          monthly_call_limit: workspace.monthly_call_limit || 0,
-          minutes_this_month: workspace.minutes_this_month || 0,
-          monthly_minute_limit: workspace.monthly_minute_limit || 0,
-          callsUsed: workspace.calls_this_month || 0,
-          callsLimit: workspace.monthly_call_limit || 0,
-          minutesUsed: workspace.minutes_this_month || 0,
-          minutesLimit: workspace.monthly_minute_limit || 0,
-          noDbDemo: true,
-        });
-      }
+      if (!dbEnabled) return res.status(503).json({ error: "Live workspace usage is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
       const limits = await checkUsageLimits(id);
       return res.json(limits);
     } catch (err) {
@@ -266,9 +222,8 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-      const workspace = dbEnabled
-        ? await getWorkspaceById(id)
-        : getMockWorkspaces().find((item) => Number(item.id) === id) as any;
+      if (!dbEnabled) return res.status(503).json({ error: "Live workspace entitlement is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
+      const workspace = await getWorkspaceById(id);
       if (!workspace) return res.status(404).json({ error: "Workspace not found" });
       const normalizedPlan = String(workspace.plan || "").trim().toLowerCase();
       const expectedTier = ["pro", "enterprise", "agency"].includes(normalizedPlan) ? "pro" : "basic";

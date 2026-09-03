@@ -188,12 +188,10 @@ const commit = currentCommit();
 const branch = currentBranch();
 const guardedDeployCommand = buildExactDeployCommand({ branch, commit });
 const checks = [
-  commandEvidence("high-fidelity-no-db-demo-mode", "npm", ["run", "-s", "check:no-db-demo-mode"], (_result, parsed) => (
+  commandEvidence("no-db-storage-guard", "npm", ["run", "-s", "check:no-db-storage-guard"], (_result, parsed) => (
     parsed?.ok === true &&
-    parsed?.code === "NO_DB_DEMO_MODE_PASSED" &&
-    Number(parsed?.calls || 0) >= 3 &&
-    Number(parsed?.contacts || 0) >= 3 &&
-    Number(parsed?.tasks || 0) >= 3
+    parsed?.code === "NO_DB_STORAGE_GUARD_PASSED" &&
+    Number(parsed?.checkedRoutes || 0) >= 16
   )),
   commandEvidence("customer-operator-ui-partition", "npm", ["run", "-s", "check:customer-dashboard"], (result) => (
     result.ok && /OK customer dashboard contract/.test(result.stdout)
@@ -244,7 +242,7 @@ const checks = [
 ];
 
 const localMilestones = new Map([
-  ["high-fidelity-no-db-demo-mode", 35],
+  ["no-db-storage-guard", 35],
   ["customer-operator-ui-partition", 25],
   ["plan-boundary-contract", 25],
   ["basic-chaos-validation", 40],
@@ -257,9 +255,9 @@ const firstCustomer = checks.find((check) => check.id === "first-customer-10of10
 const checkById = (id) => checks.find((check) => check.id === id);
 const requirementAudit = [
   {
-    requirement: "High-fidelity No-DB demo mode",
-    status: checkById("high-fidelity-no-db-demo-mode")?.ok ? "complete-local" : "incomplete",
-    evidence: "npm run -s check:no-db-demo-mode",
+    requirement: "Fail-closed no-database storage guard",
+    status: checkById("no-db-storage-guard")?.ok ? "complete-local" : "incomplete",
+    evidence: "npm run -s check:no-db-storage-guard",
   },
   {
     requirement: "Stronger customer/operator UI partitioning",

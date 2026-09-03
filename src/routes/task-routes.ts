@@ -1,5 +1,4 @@
 import type { Express, Request, RequestHandler, Response } from "express";
-import { getMockTasks } from "../mock-db.js";
 
 type TaskRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -14,7 +13,7 @@ export function registerTaskRoutes(app: Express, deps: TaskRouteDeps): void {
 
   app.get("/api/tasks", dashboardAuth, async (req: Request, res: Response) => {
     res.set("Cache-Control", "no-store");
-    if (!dbEnabled) return res.json({ tasks: getMockTasks(req.query.status as string || "all") });
+    if (!dbEnabled) return res.status(503).json({ error: "Live task data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
     const status = req.query.status as string || "all";
     const tasks = status === "all"

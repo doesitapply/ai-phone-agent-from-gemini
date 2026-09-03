@@ -21,7 +21,7 @@ export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
   const { dashboardAuth, requireOperator, sql, dbEnabled, getWorkspaceId, agentConfigSchema: AgentConfigSchema } = deps;
 
   app.get("/api/agents", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    if (!dbEnabled) return res.json({ agents: [] });
+    if (!dbEnabled) return res.status(503).json({ error: "Live agent configuration is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
     const agents = await sql`SELECT * FROM agent_configs WHERE workspace_id = ${wsId} ORDER BY id DESC`;
     res.json({ agents });

@@ -1,5 +1,4 @@
 import type { Express, Request, RequestHandler, Response } from "express";
-import { getMockActiveCalls, getMockCall, getMockCalls, getMockMessages } from "../mock-db.js";
 
 type TtsAudioEntry = {
   buffer: Buffer;
@@ -46,7 +45,7 @@ export function registerCallRoutes(app: Express, deps: CallRouteDeps): void {
 
   app.get("/api/calls", dashboardAuth, async (req: Request, res: Response) => {
     res.set("Cache-Control", "no-store");
-    if (!dbEnabled) return res.json({ calls: getMockCalls() });
+    if (!dbEnabled) return res.status(503).json({ error: "Live call data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
     const calls = await sql`
       SELECT
@@ -202,7 +201,7 @@ export function registerCallRoutes(app: Express, deps: CallRouteDeps): void {
 
   app.get("/api/calls/active", dashboardAuth, async (req: Request, res: Response) => {
     try {
-      if (!dbEnabled) return res.json(getMockActiveCalls());
+      if (!dbEnabled) return res.status(503).json({ error: "Live call data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
       const wsId = getWorkspaceId(req);
       const activeCalls = await sql`
         SELECT c.call_sid, c.from_number, c.started_at, c.direction, c.turn_count,
@@ -222,10 +221,7 @@ export function registerCallRoutes(app: Express, deps: CallRouteDeps): void {
   app.get("/api/calls/:callSid/messages", dashboardAuth, async (req: Request, res: Response) => {
     const { callSid } = req.params;
     if (!/^CA[a-f0-9]{32}$/i.test(callSid)) return res.status(400).json({ error: "Invalid call SID format." });
-    if (!dbEnabled) {
-      if (!getMockCall(callSid)) return res.status(404).json({ error: "Call not found." });
-      return res.json({ messages: getMockMessages(callSid) });
-    }
+    if (!dbEnabled) return res.status(503).json({ error: "Live call data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
     const callRows = await sql`SELECT call_sid FROM calls WHERE call_sid = ${callSid} AND workspace_id = ${wsId}`;
     if (!callRows.length) return res.status(404).json({ error: "Call not found." });
@@ -241,17 +237,7 @@ export function registerCallRoutes(app: Express, deps: CallRouteDeps): void {
   app.get("/api/calls/:sid/transcript", dashboardAuth, async (req: Request, res: Response) => {
     const { sid } = req.params;
     if (!/^CA[a-f0-9]{32}$/i.test(sid)) return res.status(400).json({ error: "Invalid call SID format." });
-    if (!dbEnabled) {
-      if (!getMockCall(sid)) return res.status(404).json({ error: "Call not found.", callSid: sid });
-      const lines = getMockMessages(sid)
-        .filter((m: any) => m.role === "user" || m.role === "assistant")
-        .map((m: any) => ({
-          speaker: m.role === "user" ? "Caller" : "Agent",
-          text: m.text,
-          time: m.created_at,
-        }));
-      return res.json({ callSid: sid, transcript: lines });
-    }
+    if (!dbEnabled) return res.status(503).json({ error: "Live call data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
     const callExists = await sql`SELECT call_sid FROM calls WHERE call_sid = ${sid} AND workspace_id = ${wsId} LIMIT 1`;
     if (!callExists.length) return res.status(404).json({ error: "Call not found.", callSid: sid });
@@ -271,10 +257,7 @@ export function registerCallRoutes(app: Express, deps: CallRouteDeps): void {
   app.get("/api/calls/:sid/recording", dashboardAuth, async (req: Request, res: Response) => {
     const { sid } = req.params;
     if (!/^CA[a-f0-9]{32}$/i.test(sid)) return res.status(400).json({ error: "Invalid call SID format." });
-    if (!dbEnabled) {
-      if (!getMockCall(sid)) return res.status(404).json({ error: "Call not found." });
-      return res.json({ recordings: [] });
-    }
+    if (!dbEnabled) return res.status(503).json({ error: "Live call data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
     const callRows = await sql`SELECT call_sid FROM calls WHERE call_sid = ${sid} AND workspace_id = ${wsId} LIMIT 1`;
     if (!callRows.length) return res.status(404).json({ error: "Call not found." });

@@ -470,7 +470,9 @@ The slight difference is expected because raw grep counts helper or non-OpenAPI 
 npm run -s check:openapi
 ```
 
-### 4.5 No-DB Demo Mode
+### 4.5 No-DB Demo Mode — Superseded
+
+> **Superseded by the current no-fabricated-data policy.** The fixture-backed demo behavior below was removed. With no durable database, current SMIRK customer-facing APIs return `DURABLE_STORAGE_UNAVAILABLE`; real demos use an isolated workspace with approved data and a controlled proof call.
 
 No-DB mode allows the app to boot without `DATABASE_URL`.
 
@@ -484,7 +486,7 @@ Purpose:
 Verified by:
 
 ```bash
-npm run -s check:no-db-demo-mode
+npm run -s check:no-db-storage-guard
 ```
 
 Current evidence:

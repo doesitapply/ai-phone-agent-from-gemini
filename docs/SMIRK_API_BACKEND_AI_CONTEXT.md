@@ -18,7 +18,6 @@ Use these files first:
 | `src/routes/*.ts` | Modular API handlers by product/backend domain. |
 | `src/saas.ts` | Workspaces, plans, usage limits, invites, activation events, Stripe webhook handling, and SaaS schema. |
 | `src/db.ts` | Postgres connection and schema initialization. |
-| `src/mock-db.ts` and `src/data/mockDbData.json` | No-DB local demo mode data and helpers. |
 | `src/App.tsx` | React app, public pages, customer dashboard, operator surfaces, and plan-gated navigation. |
 | `README.md` | Human-facing status, product scope, verification commands, and market framing. |
 | `SMIRK_FOR_DUMMIES.md` | Plain-English product state and limitations. |
@@ -119,7 +118,7 @@ There are four practical auth classes.
 
 Important middleware:
 
-- `dashboardAuth` in `server.ts`: accepts operator `X-Api-Key` or workspace bearer token. In No-DB mode it also accepts the mock workspace token and allows `GET /api/workspaces` to bootstrap the local demo.
+- `dashboardAuth` in `server.ts`: accepts an operator `X-Api-Key` or a workspace bearer token. A disconnected database never grants a fixture workspace identity.
 - `requireOperator` in `server.ts`: requires operator auth mode. Workspace users should never pass this.
 - `requireProSuite` in `server.ts`: lets operators through, lets `pro`, `enterprise`, and `agency` workspaces through, and blocks Basic/Starter workspaces with `code: "PRO_SUITE_REQUIRED"`.
 - `api-middleware.ts`: applies route-specific rate limits and Twilio validation middleware.
@@ -163,7 +162,7 @@ npm run -s check:auth-regression
 | `server.ts` | `/api/twilio/incoming`, `/api/twilio/process`, `/health`, `/livez` | Twilio/public health | Core voice webhook loop, AI turn processing, health checks. |
 | `buyer-routes.ts` | `/api/version`, `/api/health`, `/api/first-dollar-readiness`, `/api/pricing`, `/api/checkout/create`, `/api/stripe/webhook`, `/api/invite/:token` | Public/signed/Stripe | Buyer pricing, checkout, Stripe webhook, invite acceptance. |
 | `provisioning-routes.ts` | `/api/provisioning/*`, `/api/provision/workspace` | Public intake, operator review, provisioning secret | Signup/provisioning requests, checkout status, workspace creation. |
-| `workspace-admin-routes.ts` | `/api/workspaces*` | Operator except No-DB bootstrap | Workspace CRUD, invites, members, usage, API key retrieval. |
+| `workspace-admin-routes.ts` | `/api/workspaces*` | Operator or authenticated workspace | Workspace CRUD, invites, members, usage, API key retrieval. |
 | `workspace-overview-routes.ts` | `/api/workspace-overview` | Workspace/operator | Dashboard overview, masked workspace data, plan limits, setup readiness. |
 | `workspace-profile-routes.ts` | `/api/workspace/profile`, `/api/workspace/generate-prompt`, `/api/workspace/website-scan`, `/api/workspace/greeting-preview`, `/api/workspace/provision-number` | Workspace/operator | Business identity, alert routing, AI prompt/greeting helpers, website scan, Twilio number provisioning. |
 | `workspace-activation-routes.ts` | `/api/workspace/proof-call-request`, `/api/workspace/activation-events`, `/api/workspace/activation-status` | Workspace/operator | Customer activation/proof-call workflow. |
@@ -223,28 +222,16 @@ High-level entities another agent should understand:
 
 Every tenant-scoped query should use the resolved workspace ID. Cross-workspace leakage is a launch-blocking bug.
 
-## No-DB Local Demo Mode
+## No-DB Behavior
 
-If `DATABASE_URL` is absent, `DB_ENABLED` is false and the app should boot in local demo mode.
-
-Source files:
-
-- `src/mock-db.ts`
-- `src/data/mockDbData.json`
-
-Behavior:
-
-- Mock workspace token: `smirk_mock_basic_demo_key`.
-- Mock workspace plan: `starter`.
-- Dashboard data comes from high-ticket trade scenarios in `mockDbData.json`.
-- Secrets are masked on workspace overview.
-- Customer mode should load without Postgres.
-- Basic/Starter plan boundaries should still hold.
+If `DATABASE_URL` is absent, `DB_ENABLED` is false. The application can boot for development diagnostics, but routes that require persistent workspace, call, task, contact, compliance, proof, recovery, or configuration state return `DURABLE_STORAGE_UNAVAILABLE` rather than fabricated workspace data. No fixture workspace identity, contact, transcript, task, metric, DNC state, or proof result is available through the application.
+- No workspace or customer dashboard can load without a real durable store.
+- Non-persistent diagnostics remain distinct from customer workflows.
 
 Validate with:
 
 ```bash
-npm run -s check:no-db-demo-mode
+npm run -s check:no-db-storage-guard
 ```
 
 ## Main Flows
@@ -364,7 +351,7 @@ Use the narrowest check for the thing you changed:
 
 ```bash
 npm run -s check:openapi
-npm run -s check:no-db-demo-mode
+npm run -s check:no-db-storage-guard
 npm run -s check:customer-dashboard
 npm run -s check:plan-boundaries
 npm run -s check:auth-regression

@@ -40,13 +40,13 @@ Source of truth is always the commands in this section. The snapshot below recor
 | Dependency audit | Must be checked | `npm audit --audit-level=moderate` should return `found 0 vulnerabilities`. |
 | Customer dashboard scope | Contract-tested | `npm run -s check:customer-dashboard` confirms customer UI hides operator surfaces and sanitizes owner-visible failures. |
 | Plan boundaries | Contract-tested | `npm run -s check:plan-boundaries` confirms Starter/Basic and Pro/Agency pricing, provisioning, and entitlement behavior stay aligned. |
-| No-DB local demo | Contract-tested | `npm run build && npm run -s check:no-db-demo-mode` proves local demo calls, contacts, transcripts, tasks, and review items load without Postgres. |
+| No-DB storage guard | Contract-tested | `npm run build && npm run -s check:no-db-storage-guard` proves customer-facing data routes fail closed rather than serving fixture calls, contacts, transcripts, tasks, or review items without Postgres. |
 | Local Basic isolation proof | Proven locally | `npm run -s check:basic-chaos` passed against a temporary local Postgres-backed Starter workspace with explicit provisioning and cleanup. |
 | Live Basic entitlement proof | Needs current deploy plus real/approved Basic token | `npm run -s check:live-workspace-entitlements` has proven the live Pro path. A real or approved temporary Starter/Basic token is still required for live Basic chaos proof after production runs the current commit. |
 | Stripe/provisioning proof | Guarded | Stripe webhook/provisioning smoke proof is approval-gated and must match the current live deploy artifact. |
 | Smoke cleanup | Guarded | `APP_URL=https://www.smirkcalls.com npm run cleanup:smoke-workspaces` should match 0 smoke workspaces before first customer. |
 
-Blunt status: SMIRK is no longer just "close." The local final-mile implementation is proven, including No-DB demo mode, customer dashboard partitioning, and local Basic chaos isolation. The remaining launch blocker is live parity: production must run the current commit before the signed Stripe proof, dashboard proof, post-call proof, and live Basic chaos proof can honestly count.
+Blunt status: SMIRK has a locally verified implementation boundary, including fail-closed no-database behavior, customer dashboard partitioning, and local Basic chaos isolation. The remaining launch blocker is live parity: production must run the current commit before the signed Stripe proof, dashboard proof, post-call proof, and live Basic chaos proof can honestly count.
 
 For the cross-system operating model, read [`docs/VELVET_SMIRK_CLOSED_LOOP.md`](docs/VELVET_SMIRK_CLOSED_LOOP.md) first. It is the canonical description of what is live, what is target architecture, and what must be recorded before Velvet + SMIRK can claim attributable revenue.
 
@@ -296,15 +296,13 @@ http://localhost:3000
 
 ### No-DB Mode
 
-If `DATABASE_URL` is missing, the server still boots and opens a local Basic demo workspace at:
+If `DATABASE_URL` is missing, the server can still boot for development diagnostics, but persistence-backed dashboard and workspace routes return an explicit unavailable response:
 
 ```text
-http://localhost:3000/dashboard
+DURABLE_STORAGE_UNAVAILABLE
 ```
 
-The demo uses `src/data/mockDbData.json` and includes realistic Reno trade scenarios: emergency plumbing, urgent HVAC, and commercial electrical. Calls, contacts, transcripts, DNC status, and callback tasks load without Postgres.
-
-No-DB mode is still read-only. Creating, deleting, or mutating persistence-backed records requires a real database.
+SMIRK does not serve fixture calls, contacts, tasks, DNC entries, transcripts, dashboard metrics, workspace profiles, or proof states in place of durable customer data. Connect a real database before using any call-handling, workspace, dashboard, compliance, or recovery workflow.
 
 ## Environment
 
@@ -379,11 +377,11 @@ npm run -s check:customer-dashboard
 npm run -s check:plan-boundaries
 ```
 
-No-DB demo check:
+No-DB storage-integrity check:
 
 ```bash
 npm run build
-npm run -s check:no-db-demo-mode
+npm run -s check:no-db-storage-guard
 ```
 
 Basic isolation chaos check:

@@ -129,10 +129,10 @@ const landingBlock = landingStart >= 0 && landingEnd > landingStart ? app.slice(
 const submitStart = landingBlock.indexOf("const submitRequest = useCallback");
 const submitEnd = landingBlock.indexOf("const lookupRequest = useCallback", submitStart);
 const submitBlock = submitStart >= 0 && submitEnd > submitStart ? landingBlock.slice(submitStart, submitEnd) : "";
-const checkoutCall = "await startCheckout(selected, { businessName, ownerEmail, ownerPhone });";
+const checkoutCall = "await startCheckout(selected, { businessName, ownerEmail, ownerPhone, termsAccepted });";
 const checkoutCallIndex = submitBlock.indexOf(checkoutCall);
 const fallbackCaptureIndex = submitBlock.indexOf("const body = await captureProvisioningRequest();", checkoutCallIndex);
-expect("paid funnel does not create false operator work before checkout", checkoutCallIndex >= 0 && fallbackCaptureIndex > checkoutCallIndex && submitBlock.includes(`${checkoutCall}\n          return;`) && submitBlock.split(checkoutCall).length === 2 && submitBlock.includes("if (selected && !promoApplied)"));
+expect("paid funnel does not create false operator work before checkout", checkoutCallIndex >= 0 && fallbackCaptureIndex > checkoutCallIndex && submitBlock.includes(`${checkoutCall}\n          return;`) && submitBlock.split(checkoutCall).length === 2 && submitBlock.includes("if (selected)"));
 expect("operator paid signal no longer treats plan selection as payment", !provisioning.includes("pr.requested_plan IN ('starter', 'pro', 'enterprise') THEN TRUE"));
 expect("operator paid signal requires verified live activation event", provisioning.includes("FROM activation_events ae") && provisioning.includes("ae.detail ->> 'stripe_livemode' = 'true'") && provisioning.includes("ae.detail ->> 'payment_status' = 'paid'"));
 expect("current billing state overrides historical paid signal", provisioning.includes("const paymentActive = hasWorkspace") && provisioning.includes('row.subscription_status === "active"'));

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { dispatchTool } from "../src/function-calling.ts";
 
@@ -23,4 +24,12 @@ test("voice callers cannot mutate dashboard tasks even when they claim owner aut
 test("caller task lookup reaches normal tool handling rather than the mutation guard", async () => {
   const result = await dispatchTool("list_open_tasks", { scope: "dashboard" }, ctx);
   assert.notEqual(result.error, "VOICE_TASK_MUTATION_REQUIRES_DASHBOARD_AUTH");
+});
+
+test("live-call instructions keep existing task and handoff control dashboard-only", () => {
+  const source = readFileSync(new URL("../src/function-calling.ts", import.meta.url), "utf8");
+  assert.match(source, /TASK CONTROL: A caller cannot clear, close, complete, cancel, reassign, or otherwise change existing tasks or handoffs by voice/i);
+  assert.match(source, /existing task changes require the authenticated dashboard/i);
+  assert.doesNotMatch(source, /TASK CLEANUP:.*complete_open_tasks/is);
+  assert.doesNotMatch(source, /complete or cancel stale open tasks before ending/i);
 });

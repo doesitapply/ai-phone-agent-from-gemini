@@ -237,7 +237,6 @@ const requireProofCallSchemaReady = (_req: Request, res: Response, next: NextFun
 
 // ── Import modules (after env is loaded) ─────────────────────────────────────
 import { sql, initSchema, DB_ENABLED } from "./src/db.js";
-import { getMockWorkspace } from "./src/mock-db.js";
 import { resolveContact, buildCallerContext, buildOutboundContext } from "./src/contacts.js";
 import { runPostCallIntelligence } from "./src/intelligence.js";
 import { logEvent } from "./src/events.js";
@@ -644,26 +643,7 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
     return next();
   }
 
-  const noDbPublicDemoEnabled = !DB_ENABLED && (!IS_PROD || env.ALLOW_NO_DB_PUBLIC_DEMO === "true");
-  if (noDbPublicDemoEnabled && req.method === "GET" && req.path === "/api/workspaces") {
-    (req as any).authMode = "workspace";
-    const mockWorkspace = getMockWorkspace();
-    (req as any).workspaceAuth = mockWorkspace;
-    (req.headers as any)["x-workspace-id"] = String(mockWorkspace.id);
-    return next();
-  }
-
   const workspaceToken = readBearerToken(req);
-  if (noDbPublicDemoEnabled && workspaceToken) {
-    const mockWorkspace = getMockWorkspace();
-    if (workspaceToken === mockWorkspace.api_key) {
-      if (!isNoDbPublicDemoRequestAllowed(req)) return rejectNoDbPublicDemoRequest(req, res);
-      (req as any).authMode = "workspace";
-      (req as any).workspaceAuth = mockWorkspace;
-      (req.headers as any)["x-workspace-id"] = String(mockWorkspace.id);
-      return next();
-    }
-  }
 
   if (workspaceToken) {
     try {
@@ -693,14 +673,6 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
     }
   }
 
-  if (noDbPublicDemoEnabled && !operatorApiKey && !demoOperatorApiKey) {
-    if (!isNoDbPublicDemoRequestAllowed(req)) return rejectNoDbPublicDemoRequest(req, res);
-    const mockWorkspace = getMockWorkspace();
-    (req as any).authMode = "workspace";
-    (req as any).workspaceAuth = mockWorkspace;
-    (req.headers as any)["x-workspace-id"] = String(mockWorkspace.id);
-    return next();
-  }
   if (!operatorApiKey && !demoOperatorApiKey && !IS_PROD) return next();
   if (!operatorApiKey && !demoOperatorApiKey) {
     log("error", "Production operator authentication is not configured", {

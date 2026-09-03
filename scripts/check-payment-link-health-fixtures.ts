@@ -50,7 +50,7 @@ assert.deepEqual(safeRotation.starterFulfillmentIds, ["plink_starter_live_fixtur
 
 const proOnly = evaluatePaymentLinkConfiguration(pro);
 assert.equal(proOnly.ready, false, "one complete Pro pair must not satisfy Starter-only launch health");
-assert.deepEqual(proOnly.configuredCorePlans, ["pro"]);
+assert.deepEqual(proOnly.configuredCorePlans, []);
 assert.ok(proOnly.blockers.includes("starter-payment-link-pair-missing"));
 assert.ok(proOnly.blockers.includes("pro-payment-link-out-of-first-dollar-scope"));
 

@@ -18,7 +18,7 @@ Verified locally from the current checkout:
 | Plan boundary contract | `npm run -s check:plan-boundaries` passed. |
 | Contact/DNC contract | `npm run -s check:contact-management` passed. |
 | First-dollar scope | `npm run -s check:first-dollar-offer-scope` passed. |
-| No-DB demo reads | `npm run -s check:no-db-demo-mode` passed with local demo calls, contacts, tasks, transcripts, and review items. |
+| No-DB storage guard | `npm run -s check:no-db-storage-guard` verifies that customer-facing data routes fail closed without durable storage. |
 | Local Basic chaos | Temporary local Postgres-backed Starter workspace provisioning passed; 36 Basic-allowed requests and 96 Pro-restricted requests returned the expected boundaries, then cleanup succeeded. |
 | Durable Twilio intake buffer | `npm run -s check:webhook-buffer` verifies raw inbound Twilio payload buffering, guarded replay, and stale-buffer lag monitoring without blocking call handling. |
 | Final-mile audit | `npm run -s check:smirk-1000-final-mile` reports local final-mile completion separately from production readiness. |
@@ -29,7 +29,7 @@ Target score: `1000 / 1000`.
 
 | Milestone | Points | Status | Proof command or artifact |
 | --- | ---: | --- | --- |
-| High-fidelity No-DB demo mode | +35 | Implemented locally | `npm run build && npm run -s check:no-db-demo-mode` |
+| Fail-closed no-database storage guard | +35 | Implemented locally | `npm run build && npm run -s check:no-db-storage-guard` |
 | Handyman Shield UI partition | +50 | Implemented and contract-tested | `npm run -s check:customer-dashboard && npm run -s check:plan-boundaries` |
 | Basic chaos validation | +40 | Proven locally with approved temp provisioning; Stripe-created live Basic proof still pending | `npm run -s check:basic-chaos` with a real Basic token, explicit temp provisioning, or `SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1` after approved Stripe smoke |
 | Safe local acquisition audit loop | Supporting | Implemented as manual-review drafts | `python3 scripts/outbound_auditor.py --targets docs/outbound-auditor-targets.example.json --output /tmp/smirk-audit-test` |
@@ -40,7 +40,7 @@ Completion condition for this phase:
 
 ```bash
 npm run build
-npm run -s check:no-db-demo-mode
+npm run -s check:no-db-storage-guard
 npm run -s check:customer-dashboard
 npm run -s check:plan-boundaries
 npm run -s check:contact-management
@@ -80,7 +80,7 @@ Goal: make SMIRK understandable to a contractor in 30 seconds.
 | Pro dashboard | Full customer suite without operator-only machinery. |
 | Operator cockpit | Keep workspaces, logs, compliance, settings, voice config, health, provisioning, and deploy/proof tools behind operator auth. |
 | Onboarding | Reduce customer setup to business identity, protected phone number, owner alert email/phone, and proof call. |
-| Demo | Local No-DB dashboard should open without Postgres and show believable emergency-service scenarios. |
+| Demo | A real, isolated demo workspace should use approved business data and a controlled proof call; disconnected storage must never substitute fixture records. |
 
 ## Phase 3: First Revenue Loop
 
@@ -91,7 +91,7 @@ Goal: convert the product from a proven repository into a repeatable sales motio
 | Pick one niche | Start with plumbing, HVAC, electrical, roofing, or handyman. |
 | Create one simple pitch | "We catch missed calls and turn them into callback-ready jobs." |
 | Use local audit drafts | Generate drafts only from manually curated targets. Review before sending. |
-| Demo from No-DB mode | Show calls, contacts, transcripts, DNC review, and tasks without external billing footprints. |
+| Demo from a controlled workspace | Show only real or explicitly operator-entered demo data, then verify the isolated call, callback, alert, and dashboard evidence. |
 | Close first Starter buyer | The $197/month paid checkout creates a workspace, invite works, dashboard opens, and callback proof appears. |
 | Run post-sale proof | Verify owner alert, callback task, dashboard proof, cleanup safety, and live parity. |
 
@@ -133,7 +133,7 @@ Recommended sequence:
 
 ## Next Concrete Actions
 
-1. Run `npm run build && npm run -s check:no-db-demo-mode`.
+1. Run `npm run build && npm run -s check:no-db-storage-guard`.
 2. Deploy the current commit so live parity is restored.
 3. Run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` against production after deploy.
 4. Provision or identify one live Starter/Basic workspace.

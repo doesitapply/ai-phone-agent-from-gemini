@@ -43,7 +43,10 @@ type ProvisioningRouteDeps = {
 
 const SMIRK24_PROMO_CODE = "SMIRK24";
 const normalizePromoCode = (value: unknown) => String(value || "").trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
-const isSmirk24Promo = (value: unknown) => normalizePromoCode(value) === SMIRK24_PROMO_CODE;
+// Public promo provisioning is retired until an owner-approved offer, policy,
+// payment binding, usage policy, and proof path exist. Historical records stay
+// readable, but no public request can create a free or trial workspace.
+const isSmirk24Promo = (_value: unknown) => false;
 const getSmirk24ExpiresAt = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 const normalizeStripeCheckoutSessionId = (value: unknown) => {
   const sessionId = String(value || "").trim();

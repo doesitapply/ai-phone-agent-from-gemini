@@ -30,6 +30,25 @@ looks_placeholder_token() {
 }
 
 main() {
+  # A command or test harness may deliberately supply its own token. Do not
+  # override that explicit boundary by reading a developer-machine credential
+  # file; this keeps dry-run fixtures isolated from real local secrets.
+  if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
+    if looks_placeholder_token "$RAILWAY_API_TOKEN"; then
+      echo "FAIL placeholder RAILWAY_API_TOKEN supplied by environment; refusing to use it" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if [ -n "${RAILWAY_TOKEN:-}" ]; then
+    if looks_placeholder_token "$RAILWAY_TOKEN"; then
+      echo "FAIL placeholder RAILWAY_TOKEN supplied by environment; refusing to use it" >&2
+      return 1
+    fi
+    export RAILWAY_API_TOKEN="$RAILWAY_TOKEN"
+    return 0
+  fi
+
   for env_file in "${ENV_FILES[@]}"; do
     [ -f "$env_file" ] || continue
     railway_api_token="$(extract_value "$env_file" "RAILWAY_API_TOKEN" || true)"

@@ -2,7 +2,7 @@ import express, { type Express, type Request, type RequestHandler, type Response
 import Stripe from "stripe";
 import type { Workspace } from "../saas.js";
 import { hasWorkspaceBillingEntitlement } from "../billing-safety.js";
-import { foundersPaymentLinkIdFromEnv, hasSmirkNativeCheckoutIdentity, isApprovedSyntheticPaidHandoffSmoke, SMIRK_FOUNDERS_CHECKOUT_AMOUNT } from "../checkout-safety.js";
+import { hasSmirkNativeCheckoutIdentity, isApprovedSyntheticPaidHandoffSmoke, SMIRK_FOUNDERS_CHECKOUT_AMOUNT } from "../checkout-safety.js";
 import { firstSafePublicHttpsUrl, normalizeTrustedProductionAppUrl, resolveTrustedProductionAppOrigin } from "../public-url-safety.js";
 import { normalizeStrictMailbox, parseStrictMailboxList } from "../email-safety.js";
 import { evaluateCustomerPolicyApproval, verifyPublishedCustomerPolicyDocumentsForPlan } from "../customer-policy-approval.js";
@@ -359,7 +359,10 @@ export async function verifyCheckoutPaymentLinkBeforeFulfillment(
   const env = options.env || process.env;
   // Founders lane: an invite-only $99/month Starter Payment Link recognized by
   // exact ID from STRIPE_PAYMENT_LINK_FOUNDERS_ID. Absent env var = lane off.
-  const foundersPaymentLinkId = foundersPaymentLinkIdFromEnv(env);
+  // The discounted founders lane is retired. A configured legacy ID must not
+  // become a fulfillment authority again without an owner-approved offer,
+  // policy version, and separately reviewed payment binding.
+  const foundersPaymentLinkId = "";
   const configuredPaymentLinkCandidates = new Set([
     ...candidateStarterPaymentLinkFulfillmentIds({
       currentId: env.STRIPE_PAYMENT_LINK_STARTER_ID,
@@ -761,7 +764,9 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
   app.get("/api/pricing", async (_req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
     const readiness = await getPublicBuyerReadiness(env, isProd);
-    const plans = getPublicPricingPlans(env).map(({ checkout_url: _checkoutUrl, ...plan }) => {
+    const plans = getPublicPricingPlans(env)
+      .filter((plan) => plan.id === FIRST_DOLLAR_SELF_SERVE_PLAN)
+      .map(({ checkout_url: _checkoutUrl, ...plan }) => {
       const checkoutAvailable = plan.id === FIRST_DOLLAR_SELF_SERVE_PLAN
         && readiness.firstDollarReadyByPlan[plan.id as StripeCheckoutPlan] === true;
       return {
@@ -775,7 +780,7 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
             ? readiness.enterpriseUsagePolicyBlockers[0]?.message || "Enterprise usage policy approval is required before checkout."
             : readiness.policyBlockers[0]?.message || "This plan's recurring checkout is not ready.",
       };
-    });
+      });
     res.json({
       plans,
       policy_links: readiness.policyLinks,

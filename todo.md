@@ -30,3 +30,20 @@
 - [x] Rebuild public landing, pricing, comparison, industry, policy, and setup surfaces around clear missed-call-recovery value and only verified claims; approved policy bodies remain byte-stable by design.
 - [x] Rebuild the signed-in owner desk into a mobile-first Calls, Tasks, Alerts, and Settings operating model without breaking existing call, handoff, and proof functionality.
 - [x] Validate desktop and mobile visual hierarchy, keyboard/accessibility basics, API behavior, and no-regression launch readiness before any production release.
+
+## Commercial Packaging and Launch Integrity Audit
+
+- [x] Research direct competitors’ current offer structure, public prices, usage limits, onboarding charges, and customer activation model.
+- [x] Audit all public SMIRK packages, price references, checkout bindings, and policy documents for conflicting or generic SaaS packaging.
+- [ ] Remove or quarantine disabled Pro, Agency, founders, and promotional purchase paths that conflict with the approved single-offer launch, unless a new owner-approved package contract and payment binding replaces them.
+- [x] Define an outcome-based offer architecture for voicemail recovery, full phone-operations suite, and paid implementation without inventing unvalidated value claims.
+- [x] Audit API routes and interface flows for placeholder, mock, fixture, seed, demo, or fabricated customer data that can reach a user-facing surface.
+- [x] Remove all production mock-data fallbacks from workspace, dashboard, call, contact, task, and profile routes; return an explicit unavailable state instead of fabricated records when durable storage is unavailable.
+- [ ] Exercise authenticated and public launch-critical endpoints against the live service after Railway has an active current deployment, and record failures precisely.
+- [x] Trace each launch-critical pipeline from checkout through provisioning, call intake, callback task, alert, and dashboard display; identify unproven transitions.
+- [ ] Implement only the approved package, pricing, and reliability changes with payment-provider and regression-test verification.
+- [x] Make guarded Railway deployment-setter fixtures respect an already supplied synthetic environment token so local safety tests neither require nor read a real Railway credential.
+- [x] Remove any remaining voice-prompt instruction that lets a caller clear, complete, cancel, or otherwise mutate existing dashboard tasks or handoffs, and add a regression that prevents its reintroduction.
+- [ ] Define and apply one distinctive earned hacker-operations visual signature across public pages and the owner desk, tied to real system state and without decorative fake metrics, inaccessible contrast, or generic-template cues.
+- [ ] Validate the visual signature at desktop and mobile sizes against contrast, readability, and action-completion criteria.
+- [ ] Make dark graphite the primary premium presentation and redesign the alternate theme as warm stone/graphite rather than bright white, preserving high contrast and accessible controls.

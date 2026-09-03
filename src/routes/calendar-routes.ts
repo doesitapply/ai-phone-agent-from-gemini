@@ -30,7 +30,7 @@ export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): v
   `;
 
   app.get("/api/appointments", dashboardAuth, async (req: Request, res: Response) => {
-    if (!dbEnabled) return res.json({ appointments: [], total: 0 });
+    if (!dbEnabled) return res.status(503).json({ error: "Live appointment data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
     const { status, contact_id, limit = "50" } = req.query as Record<string, string>;
     const lim = Math.min(parseInt(limit) || 50, 200);
@@ -68,7 +68,7 @@ export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): v
   });
 
   app.get("/api/appointments/:id", dashboardAuth, async (req: Request, res: Response) => {
-    if (!dbEnabled) return res.status(404).json({ error: "Appointment not found." });
+    if (!dbEnabled) return res.status(503).json({ error: "Live appointment data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid appointment ID." });
     const wsId = getWorkspaceId(req);

@@ -17,7 +17,7 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
   const { dashboardAuth, requireOperator, sql, dbEnabled, getWorkspaceId, velvet } = deps;
 
   app.get("/api/handoffs", dashboardAuth, async (req: Request, res: Response) => {
-    if (!dbEnabled) return res.json({ handoffs: [] });
+    if (!dbEnabled) return res.status(503).json({ error: "Live handoff data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
     const handoffs = await sql`
       SELECT
@@ -52,16 +52,10 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
   });
 
   app.get("/api/velvet/portal", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    if (!dbEnabled) {
-      return res.json({
-        receiverConfigured: velvet.receiverConfigured,
-        workspaceId: velvet.workspaceId,
-        portalUrl: velvet.portalUrl,
-        sourceAttributionAvailable: false,
-        pendingCount: 0,
-        recentHandoffs: [],
-      });
-    }
+    if (!dbEnabled) return res.status(503).json({
+      error: "Velvet handoff data is unavailable because durable storage is not connected.",
+      code: "DURABLE_STORAGE_UNAVAILABLE",
+    });
     const wsId = getWorkspaceId(req);
     const [countRows, handoffs] = await Promise.all([
       sql<{ count: string }[]>`SELECT COUNT(*)::TEXT AS count FROM handoffs WHERE workspace_id = ${wsId} AND status = 'pending'`,
@@ -160,7 +154,7 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
   });
 
   app.get("/api/summaries", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    if (!dbEnabled) return res.json([]);
+    if (!dbEnabled) return res.status(503).json({ error: "Live call summaries are unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
     const summaries = await sql`
       SELECT

@@ -35,7 +35,7 @@ export function registerRecoveryRoutes(app: Express, deps: RecoveryRouteDeps) {
 
   app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response) => {
     try {
-      if (!dbEnabled) return res.json({ days: 30, items: [] });
+      if (!dbEnabled) return res.status(503).json({ error: "Live recovery data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
       const wsId = getWorkspaceId(req);
       const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || "30"), 10) || 30));
 
@@ -188,6 +188,7 @@ export function registerRecoveryRoutes(app: Express, deps: RecoveryRouteDeps) {
   });
 
   app.post("/api/recovery/direct-dial", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Recovery dialing requires durable storage for its audit trail.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const { phone_number, contact_id } = req.body as { phone_number: string; contact_id?: number };
     if (!phone_number) return res.status(400).json({ error: "phone_number required" });
     const twilioClient = getTwilioClient();
@@ -217,7 +218,7 @@ export function registerRecoveryRoutes(app: Express, deps: RecoveryRouteDeps) {
 
   app.get("/api/recovery/stats", dashboardAuth, async (req: Request, res: Response) => {
     try {
-      if (!dbEnabled) return res.json({ stats: { open_count: 0, callbacks_started: 0, closed_7d: 0 } });
+      if (!dbEnabled) return res.status(503).json({ error: "Live recovery statistics are unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
       const wsId = getWorkspaceId(req);
       const [totals] = await sql<any[]>`
         SELECT

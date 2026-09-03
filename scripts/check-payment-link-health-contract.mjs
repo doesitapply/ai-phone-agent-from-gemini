@@ -16,7 +16,7 @@ expect(helper.includes('from "./stripe-payment-link-readiness.js"'), "health con
 expect(helper.includes('from "./payment-link-fulfillment-ids.js"') && helper.includes("evaluateStarterPaymentLinkFulfillmentIds"), "health configuration must require the shared exact current/historical fulfillment-ID allowlist");
 expect(helper.includes('providerVerification: "not_checked"'), "configuration evaluator must explicitly avoid claiming provider verification");
 expect(helper.includes("starter-payment-link-pair-missing") && helper.includes("payment-link-pair-incomplete"), "configuration evaluator must require the exact Starter pair and reject partial offers");
-expect(helper.includes("pro-payment-link-out-of-first-dollar-scope") && helper.includes("enterprise-payment-link-out-of-first-dollar-scope"), "configuration evaluator must keep broader offers outside the Starter-only launch");
+expect(helper.includes('if (plan !== "starter")') && helper.includes("payment-link-deferred-until-post-first-dollar-review") && helper.includes("deferredPlanWarnings"), "configuration evaluator must keep broader offers outside the Starter-only launch");
 
 expect(systemHealth.includes("evaluatePaymentLinkConfiguration(env"), "operator system health must use the shared Starter-only launch configuration predicate");
 expect(systemHealth.includes("provider verification is not checked here"), "operator system health must disclose its configuration-only scope");

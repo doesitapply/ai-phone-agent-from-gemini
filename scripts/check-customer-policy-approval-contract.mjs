@@ -93,14 +93,14 @@ expect("packet policy-version fixture rejects unproven, process-sourced, and fai
   && legacyUnprovenEvidence.provenanceVerified === false
   && legacyUnprovenEvidence.version === "");
 
-expect("production manifest is checked in and explicitly unapproved",
-  manifest.includes('approvalState: "not_approved"')
-  && manifest.includes("approved: false")
-  && manifest.includes("policyVersion: null"));
-expect("core approval requires explicit tax cancellation and proration choices",
-  manifest.includes("taxMode: null")
-  && manifest.includes("cancellationMode: null")
-  && manifest.includes("cancellationProrationBehavior: null")
+expect("production manifest is checked in and explicitly approved for the published Starter contract",
+  manifest.includes('approvalState: "approved"')
+  && manifest.includes("approved: true")
+  && manifest.includes('policyVersion: "1.0.0"'));
+expect("core approval records explicit tax cancellation and proration choices while rejecting missing choices",
+  manifest.includes('taxMode: "stripe_automatic_tax_disabled"')
+  && manifest.includes('cancellationMode: "at_period_end"')
+  && manifest.includes('cancellationProrationBehavior: "none"')
   && manifest.includes("customer_policy_tax_mode_missing")
   && manifest.includes("customer_policy_cancellation_mode_missing")
   && manifest.includes("customer_policy_cancellation_proration_missing")
@@ -115,9 +115,10 @@ expect("Starter approval binds the owner-approved hard stop to runtime limits",
   && manifest.includes("PLAN_LIMITS.starter?.calls !== starterUsageRule?.monthlyCallHardCap")
   && fixtures.includes("invalidStarterPolicy")
   && limits.includes('starter: Object.freeze({ calls: 500, minutes: 1000'));
-for (const documentName of ["terms", "privacy", "cancellationRefund", "billingManagement", "support", "dataConsent"]) {
+for (const [documentName, path] of [["terms", "terms"], ["privacy", "privacy"], ["cancellationRefund", "cancellation-refund"], ["billingManagement", "billing-management"], ["support", "support"], ["dataConsent", "data-consent"]]) {
   expect(`manifest requires versioned and digest-bound ${documentName} publication`,
-    manifest.includes(`${documentName}: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null })`));
+    manifest.includes(`${documentName}: Object.freeze({ version: "1.0.0", url: "https://smirkcalls.com/policies/${path}-v1.0.0", contentSha256:`)
+    && manifest.includes("versionMarker:"));
 }
 expect("env-only policy approval cannot open checkout",
   buyerRoutes.includes("evaluateCustomerPolicyApproval(customerPolicyVersion)")

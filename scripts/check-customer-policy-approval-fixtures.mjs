@@ -12,8 +12,9 @@ const arbitraryEnvOnly = evaluateCustomerPolicyApproval("looks-approved-v1");
 assert.equal(arbitraryEnvOnly.ready, false, "an arbitrary regex-shaped env marker must never enable recurring checkout");
 assert.equal(arbitraryEnvOnly.coreReady, false);
 assert.equal(arbitraryEnvOnly.enterpriseUsageReady, false);
-assert.equal(arbitraryEnvOnly.blockers.some((item) => item.code === "customer_policy_owner_approval_missing"), true);
-assert.equal(CUSTOMER_POLICY_APPROVAL_MANIFEST.approvalState, "not_approved", "the checked-in production manifest must remain explicitly unapproved");
+assert.equal(arbitraryEnvOnly.coreBlockers.some((item) => item.code === "customer_policy_env_version_mismatch"), true);
+assert.equal(CUSTOMER_POLICY_APPROVAL_MANIFEST.approvalState, "approved", "the checked-in production manifest must record the approved Starter policy");
+assert.equal(CUSTOMER_POLICY_APPROVAL_MANIFEST.policyVersion, "1.0.0");
 
 const version = "fixture-policy-v1";
 const names = [

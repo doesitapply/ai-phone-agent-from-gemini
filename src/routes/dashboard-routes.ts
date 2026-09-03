@@ -1,5 +1,4 @@
 import type { Express, Request, RequestHandler, Response } from "express";
-import { getMockCallIntelligence, getMockCalls, getMockStats } from "../mock-db.js";
 import { buildDecisionReadyIncidents } from "../triage-policy.js";
 
 type DashboardRouteDeps = {
@@ -15,7 +14,10 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
 
   app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
     try {
-      if (!dbEnabled) return res.json(getMockStats());
+      if (!dbEnabled) return res.status(503).json({
+        error: "Live dashboard data is unavailable because durable storage is not connected.",
+        code: "DURABLE_STORAGE_UNAVAILABLE",
+      });
       const wsId = getWorkspaceId(req);
       const [totalCalls, activeCalls, totalContacts, openTasks, avgDuration, fieldsCaptured, dncCount, pendingHandoffs, todayCalls, weekCalls, bookedCalls, resolvedCalls, avgResolution] = await Promise.all([
         sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${wsId}`,
@@ -89,26 +91,10 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
 
   app.get("/api/call-intelligence", dashboardAuth, async (req: Request, res: Response) => {
     try {
-      if (!dbEnabled) {
-        const mock = getMockCallIntelligence();
-        return res.json({
-          windowDays: 30,
-          totalCalls: mock.totalPending,
-          summarizedCalls: mock.totalPending,
-          transcriptCalls: mock.totalPending,
-          recordedCalls: 0,
-          qaReadyCalls: mock.totalPending,
-          qaPassCalls: 1,
-          avgResolutionScore: 0.91,
-          summaryCoverage: 100,
-          transcriptCoverage: 100,
-          recordingCoverage: 0,
-          qaPassRate: 50,
-          outcomeCounts: { callback_needed: 2, lead_captured: 1 },
-          sentimentCounts: { urgent: 1, concerned: 1, neutral: 1 },
-          reviewQueue: mock.pendingReview,
-        });
-      }
+      if (!dbEnabled) return res.status(503).json({
+        error: "Live call intelligence is unavailable because durable storage is not connected.",
+        code: "DURABLE_STORAGE_UNAVAILABLE",
+      });
 
       const wsId = getWorkspaceId(req);
       const windowDays = Math.max(1, Math.min(90, parseInt(String(req.query.days || "30"), 10) || 30));
@@ -344,36 +330,11 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
 
   app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
     try {
-      if (!dbEnabled) {
-        const limit = Math.max(20, Math.min(200, parseInt(String(req.query.limit || "80"), 10) || 80));
-        const days = Math.max(1, Math.min(30, parseInt(String(req.query.days || "7"), 10) || 7));
-        const recentCalls = getMockCalls().slice(0, limit);
-        const recovery = recentCalls.filter((call: any) => call.outcome === "callback_needed");
-        const incidents = buildDecisionReadyIncidents(recovery.map((call: any) => ({
-          callSid: call.call_sid,
-          startedAt: call.started_at,
-          fromNumber: call.from_number || null,
-          contactName: call.contact_name || null,
-          durationSeconds: call.duration_seconds ?? null,
-          turnCount: call.turn_count ?? call.message_count ?? 0,
-          recoveryCallbackStartedAt: call.recovery_call_back_started_at || null,
-          recoveryClosedAt: call.recovery_closed_at || null,
-          recoveryStatus: call.recovery_status || "open",
-          outcome: call.outcome || null,
-          summary: call.call_summary || null,
-          nextAction: call.next_action || null,
-          sentiment: call.sentiment || null,
-        })));
-        return res.json({
-          ok: true,
-          noDbDemo: true,
-          window: { days, limit },
-          incidents,
-          recovery,
-          activeCalls: [],
-          recentCalls,
-        });
-      }
+      if (!dbEnabled) return res.status(503).json({
+        ok: false,
+        error: "Live triage data is unavailable because durable storage is not connected.",
+        code: "DURABLE_STORAGE_UNAVAILABLE",
+      });
       const wsId = getWorkspaceId(req);
       const limit = Math.max(20, Math.min(200, parseInt(String(req.query.limit || "80"), 10) || 80));
       const days = Math.max(1, Math.min(30, parseInt(String(req.query.days || "7"), 10) || 7));

@@ -1,6 +1,5 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import { getWorkspaceById, PLAN_LIMITS } from "../saas.js";
-import { getMockStats, getMockWorkspace } from "../mock-db.js";
 
 type WorkspaceOverviewRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -39,18 +38,10 @@ export function registerWorkspaceOverviewRoutes(app: Express, deps: WorkspaceOve
 
   app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = getWorkspaceId(req);
-    if (!dbEnabled) {
-      const workspace = getMockWorkspace();
-      const stats = getMockStats();
-      return res.json({
-        ...stats,
-        workspaces: [maskWorkspaceSecrets(workspace)],
-        plans: PLAN_LIMITS,
-        currentWorkspaceId: workspace.id || wsId,
-        customerMode: (req as any).authMode !== "operator",
-        noDbDemo: true,
-      });
-    }
+    if (!dbEnabled) return res.status(503).json({
+      error: "Live workspace overview is unavailable because durable storage is not connected.",
+      code: "DURABLE_STORAGE_UNAVAILABLE",
+    });
     const workspaceAuth = (req as any).workspaceAuth;
     if (workspaceAuth) {
       const workspace = await getWorkspaceById(workspaceAuth.id);

@@ -102,8 +102,7 @@ export function registerSmsRoutes(app: Express, deps: SmsRouteDeps): void {
 
   app.post("/api/sms/incoming", validateTwilio, async (req: Request, res: Response) => {
     if (!dbEnabled) {
-      res.type("text/xml");
-      return res.send("<Response></Response>");
+      return res.status(503).json({ error: "Inbound SMS persistence is unavailable.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     }
 
     const from = String(req.body?.From || req.body?.from || "");
@@ -119,7 +118,7 @@ export function registerSmsRoutes(app: Express, deps: SmsRouteDeps): void {
   });
 
   app.post("/api/sms/status", validateTwilio, async (req: Request, res: Response) => {
-    if (!dbEnabled) return res.sendStatus(204);
+    if (!dbEnabled) return res.status(503).json({ error: "SMS delivery persistence is unavailable.", code: "DURABLE_STORAGE_UNAVAILABLE" });
 
     const messageSid = String(req.body?.MessageSid || req.body?.SmsSid || "");
     const status = String(req.body?.MessageStatus || req.body?.SmsStatus || "");

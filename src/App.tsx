@@ -652,7 +652,7 @@ function PublicLandingPage() {
   const buyerDetailsReady = isPublicBuyerIdentityReady({ businessName, ownerEmail, ownerPhone });
   const statusEmailReady = isPublicOwnerEmailReady(statusEmail);
   const activationReady = Boolean(selected && !pricingError && buyerDetailsReady && termsAccepted);
-  const promoApplied = promoCode.trim().toUpperCase() === SMIRK24_PROMO_CODE;
+  const promoApplied = false;
 
   const submitRequest = useCallback(async () => {
     setSubmitState({ loading: true, status: null, error: null });
@@ -692,7 +692,7 @@ function PublicLandingPage() {
       // A normal paid buyer goes to Stripe first. Only capture a manual setup
       // request if checkout is unavailable, so the operator queue contains real
       // fallback work instead of one duplicate row for every checkout attempt.
-      if (selected && !promoApplied) {
+      if (selected) {
         try {
           await startCheckout(selected, { businessName, ownerEmail, ownerPhone, termsAccepted });
           return;
@@ -829,7 +829,6 @@ function PublicLandingPage() {
             <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email for updates and activation" type="email" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Owner phone for setup and activation" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
-            <input value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase())} placeholder="Promo code (optional)" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
           </div>
           <label className="mt-4 flex cursor-pointer items-start gap-3 border border-[#2f4637] bg-black/30 p-3 text-xs leading-5 text-gray-300">
             <input checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} type="checkbox" className="mt-1 h-4 w-4 accent-[#00e479]" />
@@ -839,9 +838,8 @@ function PublicLandingPage() {
           </label>
           <div className="mt-2 text-xs leading-5 text-gray-400">
             Use the owner email you want for login and status updates. Enter the main business line you want SMIRK to protect.
-            {promoApplied ? <span className="ml-1 font-semibold text-[#00e479]">SMIRK24 applied: setup fee waived and demo profile active for 24 hours.</span> : null}
           </div>
-          {!promoApplied && selected?.checkout_available !== true && selected?.checkout_blocker ? (
+          {selected?.checkout_available !== true && selected?.checkout_blocker ? (
             <div className="mt-3 border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-100">
               {selected.checkout_blocker} Start recovery will save a no-charge setup request and route you to human setup help.
             </div>
@@ -850,7 +848,7 @@ function PublicLandingPage() {
           <div className="mt-4 flex flex-wrap gap-3">
             <button onClick={submitRequest} disabled={submitState.loading || !activationReady} className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:opacity-60">
               {submitState.loading ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-              {pricingError ? "Plans unavailable" : promoApplied ? "Start free setup" : "Start recovery"}
+              {pricingError ? "Plans unavailable" : "Start recovery"}
             </button>
             {submitState.checkoutUrl ? (
               <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 border border-[#00e479]/50 bg-[#00e479]/10 px-5 py-3 text-sm font-semibold text-emerald-200">
@@ -12874,19 +12872,6 @@ export default function App() {
       const list = d.workspaces || [];
       setWorkspaces(list);
       if (list.length === 0) return;
-      if (d.noDbDemo && !workspaceSession && !operatorSession && !showOperatorLogin && window.location.pathname.startsWith("/dashboard")) {
-        const demoWorkspace = list[0];
-        const nextSession: WorkspaceSession = {
-          workspaceId: Number(demoWorkspace.id),
-          apiKey: "smirk_mock_basic_demo_key",
-          workspaceName: demoWorkspace.name || "Reno Trades Demo",
-          role: "owner",
-          plan: demoWorkspace.plan || "starter",
-        };
-        applyWorkspaceSession(nextSession, demoWorkspace.name);
-        selectWorkspace(demoWorkspace);
-        return;
-      }
       if (workspaceSession?.workspaceId) {
         const match = list.find((ws: any) => Number(ws.id) === Number(workspaceSession.workspaceId));
         if (match) {
