@@ -45,6 +45,8 @@
 - [ ] Implement only the approved package, pricing, and reliability changes with payment-provider and regression-test verification.
 - [x] Make guarded Railway deployment-setter fixtures respect an already supplied synthetic environment token so local safety tests neither require nor read a real Railway credential.
 - [x] Remove any remaining voice-prompt instruction that lets a caller clear, complete, cancel, or otherwise mutate existing dashboard tasks or handoffs, and add a regression that prevents its reintroduction.
-- [ ] Define and apply one distinctive earned hacker-operations visual signature across public pages and the owner desk, tied to real system state and without decorative fake metrics, inaccessible contrast, or generic-template cues.
-- [ ] Validate the visual signature at desktop and mobile sizes against contrast, readability, and action-completion criteria.
+- [x] Define and apply one distinctive earned hacker-operations visual signature across public pages and the owner desk, tied to real system state and without decorative fake metrics, inaccessible contrast, or generic-template cues.
+- [x] Validate the visual signature at desktop and mobile sizes against contrast, readability, and action-completion criteria.
 - [ ] Make dark graphite the primary premium presentation and redesign the alternate theme as warm stone/graphite rather than bright white, preserving high contrast and accessible controls.
+- [ ] Reframe public and owner-facing primary surfaces around real call intelligence: signal received, context resolved, recommended owner action, confidence/provenance where available, and clear escalation when not available.
+- [ ] Create a distinct SMIRK interaction grammar for evidence, uncertainty, and next action so the product feels operationally intelligent without simulating activity or inventing model confidence.

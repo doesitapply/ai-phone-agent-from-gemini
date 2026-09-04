@@ -20,10 +20,22 @@ test("Starter owner navigation remains limited to the missed-call recovery loop"
   assert.doesNotMatch(appSource, /SMIRK OS/);
 });
 
-test("public presentation retains an honest illustrative callback preview instead of invented scoring", () => {
+test("public presentation retains an honest no-data recovery workflow format instead of fabricated customer activity", () => {
   const appSource = fs.readFileSync("src/App.tsx", "utf8");
 
-  assert.match(appSource, /Illustrative example\. A real owner sees the caller, issue, urgency, and callback window/);
+  assert.match(appSource, /Workflow format only—not live customer data/);
+  assert.match(appSource, /Name & number captured/);
   assert.doesNotMatch(appSource, /Main-line backup/);
   assert.doesNotMatch(appSource, /No AC \/ elderly parent home/);
+});
+
+test("owner Intelligence Brief is computed from live call, queue, and evidence data", () => {
+  const appSource = fs.readFileSync("src/App.tsx", "utf8");
+
+  assert.match(appSource, /const attentionCount = openRecoveryCount \+ openHandoffCount/);
+  assert.match(appSource, /const hasCallEvidence = Number\(callIntel\?\.totalCalls \?\? 0\) > 0/);
+  assert.match(appSource, /SMIRK intelligence brief/);
+  assert.match(appSource, /Live business state only\. SMIRK surfaces the call evidence; you retain the decision\./);
+  assert.match(appSource, /Awaiting calls/);
+  assert.doesNotMatch(appSource, /Maria Alvarez/);
 });

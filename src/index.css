@@ -1174,6 +1174,136 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
   .smirk-public header { position: sticky; top: 0; }
 }
 
+/* ── SMIRK Intelligence Brief ───────────────────────────────────────────── */
+/* This panel is deliberately data-led: every state and action is bound to the
+   live dashboard response. Its visual signal is a line monitor, not decoration. */
+.smirk-ops-shell .smirk-intelligence-brief {
+  display: grid;
+  grid-template-columns: 78px minmax(240px, 1.3fr) minmax(420px, 1.7fr);
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--ops-border);
+  border-left: 2px solid var(--ops-signal);
+  background:
+    linear-gradient(105deg, rgba(0, 228, 121, 0.065), rgba(0, 228, 121, 0.012) 39%, rgba(255, 255, 255, 0.014) 100%),
+    var(--ops-raised);
+}
+
+.smirk-ops-shell .smirk-intelligence-brief__signal {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  gap: 4px;
+  min-height: 116px;
+  padding: 20px 18px;
+  border-right: 1px solid var(--ops-border);
+}
+
+.smirk-ops-shell .smirk-intelligence-brief__signal span {
+  display: block;
+  min-height: 16px;
+  background: rgba(155, 172, 160, 0.22);
+}
+.smirk-ops-shell .smirk-intelligence-brief__signal span:nth-child(2) { min-height: 30px; }
+.smirk-ops-shell .smirk-intelligence-brief__signal span:nth-child(3) { min-height: 46px; }
+.smirk-ops-shell .smirk-intelligence-brief__signal span:nth-child(4) { min-height: 26px; }
+.smirk-ops-shell .smirk-intelligence-brief__signal span.is-live {
+  background: var(--ops-signal);
+  box-shadow: 0 0 18px rgba(0, 228, 121, 0.38);
+}
+
+.smirk-ops-shell .smirk-intelligence-brief__lead {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  padding: 20px 24px;
+  border-right: 1px solid var(--ops-border);
+}
+.smirk-ops-shell .smirk-intelligence-brief__eyebrow,
+.smirk-ops-shell .smirk-intelligence-state > span {
+  color: var(--ops-faint);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.smirk-ops-shell .smirk-intelligence-brief__focus {
+  margin-top: 7px;
+  color: var(--ops-text);
+  font-family: var(--font-display);
+  font-size: clamp(18px, 1.75vw, 24px);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+.smirk-ops-shell .smirk-intelligence-brief__lead p {
+  margin: 8px 0 0;
+  color: var(--ops-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.smirk-ops-shell .smirk-intelligence-brief__states {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.smirk-ops-shell .smirk-intelligence-state {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  border: 0 !important;
+  border-right: 1px solid var(--ops-border) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 18px 16px;
+  text-align: left;
+}
+.smirk-ops-shell .smirk-intelligence-state:last-child { border-right: 0 !important; }
+.smirk-ops-shell .smirk-intelligence-state:hover,
+.smirk-ops-shell .smirk-intelligence-state:focus-visible {
+  background: rgba(0, 228, 121, 0.055) !important;
+  box-shadow: inset 0 -2px 0 var(--ops-signal) !important;
+}
+.smirk-ops-shell .smirk-intelligence-state strong {
+  overflow: hidden;
+  margin-top: 7px;
+  color: var(--ops-text);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.smirk-ops-shell .smirk-intelligence-state small {
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--ops-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1024px) {
+  .smirk-ops-shell .smirk-intelligence-brief { grid-template-columns: 54px minmax(220px, 0.9fr) minmax(0, 1.4fr); }
+  .smirk-ops-shell .smirk-intelligence-brief__signal { padding: 14px 12px; }
+  .smirk-ops-shell .smirk-intelligence-brief__lead { padding: 18px; }
+  .smirk-ops-shell .smirk-intelligence-state { padding: 16px 12px; }
+}
+
+@media (max-width: 720px) {
+  .smirk-ops-shell .smirk-intelligence-brief { grid-template-columns: 46px minmax(0, 1fr); }
+  .smirk-ops-shell .smirk-intelligence-brief__signal { min-height: 128px; padding: 16px 11px; }
+  .smirk-ops-shell .smirk-intelligence-brief__lead { border-right: 0; padding: 17px; }
+  .smirk-ops-shell .smirk-intelligence-brief__states { grid-column: 1 / -1; border-top: 1px solid var(--ops-border); }
+  .smirk-ops-shell .smirk-intelligence-state { padding: 14px 10px; }
+  .smirk-ops-shell .smirk-intelligence-state strong { font-size: 12px; }
+  .smirk-ops-shell .smirk-intelligence-state small { white-space: normal; }
+}
+
 /* ── Signed-in owner desk rebuild ─────────────────────────────────────────── */
 /* Deliberately keep the desk dark for calls and task triage, but remove the
    terminal/war-room visual language. Lime now means a live or ready state. */

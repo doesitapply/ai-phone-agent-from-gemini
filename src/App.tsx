@@ -2834,6 +2834,17 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
   const topSentiments = Object.entries((callIntel?.sentimentCounts || {}) as Record<string, number>)
     .sort((a: [string, number], b: [string, number]) => b[1] - a[1])
     .slice(0, 4);
+  const openRecoveryCount = Number(stats?.openTasks ?? 0);
+  const openHandoffCount = Number(stats?.pendingHandoffs ?? 0);
+  const attentionCount = openRecoveryCount + openHandoffCount;
+  const hasCallEvidence = Number(callIntel?.totalCalls ?? 0) > 0;
+  const primaryFocus = openHandoffCount > 0
+    ? `${openHandoffCount} handoff${openHandoffCount === 1 ? " needs" : "s need"} an owner decision`
+    : openRecoveryCount > 0
+      ? `${openRecoveryCount} callback${openRecoveryCount === 1 ? " needs" : "s need"} a response`
+      : activeCalls.length > 0
+        ? `${activeCalls.length} live call${activeCalls.length === 1 ? " is" : "s are"} being monitored`
+        : "No owner decision is waiting";
 
   return (
     <div className="smirk-overview-page p-5 space-y-5 max-w-7xl mx-auto">
@@ -2853,6 +2864,35 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
           </div>
         </div>
       </div>
+
+      <section className="smirk-intelligence-brief" aria-label="SMIRK intelligence brief">
+        <div className="smirk-intelligence-brief__signal" aria-hidden="true">
+          <span className={activeCalls.length > 0 ? "is-live" : ""} />
+          <span /><span /><span /><span />
+        </div>
+        <div className="smirk-intelligence-brief__lead">
+          <div className="smirk-intelligence-brief__eyebrow">SMIRK intelligence brief</div>
+          <div className="smirk-intelligence-brief__focus">{primaryFocus}</div>
+          <p>Live business state only. SMIRK surfaces the call evidence; you retain the decision.</p>
+        </div>
+        <div className="smirk-intelligence-brief__states">
+          <button onClick={() => onTabChange("calls")} className="smirk-intelligence-state">
+            <span>Line signal</span>
+            <strong>{activeCalls.length > 0 ? `${activeCalls.length} live` : "Standing by"}</strong>
+            <small>{activeCalls.length > 0 ? "Call in progress" : "Ready to receive"}</small>
+          </button>
+          <button onClick={() => onTabChange(attentionCount > 0 ? (openHandoffCount > 0 ? "handoffs" : "recovery") : "calls")} className="smirk-intelligence-state">
+            <span>Response work</span>
+            <strong>{attentionCount === 0 ? "Queue clear" : `${attentionCount} open`}</strong>
+            <small>{attentionCount === 0 ? "No decision waiting" : "Owner attention needed"}</small>
+          </button>
+          <button onClick={() => onTabChange("analytics")} className="smirk-intelligence-state">
+            <span>Call evidence</span>
+            <strong>{hasCallEvidence ? `${callIntel?.summaryCoverage ?? 0}% summarized` : "Awaiting calls"}</strong>
+            <small>{hasCallEvidence ? `${callIntel?.summarizedCalls ?? 0} of ${callIntel?.totalCalls ?? 0} summaries ready` : "No quality claim yet"}</small>
+          </button>
+        </div>
+      </section>
 
       {/* System Status Strip — only shown when something is wrong */}
       {(!twilioReady || !aiReady || !placesReady) && (
