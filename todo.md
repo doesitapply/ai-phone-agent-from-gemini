@@ -5,6 +5,8 @@
 - [ ] Design a verified-owner-only chat tool policy with deny-by-default permissions and confirmation requirements.
 - [ ] Implement approved SMIRK chat actions, confirmation workflow, and immutable audit logging.
 - [ ] Validate owner-only access and action approval boundaries before production release.
+- [x] Diagnose why the verified workspace owner is denied operator access in chat, then restore owner call authority without granting phone-call power to ordinary members or inbound callers.
+- [x] Require a clear owner confirmation and immutable audit receipt before any chat-initiated outbound call is placed.
 
 ## Mobile Revenue Operator Refocus
 
@@ -50,3 +52,17 @@
 - [ ] Make dark graphite the primary premium presentation and redesign the alternate theme as warm stone/graphite rather than bright white, preserving high contrast and accessible controls.
 - [x] Reframe public and owner-facing primary surfaces around real call intelligence: signal received, context resolved, recommended owner action, confidence/provenance where available, and clear escalation when not available.
 - [x] Create a distinct SMIRK interaction grammar for evidence, uncertainty, and next action so the product feels operationally intelligent without simulating activity or inventing model confidence.
+- [x] Produce a complete designer-ready SMIRK mockup brief covering product truth, information architecture, visual language, screen inventory, state behavior, copy direction, and no-fabrication constraints.
+- [x] Reconcile the current local source, GitHub main, Railway deployment record, and public-service fingerprint into an evidence-based release-status report.
+
+## 2027 Visual Mockup Suite
+
+- [x] Create a cohesive 2027-grade visual mockup suite for the public Home, Today Intelligence Brief, Calls Ledger/Inspector, Recovery Queue, and Business Knowledge Pack.
+- [x] Ensure the mockups use an earned dark hacker-operations visual language with real-state semantics and no fabricated operational proof, customer data, or revenue claims.
+- [x] Deliver the visual mockup assets and a concise creative-direction handoff for a designer or implementation team.
+
+## Trade-Floor Light Mode Mockups
+
+- [ ] Create companion light-mode concepts for the public Home, Today Intelligence Brief, and Business Knowledge Pack using a warm industrial field-operations treatment rather than a bright generic SaaS theme.
+- [ ] Preserve the same signal, context, evidence, uncertainty, and human-decision grammar used in dark mode, with no fabricated data or ornamental “live” activity.
+- [ ] Deliver the trade-floor light-mode visual assets with the dark-mode suite as a paired design direction.

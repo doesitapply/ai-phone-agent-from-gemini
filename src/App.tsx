@@ -13770,7 +13770,11 @@ export default function App() {
 
           {/* SMIRK Chat Bubble */}
           {(operatorSession || workspaceSession) && (
-            <SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession && !isDemoOperator} />
+            <SmirkChatBubble
+              activeCalls={activeCalls}
+              canWhisper={!!operatorSession && !isDemoOperator}
+              hasVerifiedOwnerIdentity={!!operatorSession?.googleIdToken && !isDemoOperator}
+            />
           )}
         </div>
       </ToastContext.Provider>
@@ -13811,7 +13815,15 @@ const TOOL_LABELS: Record<string, string> = {
   update_setting: "⚙️ Updating setting",
 };
 
-function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls?: ActiveCall[]; canWhisper?: boolean }) {
+function SmirkChatBubble({
+  activeCalls = [],
+  canWhisper = false,
+  hasVerifiedOwnerIdentity = false,
+}: {
+  activeCalls?: ActiveCall[];
+  canWhisper?: boolean;
+  hasVerifiedOwnerIdentity?: boolean;
+}) {
   const { dark } = useContext(ThemeContext);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'chat' | 'system' | 'whisper'>('chat');
@@ -13824,7 +13836,9 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
       id: "welcome",
       role: "assistant",
       content: canWhisper
-        ? "Hey — I'm SMIRK. Chat manages SMIRK operations. System mode can retrieve read-only Velvet qualification and handoff evidence. Contact and infrastructure actions stay separately controlled."
+        ? hasVerifiedOwnerIdentity
+          ? "Owner identity verified. I can inspect SMIRK operations and prepare a call or change, but I will require your exact confirmation before any outbound call or other consequential action."
+          : "This operator session can inspect SMIRK, but owner verification is required before I can place a call or make a consequential change. Sign in through Admin Google login with the configured owner account, then return here."
         : "Hey — I'm SMIRK. I can help with calls, contacts, and callback tasks. Operator-only actions like outbound dialing, settings changes, prompt edits, and live call injection require operator access.",
     },
   ]);
@@ -13885,10 +13899,18 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
 
     try {
       const _opSess = readOperatorSession();
-      const _wsSess = readWorkspaceSession();
-      const _authHeaders: Record<string, string> = { "Content-Type": "application/json" };
-      if (_opSess?.apiKey) _authHeaders["X-Api-Key"] = _opSess.apiKey;
-      if (_wsSess?.apiKey) _authHeaders["Authorization"] = `Bearer ${_wsSess.apiKey}`;
+      const _authHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...getWorkspaceAuthHeaders(),
+      };
+      // The chat bubble previously duplicated the normal API request path and
+      // omitted this token, leaving a Google-verified owner indistinguishable
+      // from a shared API-key session. The server remains responsible for
+      // validating the Google identity and owner allowlist before any tool is
+      // exposed; this only carries the identity proof to that verifier.
+      if (_opSess?.googleIdToken) {
+        _authHeaders["X-SMIRK-Google-ID-Token"] = _opSess.googleIdToken;
+      }
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: _authHeaders,
