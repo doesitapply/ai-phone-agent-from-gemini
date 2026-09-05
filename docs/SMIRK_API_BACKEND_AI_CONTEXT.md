@@ -18,7 +18,7 @@ Use these files first:
 | `src/routes/*.ts` | Modular API handlers by product/backend domain. |
 | `src/saas.ts` | Workspaces, plans, usage limits, invites, activation events, Stripe webhook handling, and SaaS schema. |
 | `src/db.ts` | Postgres connection and schema initialization. |
-| `src/App.tsx` | React app, public pages, customer dashboard, operator surfaces, and plan-gated navigation. |
+| `src/App.tsx` | React app, public pages, the focused Starter owner desk, and operator-only navigation. |
 | `README.md` | Human-facing status, product scope, verification commands, and market framing. |
 | `SMIRK_FOR_DUMMIES.md` | Plain-English product state and limitations. |
 | `SMIRK_GRANT_MATRIX.md` | Secret/workspace separation and operator credential boundaries. |
@@ -119,37 +119,35 @@ There are four practical auth classes.
 | --- | --- | --- |
 | Public/signed webhook | Provider signature or route-specific validation. Some dev paths may be unsigned locally. | Twilio webhooks, Stripe webhook, Calendly webhook, public pricing/version/proof/health. |
 | Operator API key | `X-Api-Key: <DASHBOARD_API_KEY>` through `dashboardAuth`. | Admin, logs, config, agents, compliance, integrations, prospecting, workspace admin, destructive maintenance. |
-| Workspace bearer token | `Authorization: Bearer <workspace.api_key>` through `dashboardAuth`. | Customer dashboard, calls, contacts, tasks, profile, knowledge, recovery, overview, proof status. |
+| Workspace bearer token | `Authorization: Bearer <workspace.api_key>` through `dashboardAuth`; normal product access also requires billing entitlement. | Tenant-scoped customer dashboard, calls, contacts, tasks, profile, knowledge, recovery, overview, and proof status. |
 | Provisioning/test secrets | `Authorization: Bearer <PHONE_AGENT_PROVISIONING_SECRET>` or explicit test-call secret. | Provisioning automation and guarded test-call routes. |
 
 Important middleware:
 
-- `dashboardAuth` in `server.ts`: accepts an operator `X-Api-Key` or a workspace bearer token. A disconnected database never grants a fixture workspace identity.
+- `dashboardAuth` in `server.ts`: accepts an operator `X-Api-Key` or resolves a workspace bearer token from durable storage. Normal workspace access requires billing entitlement, binds `authMode=workspace`, stores the authenticated workspace on the request, and pins `X-Workspace-Id` to that workspace. A disconnected database never grants a fixture workspace identity.
 - `requireOperator` in `server.ts`: requires operator auth mode. Workspace users should never pass this.
-- `requireProSuite` in `server.ts`: lets operators through, lets `pro`, `enterprise`, and `agency` workspaces through, and blocks Basic/Starter workspaces with `code: "PRO_SUITE_REQUIRED"`.
+- `workspaceBillingPortalAuth` in `server.ts`: authenticates the exact workspace bearer without requiring active billing only for billing recovery. It does not grant normal product access or accept an operator-selected tenant.
 - `api-middleware.ts`: applies route-specific rate limits and Twilio validation middleware.
 
-Do not loosen these without tests. The product depends on Basic users seeing a simple customer dashboard while operators keep the machine room.
+Do not loosen these without tests. The product depends on tenant-scoped, billing-entitled workspace access while operators keep the machine room.
 
-## Plans and UI Partitioning
+## Sellable Offer, Compatibility Labels, And UI Partitioning
 
-The SaaS plan source is `PLAN_LIMITS` in `src/saas.ts`:
+Starter is the one sellable customer offer. `PLAN_LIMITS` and durable records still recognize legacy/future values, but those values are not an authorization hierarchy:
 
-| Plan | Meaning |
+| Stored/presented value | Current meaning |
 | --- | --- |
-| `free` | Demo/trial style access with small limits. |
-| `starter` | Basic customer dashboard tier. |
-| `pro` | Full customer suite tier. |
-| `enterprise` | Agency/high-volume tier. |
-
-Product language often calls the low tier Basic/Starter and the higher tier Pro/Agency. In code, expect `starter`, `pro`, and `enterprise`.
+| `starter` | Canonical sellable missed-call recovery offer and focused owner desk. |
+| `free` | Demo/trial compatibility state; any access remains subject to the explicit demo/billing rules. |
+| `pro` / `enterprise` | Legacy or future presentation/configuration values. They are not currently sellable backend entitlements and grant no extra workspace or operator API authority. |
 
 Rules:
 
-- Starter/Basic customers should get Calls, Contacts, Tasks, basic proof, and alert setup.
-- Pro/Agency customers can access the broader customer suite.
+- Starter customers should see the focused owner desk: Calls, Tasks, Alerts, and Settings.
+- A billing-entitled workspace bearer may use customer workspace APIs only within its authenticated tenant. The server does not impose a second, hidden Pro gate on those APIs.
+- UI visibility is presentation, not authorization. Legacy/future Pro or Agency labels do not grant backend rights.
 - Operator/admin tools must stay behind `requireOperator` and should not mount for customer sessions.
-- Restricted Pro-suite APIs should return `PRO_SUITE_REQUIRED`, not raw failures.
+- Workspace identity must never be able to select another tenant or inherit operator access.
 
 Validate with:
 
@@ -305,9 +303,10 @@ This endpoint is not an alias for the handoff receiver. Never turn an evidence r
 ```text
 Workspace bearer token
   -> dashboardAuth
-  -> workspace-scoped APIs
-  -> Starter/Basic sees simplified dashboard
-  -> Pro/Agency sees broader suite
+  -> active billing entitlement for normal product access
+  -> authenticated workspace identity pins tenant scope
+  -> customer workspace APIs (no hidden Pro server gate)
+  -> focused Starter owner desk
   -> operator-only pages stay inaccessible and unmounted for customers
 ```
 
@@ -364,7 +363,7 @@ Important safety behaviors:
 - DNC routes exist and are operator-controlled.
 - DNC/compliance controls are guardrails, not legal advice.
 - Destructive smoke cleanup and live proof/write checks are guarded by explicit env confirmations.
-- Basic/Starter workspaces must not see Pro/operator data.
+- Workspace customers must never see another tenant's data or operator-only data.
 - Public proof snapshots must stay masked.
 
 ## Verification Commands
@@ -407,6 +406,7 @@ Guarded live-write checks require explicit user approval and env confirmations. 
 - This doc describes the local checkout. It does not prove production is running this commit.
 - `openapi.yaml` exposes route inventory and rough security labels, not exact request/response schemas.
 - Some legacy/operator/prospecting surfaces are broader than the narrow customer product.
+- Legacy/future Pro or Agency presentation is not a currently sellable offer or a backend entitlement; only an explicit future product decision and matching contracts could change that.
 - No-DB mode is a local demo and debugging path, not a replacement for production persistence.
 - Live Stripe/Twilio/Railway proof depends on configured external accounts and explicit approvals.
 - The Velvet receiver and acquisition tests do not imply complete source-to-revenue attribution or automatic learning. The root and a scoped legacy callback exist; reviewed routing, universal downstream propagation, conversion/retention linkage, a durable acquisition feedback outbox, and a controlled real-loop proof remain required.

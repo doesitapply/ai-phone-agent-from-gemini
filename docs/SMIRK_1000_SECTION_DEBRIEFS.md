@@ -1,8 +1,8 @@
 # SMIRK 1000/1000 Section Debriefs
 
-Last updated: July 6, 2026 America/Los_Angeles.
+Last guidance update: September 5, 2026 America/Los_Angeles.
 
-This file tracks each completed implementation section in the final-mile sprint.
+This file tracks each completed implementation section in the final-mile sprint. The implementation history remains useful, but current access guidance is the one sellable Starter offer, billing-entitled tenant-scoped workspace APIs, and operator APIs behind `requireOperator`; the old July plan-denial proof is not the current model.
 
 ## Section: Webhook Buffer Lag Monitor
 
@@ -55,7 +55,7 @@ This file tracks each completed implementation section in the final-mile sprint.
 
 - Run the replay worker against a real buffered-row sample after live deploy parity is restored.
 - Watch whether buffered events are actually needed under real traffic before adding Redis or more database architecture.
-- Keep Basic chaos as the next live production proof after deployment.
+- Keep Starter Owner Chaos Testing as the next target-specific access proof after deployment. The compatibility command `npm run check:basic-chaos` must return `STARTER_OWNER_CHAOS_PASSED`; a local result is not production proof.
 
 ### What Is Out Of Control
 
@@ -68,4 +68,4 @@ This file tracks each completed implementation section in the final-mile sprint.
 - Restore live parity with the guarded deploy flow.
 - Run replay in dry-run first, then apply only with the explicit confirmation token.
 - Add alerting on buffered rows older than a small threshold after the first real customer is live.
-- Use real Basic and Pro workspaces for the next chaos checks instead of relying only on local temporary workspaces.
+- Use one approved billing-entitled Starter workspace for the concurrent owner-API and masked-credential check. Verify operator-only routes separately with `requireOperator`; do not infer a sellable Pro entitlement from legacy labels.

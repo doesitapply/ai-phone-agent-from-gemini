@@ -23,7 +23,7 @@ The narrow product is simple:
 Missed call -> SMIRK answers -> useful summary -> owner alert -> callback task -> dashboard proof
 ```
 
-This repo is not a tiny starter app. It is a working, overbuilt MVP with voice webhooks, AI tool calling, post-call intelligence, contacts, tasks, DNC/compliance controls, Stripe/provisioning, plan-gated dashboards, and guarded production scripts.
+This repo is not a tiny starter app. It is a working, overbuilt MVP with voice webhooks, AI tool calling, post-call intelligence, contacts, tasks, DNC/compliance controls, Stripe/provisioning, billing-entitled tenant workspaces, operator-gated machine-room surfaces, and guarded production scripts.
 
 ## Current Verified Status
 
@@ -40,14 +40,13 @@ Source of truth is always the commands in this section. The snapshot below recor
 | First-customer gate | Must be checked | `npm run -s check:first-customer-10of10` is the launch-readiness bundle. It requires a clean worktree and live parity. |
 | Dependency audit | Must be checked | `npm audit --audit-level=moderate` should return `found 0 vulnerabilities`. |
 | Customer dashboard scope | Contract-tested | `npm run -s check:customer-dashboard` confirms customer UI hides operator surfaces and sanitizes owner-visible failures. |
-| Plan boundaries | Contract-tested | `npm run -s check:plan-boundaries` confirms Starter/Basic and Pro/Agency pricing, provisioning, and entitlement behavior stay aligned. |
+| Offer and access boundaries | Contract-tested | `npm run -s check:plan-boundaries`, `npm run -s check:customer-dashboard`, and `npm run -s check:auth-regression` keep the one sellable Starter offer, tenant-scoped workspace access, and operator-only APIs distinct. |
 | No-DB storage guard | Contract-tested | `npm run build && npm run -s check:no-db-storage-guard` proves customer-facing data routes fail closed rather than serving fixture calls, contacts, transcripts, tasks, or review items without Postgres. |
-| Local Basic isolation proof | Proven locally | `npm run -s check:basic-chaos` passed against a temporary local Postgres-backed Starter workspace with explicit provisioning and cleanup. |
-| Live Basic entitlement proof | Needs current deploy plus real/approved Basic token | `npm run -s check:live-workspace-entitlements` has proven the live Pro path. A real or approved temporary Starter/Basic token is still required for live Basic chaos proof after production runs the current commit. |
+| Starter owner concurrency contract | Must be reverified per target | The compatibility command `npm run check:basic-chaos` now tests concurrent access by a billing-entitled Starter owner and masked credentials. Only `STARTER_OWNER_CHAOS_PASSED` from the target under test counts; it is not evidence of a Pro denial gate. |
 | Stripe/provisioning proof | Guarded | Stripe webhook/provisioning smoke proof is approval-gated and must match the current live deploy artifact. |
 | Smoke cleanup | Guarded | `APP_URL=https://www.smirkcalls.com npm run cleanup:smoke-workspaces` should match 0 smoke workspaces before first customer. |
 
-Blunt status: SMIRK has a locally verified implementation boundary, including fail-closed no-database behavior, customer dashboard partitioning, and local Basic chaos isolation. The remaining launch blocker is live parity: production must run the current commit before the signed Stripe proof, dashboard proof, post-call proof, and live Basic chaos proof can honestly count.
+Blunt status: SMIRK has a locally verified implementation boundary, including fail-closed no-database behavior, a focused Starter owner desk, tenant-scoped workspace resolution, and operator-only route families. The remaining launch blocker is live parity: production must run the current commit before signed Stripe proof, authenticated Starter access, dashboard proof, post-call proof, or a target-specific Starter owner concurrency result can honestly count.
 
 For the cross-system operating model, read [`docs/VELVET_SMIRK_CLOSED_LOOP.md`](docs/VELVET_SMIRK_CLOSED_LOOP.md) first. It is the canonical description of what is live, what is target architecture, and what must be recorded before Velvet + SMIRK can claim attributable revenue.
 
@@ -74,7 +73,7 @@ This README is written for multiple audiences because SMIRK sits between a real 
 | Developers | Routes, auth boundaries, schema behavior, tests, deploy gates, and how not to break production. | SMIRK is a Node/React/Postgres/Twilio app with guarded live checks. | 8/10. The codebase is functional but broad and still needs pruning. |
 | Software/product critics | Honest scope, market wedge, UX clarity, and whether this is a product or an ops cockpit. | SMIRK is a real missed-call product trapped inside a larger AI phone platform. | 7.5/10. The core works; the product must keep hiding machinery from non-technical users. |
 | Compliance reviewers | DNC behavior, audit logs, consent/correction notes, and no reckless SMS claims. | SMIRK treats DNC as suppression, keeps audit trails, and avoids SMS as the first-dollar product. | 7/10. Useful controls exist, but this is not legal advice or a complete compliance program. |
-| Operators/admins | Provisioning, proof, logs, workspaces, health, and recovery controls. | SMIRK OS has the machine room for running the business. | 8/10. Powerful, but it must stay out of the customer dashboard unless the user is Pro/operator. |
+| Operators/admins | Provisioning, proof, logs, workspaces, health, and recovery controls. | SMIRK OS has the machine room for running the business. | 8/10. Powerful, but it must stay behind operator authentication and out of every workspace customer session. |
 
 ### Plain-English Translation By Audience
 
@@ -108,11 +107,11 @@ SMIRK helps answer five questions:
 4. Who needs to call them back?
 5. Did we handle it?
 
-Starter/Basic users should see the focused owner desk: Calls, Tasks, Alerts, and Settings.
+Starter is the one sellable customer offer. Its owner desk is intentionally focused: Calls, Tasks, Alerts, and Settings.
 
-Pro/Agency users get the broader suite: dashboard, review, calls, contacts, CRM, appointments, handoffs, recovery, tasks, analytics, and other customer tools.
+A billing-entitled workspace bearer can use the tenant-scoped customer APIs needed by the product. Customer API authorization does not depend on a hidden Pro tier. Legacy `pro` and `enterprise` values and future Pro/Agency presentation may remain for compatibility or planning, but they are not currently sellable backend entitlements and do not unlock operator APIs.
 
-Operators/admins get the machine room: workspaces, logs, compliance, integrations, agent config, voice config, prospecting, health, and deployment/proof surfaces.
+Operators/admins get the machine room: workspaces, logs, compliance, integrations, agent config, voice config, prospecting, health, and deployment/proof surfaces. Those route families remain behind `requireOperator`.
 
 ### For a Developer
 
@@ -140,7 +139,7 @@ Important files:
 | `src/tools.ts` | Tool implementations used during calls. |
 | `src/intelligence.ts` | Post-call summary, outcome, task, and proof extraction. |
 | `src/compliance.ts` | DNC, call-window checks, consent records, audit logs. |
-| `src/App.tsx` | React dashboard, customer/operator views, plan-gated navigation. |
+| `src/App.tsx` | React dashboard, focused Starter owner view, and operator-only navigation. |
 | `scripts/` | Readiness, deploy, Stripe, cleanup, proof, and safety checks. |
 | `openapi.yaml` | Generated API route inventory for the backend. |
 | `docs/SMIRK_API_BACKEND_AI_CONTEXT.md` | Backend/API handoff for another AI agent: route families, auth, data domains, no-DB mode, external services, and verification gates. |
@@ -170,7 +169,7 @@ SMIRK overlaps with that market but is not the same system yet.
 | Local Ollama/Llama/Mistral zero-cost AI | Not the current architecture. SMIRK uses configured cloud/hosted AI paths such as OpenClaw/OpenRouter/Gemini-style routes. | 1/10 |
 | Autonomous leak scraper/auditor | Prospecting and lead-hunter surfaces exist, but a safe, compliant autonomous form-testing/outbound audit engine is not productized here. | 3/10 |
 | Stripe SaaS checkout and provisioning | Stripe, workspace provisioning, buyer routes, signed webhook proof, and guarded smoke checks exist and are verified. | 8.5/10 |
-| Plan-gated customer dashboard | Implemented and checked. Basic gets the simple dashboard; Pro/Agency gets the broader suite, and customer sessions do not mount operator-only pages. | 9/10 |
+| Workspace-scoped customer dashboard | Implemented and checked. Starter presents the focused owner desk, billing-entitled workspace APIs stay tenant-scoped, and customer sessions do not mount operator-only pages. | 9/10 |
 | Hands-off SaaS | First-customer gate is proven, but the product still needs real buyer repetitions before calling it frictionless. | 7.5/10 |
 
 Verdict: SMIRK is much closer to a sellable missed-call recovery SaaS than it is to the full LEAD-LOCK autonomous web-form/SMS/outbound-audit engine. The smart move is to sell the proven phone-call wedge first, then add web-form ingestion and opt-in response automation only after the first customer loop has real usage.
@@ -184,7 +183,7 @@ This market is active. The useful way to think about competitors is by product s
 | Post-missed-call messaging tools | Allo, Upfirst-style post-call messaging, GoHighLevel-style missed-call automations | Detect unanswered calls and send an automated message afterward, sometimes with AI answering or booking layered in. | SMIRK should lead with live inbound backup: answer the call, capture the problem, create callback work, and avoid selling messaging as the first-dollar product. |
 | Broad AI receptionist platforms | RingCentral AI Receptionist and other front-office AI tools | 24/7 AI call handling, routing, appointment setup, FAQ/company-knowledge answering, analytics, and wider phone-system workflows. | SMIRK should avoid the universal receptionist fight and stay the narrow revenue shield for local service calls. |
 | Automated callback systems | Voksha-style missed-call callback recovery | Call missed callers back automatically after a delay, often with an AI voice that qualifies or books. | SMIRK should position as lower-friction inbound coverage: the caller stays in the original call flow instead of receiving a surprise robot callback. |
-| Contractor lead-response suites | LeadTruffle-style home-service lead-response products | Home-service focused qualification, CRM routing, and lead follow-up claims. | SMIRK should compete on call-first urgency, owner proof, plan-gated simplicity, and compliance-conservative positioning. |
+| Contractor lead-response suites | LeadTruffle-style home-service lead-response products | Home-service focused qualification, CRM routing, and lead follow-up claims. | SMIRK should compete on call-first urgency, owner proof, customer-surface simplicity, and compliance-conservative positioning. |
 
 SMIRK's advantage is not that it has the most features. Its advantage is that the backend is overbuilt while the customer-facing promise stays narrow:
 
@@ -211,10 +210,10 @@ Remaining gap: `125 / 1000`.
 | Gap | Points locked | What has to improve |
 | --- | ---: | --- |
 | Machine-room overlap | 50 | Customer navigation is sanitized and operator pages are short-circuited out of customer renders. More real-user polish still helps. |
-| Live Basic workspace gap | 40 | Starter/Basic entitlement blocking is proven locally with temporary workspace provisioning. It still needs a current live deploy plus a real or approved temporary Basic workspace to prove production behavior. |
-| No-DB/demo limitations | 35 | Local No-DB mode now loads a high-fidelity Basic demo with calls, contacts, transcripts, DNC state, and callback tasks. |
+| Live Starter workspace gap | 40 | A current deploy still needs an approved billing-entitled Starter workspace result proving concurrent owner access and masked credentials. The retired July plan-denial result does not satisfy this gate. |
+| No-DB/demo limitations | 35 | Local No-DB mode now loads a high-fidelity Starter-shaped demo with calls, contacts, transcripts, DNC state, and callback tasks. |
 
-Bottom line: the core routes and data model do not need a rewrite to sell the missed-call recovery wedge. The next leverage is real-world buyer repetition, ruthless customer-surface simplicity, and evidence from a live Starter/Basic workspace.
+Bottom line: the core routes and data model do not need a rewrite to sell the missed-call recovery wedge. The next leverage is real-world buyer repetition, ruthless customer-surface simplicity, and evidence from a live billing-entitled Starter workspace.
 
 ## What It Is Not
 
@@ -228,19 +227,19 @@ Bottom line: the core routes and data model do not need a rewrite to sell the mi
 - Not yet a fully attributed, self-improving Velvet-to-revenue engine; the acquisition root exists, but reviewed routing transitions, universal downstream propagation, payment/retention linkage, and durable acquisition feedback still need implementation and real-loop proof.
 - Not legal advice or a substitute for compliance counsel.
 
-## Plan And Dashboard Boundaries
+## Offer, Workspace, And Operator Boundaries
 
-The plan split is part of the product strategy.
+Starter is the one sellable customer offer. UI labels and stored plan values are not authorization grants.
 
-| Plan / role | Intended experience |
+| Identity / role | Intended experience and access |
 | --- | --- |
-| Starter / Basic workspace | Focused owner desk: Calls, Tasks, Alerts, Settings. |
-| Pro / Agency workspace | Full customer suite. |
-| Operator/admin | Full SMIRK OS machine room. |
+| Billing-entitled Starter workspace | Focused owner desk: Calls, Tasks, Alerts, Settings, backed by customer APIs pinned to that workspace. |
+| Legacy/future `free`, `pro`, or `enterprise` presentation | Compatibility or future product metadata only. It is not a currently sellable offer and grants no hidden customer-API or operator entitlement. |
+| Operator/admin | Full SMIRK OS machine room behind `requireOperator`. |
 
-The boundary is enforced in the UI and server-side APIs. Pro-suite APIs return `PRO_SUITE_REQUIRED` when a Starter/Basic workspace token calls them directly.
+`dashboardAuth` accepts a valid workspace bearer only when the workspace has billing entitlement, binds that identity to its durable workspace, and pins customer reads and writes to that tenant. Customer workspace APIs have no separate Pro-level server gate. Billing-portal recovery is a narrow exception that authenticates the exact workspace without treating inactive billing as active product access.
 
-Current live caveat: live production currently has a Pro workspace and must be checked against the current commit before proof claims. Starter/Basic blocking is locally chaos-tested, but production Basic proof still requires a real Starter/Basic customer or approved live smoke workspace.
+Operator route families still require `requireOperator`; a workspace token and a legacy/future plan label never confer operator access. Current live caveat: these source and contract boundaries do not prove production is on this commit or that a real Starter buyer completed payment, activation, and the controlled call-to-callback proof loop.
 
 ## Compliance Behavior
 
@@ -385,24 +384,13 @@ npm run build
 npm run -s check:no-db-storage-guard
 ```
 
-Basic isolation chaos check:
+Starter Owner Chaos Testing:
 
 ```bash
-SMIRK_BASIC_CHAOS_WORKSPACE_ID=<basic-workspace-id> \
-SMIRK_BASIC_CHAOS_TOKEN=<basic-workspace-token> \
-npm run -s check:basic-chaos
+npm run check:basic-chaos
 ```
 
-This check intentionally refuses anonymous/operator mode. It must run with a real Starter/Basic workspace token, or with explicit approval to create a temporary Starter workspace:
-
-```bash
-ALLOW_SMIRK_BASIC_CHAOS_PROVISION=1 \
-DASHBOARD_API_KEY=<operator-key> \
-CONFIRM_SMIRK_BASIC_CHAOS_CLEANUP=delete-temp-basic-workspace \
-npm run -s check:basic-chaos
-```
-
-That proves Pro-suite endpoints return `PRO_SUITE_REQUIRED` under Basic identity instead of only proving static contracts. The local DB-backed path has passed; the production path still needs a current live deploy and a live Basic identity.
+The command name is retained for compatibility. Its current contract is concurrent owner-API access through a billing-entitled Starter workspace plus masked credentials; success is reported as `STARTER_OWNER_CHAOS_PASSED`. It does not prove or require the retired July plan-denial boundary. A local result does not prove the deployed target, and any temporary live provisioning or paid smoke remains separately approval-gated.
 
 Final-mile audit:
 
@@ -542,7 +530,7 @@ OpenAPI route inventory is generated into `openapi.yaml`.
 - The app is still broader than the clean product wedge.
 - No-DB mode is useful for local demo reads, but it is read-only and does not prove production persistence.
 - The customer dashboard is much cleaner than before, but the operator product is still large.
-- Starter/Basic live-token blocking has a chaos script, but it still needs proof from an actual live Starter/Basic workspace.
+- Billing-entitled Starter owner access and tenant scoping still need current-deploy proof from an approved real or isolated smoke workspace; local contracts are not live evidence.
 - Web-form ingestion is not the main product loop yet.
 - SMS/text response automation is intentionally not sold as live.
 - Autonomous outbound leak auditing is not productized. The included local auditor is draft-only and manual-review by design.
