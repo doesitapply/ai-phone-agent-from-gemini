@@ -37,6 +37,65 @@ try {
 
   await initSaasSchema();
   await initSchema();
+
+  // Model catalog collisions left by another relation and a stale trigger on
+  // the intended relation. A repeat initialization must restore every target
+  // object based on its relation and full trigger shape, not its global name.
+  await sql`
+    CREATE TABLE acquisition_catalog_guard_collision_fixture (
+      id INTEGER PRIMARY KEY
+    )
+  `;
+  await sql`
+    CREATE FUNCTION allow_acquisition_evidence_mutation_fixture()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `;
+  await sql`DROP TRIGGER trg_acquisition_events_append_only ON acquisition_events`;
+  await sql`
+    CREATE TRIGGER trg_acquisition_events_append_only
+    BEFORE UPDATE OR DELETE ON acquisition_catalog_guard_collision_fixture
+    FOR EACH ROW EXECUTE FUNCTION allow_acquisition_evidence_mutation_fixture()
+  `;
+  await sql`DROP TRIGGER trg_acquisition_reviews_append_only ON acquisition_reviews`;
+  await sql`
+    CREATE TRIGGER trg_acquisition_reviews_append_only
+    BEFORE UPDATE OR DELETE ON acquisition_reviews
+    FOR EACH ROW EXECUTE FUNCTION allow_acquisition_evidence_mutation_fixture()
+  `;
+  await sql`ALTER TABLE tasks DROP CONSTRAINT tasks_acquisition_tenant_fkey`;
+  await sql`
+    ALTER TABLE acquisition_catalog_guard_collision_fixture
+    ADD CONSTRAINT tasks_acquisition_tenant_fkey CHECK (id > 0)
+  `;
+  await sql`
+    ALTER TABLE stripe_checkout_fulfillments
+    DROP CONSTRAINT stripe_checkout_fulfillments_acquisition_source_fkey
+  `;
+  await sql`
+    ALTER TABLE acquisition_catalog_guard_collision_fixture
+    ADD CONSTRAINT stripe_checkout_fulfillments_acquisition_source_fkey CHECK (id < 1000000)
+  `;
+  await sql`
+    ALTER TABLE launch_events
+    DROP CONSTRAINT launch_events_acquisition_source_pair_check
+  `;
+  await sql`
+    ALTER TABLE acquisition_catalog_guard_collision_fixture
+    ADD CONSTRAINT launch_events_acquisition_source_pair_check CHECK (id <> 42)
+  `;
+  await sql`
+    ALTER TABLE acquisition_events
+    DROP CONSTRAINT acquisition_events_approval_evidence_fkey
+  `;
+  await sql`
+    ALTER TABLE acquisition_catalog_guard_collision_fixture
+    ADD CONSTRAINT acquisition_events_approval_evidence_fkey CHECK (id <> 43)
+  `;
+
   await initSaasSchema();
   await initSchema();
 
@@ -160,30 +219,78 @@ try {
     WHERE receipt_id = ${created.receiptId}
   `, /append-only/);
 
-  const constraintRows = await sql<{ conname: string }[]>`
-    SELECT conname
+  const constraintRows = await sql<{ conname: string; relation_name: string }[]>`
+    SELECT conname, conrelid::regclass::TEXT AS relation_name
     FROM pg_constraint
-    WHERE conname IN (
-      'calls_acquisition_tenant_fkey',
-      'tasks_acquisition_tenant_fkey',
-      'handoffs_acquisition_tenant_fkey',
-      'acquisition_events_call_tenant_fkey',
-      'acquisition_events_handoff_tenant_fkey',
-      'stripe_checkout_fulfillments_acquisition_source_fkey'
-    )
+    WHERE (conname = 'calls_acquisition_tenant_fkey' AND conrelid = 'calls'::regclass)
+       OR (conname = 'tasks_acquisition_tenant_fkey' AND conrelid = 'tasks'::regclass)
+       OR (conname = 'handoffs_acquisition_tenant_fkey' AND conrelid = 'handoffs'::regclass)
+       OR (conname = 'acquisition_events_call_tenant_fkey' AND conrelid = 'acquisition_events'::regclass)
+       OR (conname = 'acquisition_events_handoff_tenant_fkey' AND conrelid = 'acquisition_events'::regclass)
+       OR (
+         conname = 'stripe_checkout_fulfillments_acquisition_source_fkey'
+         AND conrelid = 'stripe_checkout_fulfillments'::regclass
+       )
+       OR (
+         conname = 'launch_events_acquisition_source_pair_check'
+         AND conrelid = 'launch_events'::regclass
+       )
+       OR (
+         conname = 'acquisition_events_approval_evidence_fkey'
+         AND conrelid = 'acquisition_events'::regclass
+       )
     ORDER BY conname
   `;
-  assert.equal(constraintRows.length, 6);
+  assert.equal(constraintRows.length, 8);
 
-  const triggerRows = await sql<{ tgname: string }[]>`
-    SELECT tgname
-    FROM pg_trigger
-    WHERE NOT tgisinternal AND tgname LIKE 'trg_acquisition_%'
+  const collisionConstraintRows = await sql<{ conname: string }[]>`
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid = 'acquisition_catalog_guard_collision_fixture'::regclass
+      AND conname IN (
+        'tasks_acquisition_tenant_fkey',
+        'stripe_checkout_fulfillments_acquisition_source_fkey',
+        'launch_events_acquisition_source_pair_check',
+        'acquisition_events_approval_evidence_fkey'
+      )
+  `;
+  assert.equal(collisionConstraintRows.length, 4);
+
+  const triggerRows = await sql<{ tgname: string; relation_name: string; function_name: string }[]>`
+    SELECT
+      trigger.tgname,
+      trigger.tgrelid::regclass::TEXT AS relation_name,
+      procedure.proname AS function_name
+    FROM pg_trigger trigger
+    JOIN pg_proc procedure ON procedure.oid = trigger.tgfoid
+    WHERE NOT trigger.tgisinternal
+      AND (
+        (trigger.tgname = 'trg_acquisition_record_identity' AND trigger.tgrelid = 'acquisition_records'::regclass)
+        OR (trigger.tgname = 'trg_acquisition_events_append_only' AND trigger.tgrelid = 'acquisition_events'::regclass)
+        OR (trigger.tgname = 'trg_acquisition_reviews_append_only' AND trigger.tgrelid = 'acquisition_reviews'::regclass)
+      )
     ORDER BY tgname
   `;
   assert.equal(triggerRows.length, 3);
+  assert.deepEqual(
+    Object.fromEntries(triggerRows.map((row) => [row.tgname, row.function_name])),
+    {
+      trg_acquisition_events_append_only: "guard_append_only_acquisition_evidence",
+      trg_acquisition_record_identity: "guard_acquisition_record_identity",
+      trg_acquisition_reviews_append_only: "guard_append_only_acquisition_evidence",
+    },
+  );
 
-  console.log("OK disposable Postgres verified immutable evidence, tenant-safe joins, and zero queue writes");
+  const collidingTriggerRows = await sql<{ count: number }[]>`
+    SELECT COUNT(*)::INTEGER AS count
+    FROM pg_trigger
+    WHERE NOT tgisinternal
+      AND tgname = 'trg_acquisition_events_append_only'
+      AND tgrelid = 'acquisition_catalog_guard_collision_fixture'::regclass
+  `;
+  assert.equal(collidingTriggerRows[0]?.count, 1);
+
+  console.log("OK disposable Postgres verified immutable evidence, tenant-safe joins, relation-safe catalog repair, and zero queue writes");
 } finally {
   if (fixtureSql) await fixtureSql.end({ timeout: 5 });
   if (fixtureCreated) {

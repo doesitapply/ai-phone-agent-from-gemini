@@ -527,17 +527,58 @@ export async function initSchema(): Promise<void> {
   await sql`
     DO $$
     BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_acquisition_record_identity') THEN
+      -- pg_trigger.tgtype 27 is ROW + BEFORE + UPDATE + DELETE. Checking the
+      -- complete shape lets startup repair stale or disabled trigger objects.
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_acquisition_record_identity'
+          AND tgrelid = 'acquisition_records'::regclass
+          AND tgfoid = 'guard_acquisition_record_identity()'::regprocedure
+          AND tgtype = 27
+          AND tgenabled = 'O'
+          AND NOT tgisinternal
+          AND tgnargs = 0
+          AND tgattr = ''::int2vector
+          AND tgqual IS NULL
+      ) THEN
+        DROP TRIGGER IF EXISTS trg_acquisition_record_identity ON acquisition_records;
         CREATE TRIGGER trg_acquisition_record_identity
         BEFORE UPDATE OR DELETE ON acquisition_records
         FOR EACH ROW EXECUTE FUNCTION guard_acquisition_record_identity();
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_acquisition_events_append_only') THEN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_acquisition_events_append_only'
+          AND tgrelid = 'acquisition_events'::regclass
+          AND tgfoid = 'guard_append_only_acquisition_evidence()'::regprocedure
+          AND tgtype = 27
+          AND tgenabled = 'O'
+          AND NOT tgisinternal
+          AND tgnargs = 0
+          AND tgattr = ''::int2vector
+          AND tgqual IS NULL
+      ) THEN
+        DROP TRIGGER IF EXISTS trg_acquisition_events_append_only ON acquisition_events;
         CREATE TRIGGER trg_acquisition_events_append_only
         BEFORE UPDATE OR DELETE ON acquisition_events
         FOR EACH ROW EXECUTE FUNCTION guard_append_only_acquisition_evidence();
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_acquisition_reviews_append_only') THEN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_acquisition_reviews_append_only'
+          AND tgrelid = 'acquisition_reviews'::regclass
+          AND tgfoid = 'guard_append_only_acquisition_evidence()'::regprocedure
+          AND tgtype = 27
+          AND tgenabled = 'O'
+          AND NOT tgisinternal
+          AND tgnargs = 0
+          AND tgattr = ''::int2vector
+          AND tgqual IS NULL
+      ) THEN
+        DROP TRIGGER IF EXISTS trg_acquisition_reviews_append_only ON acquisition_reviews;
         CREATE TRIGGER trg_acquisition_reviews_append_only
         BEFORE UPDATE OR DELETE ON acquisition_reviews
         FOR EACH ROW EXECUTE FUNCTION guard_append_only_acquisition_evidence();
@@ -830,27 +871,47 @@ export async function initSchema(): Promise<void> {
   await sql`
     DO $$
     BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'calls_acquisition_tenant_fkey') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'calls_acquisition_tenant_fkey'
+          AND conrelid = 'calls'::regclass
+      ) THEN
         ALTER TABLE calls ADD CONSTRAINT calls_acquisition_tenant_fkey
         FOREIGN KEY (acquisition_id, workspace_id)
         REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT;
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tasks_acquisition_tenant_fkey') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'tasks_acquisition_tenant_fkey'
+          AND conrelid = 'tasks'::regclass
+      ) THEN
         ALTER TABLE tasks ADD CONSTRAINT tasks_acquisition_tenant_fkey
         FOREIGN KEY (acquisition_id, workspace_id)
         REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT;
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'handoffs_acquisition_tenant_fkey') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'handoffs_acquisition_tenant_fkey'
+          AND conrelid = 'handoffs'::regclass
+      ) THEN
         ALTER TABLE handoffs ADD CONSTRAINT handoffs_acquisition_tenant_fkey
         FOREIGN KEY (acquisition_id, workspace_id)
         REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT;
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'acquisition_events_call_tenant_fkey') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'acquisition_events_call_tenant_fkey'
+          AND conrelid = 'acquisition_events'::regclass
+      ) THEN
         ALTER TABLE acquisition_events ADD CONSTRAINT acquisition_events_call_tenant_fkey
         FOREIGN KEY (call_sid, workspace_id)
         REFERENCES calls(call_sid, workspace_id) ON DELETE RESTRICT;
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'acquisition_events_handoff_tenant_fkey') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'acquisition_events_handoff_tenant_fkey'
+          AND conrelid = 'acquisition_events'::regclass
+      ) THEN
         ALTER TABLE acquisition_events ADD CONSTRAINT acquisition_events_handoff_tenant_fkey
         FOREIGN KEY (handoff_id, workspace_id)
         REFERENCES handoffs(id, workspace_id) ON DELETE RESTRICT;
@@ -873,14 +934,22 @@ export async function initSchema(): Promise<void> {
         'stripe_paid_checkout_exceptions'
       ] LOOP
         constraint_prefix := table_name || '_acquisition_source';
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = constraint_prefix || '_pair_check') THEN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = constraint_prefix || '_pair_check'
+            AND conrelid = to_regclass(table_name)
+        ) THEN
           EXECUTE format(
             'ALTER TABLE %I ADD CONSTRAINT %I CHECK ((acquisition_id IS NULL) = (acquisition_workspace_id IS NULL))',
             table_name,
             constraint_prefix || '_pair_check'
           );
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = constraint_prefix || '_fkey') THEN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = constraint_prefix || '_fkey'
+            AND conrelid = to_regclass(table_name)
+        ) THEN
           EXECUTE format(
             'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (acquisition_id, acquisition_workspace_id) REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT',
             table_name,
@@ -1358,14 +1427,22 @@ export async function initSchema(): Promise<void> {
         'launch_outreach_approvals'
       ] LOOP
         constraint_prefix := table_name || '_acquisition_source';
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = constraint_prefix || '_pair_check') THEN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = constraint_prefix || '_pair_check'
+            AND conrelid = to_regclass(table_name)
+        ) THEN
           EXECUTE format(
             'ALTER TABLE %I ADD CONSTRAINT %I CHECK ((acquisition_id IS NULL) = (acquisition_workspace_id IS NULL))',
             table_name,
             constraint_prefix || '_pair_check'
           );
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = constraint_prefix || '_fkey') THEN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = constraint_prefix || '_fkey'
+            AND conrelid = to_regclass(table_name)
+        ) THEN
           EXECUTE format(
             'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (acquisition_id, acquisition_workspace_id) REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT',
             table_name,
@@ -1403,7 +1480,9 @@ export async function initSchema(): Promise<void> {
     DO $$
     BEGIN
       IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'acquisition_events_approval_evidence_fkey'
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'acquisition_events_approval_evidence_fkey'
+          AND conrelid = 'acquisition_events'::regclass
       ) THEN
         ALTER TABLE acquisition_events
         ADD CONSTRAINT acquisition_events_approval_evidence_fkey
