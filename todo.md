@@ -49,7 +49,7 @@
 - [x] Remove any remaining voice-prompt instruction that lets a caller clear, complete, cancel, or otherwise mutate existing dashboard tasks or handoffs, and add a regression that prevents its reintroduction.
 - [x] Define and apply one distinctive earned hacker-operations visual signature across public pages and the owner desk, tied to real system state and without decorative fake metrics, inaccessible contrast, or generic-template cues.
 - [x] Validate the visual signature at desktop and mobile sizes against contrast, readability, and action-completion criteria.
-- [ ] Make dark graphite the primary premium presentation and redesign the alternate theme as warm stone/graphite rather than bright white, preserving high contrast and accessible controls.
+- [x] Make dark graphite the primary premium presentation and redesign the alternate theme as warm stone/graphite rather than bright white, preserving high contrast and accessible controls.
 - [x] Reframe public and owner-facing primary surfaces around real call intelligence: signal received, context resolved, recommended owner action, confidence/provenance where available, and clear escalation when not available.
 - [x] Create a distinct SMIRK interaction grammar for evidence, uncertainty, and next action so the product feels operationally intelligent without simulating activity or inventing model confidence.
 - [x] Produce a complete designer-ready SMIRK mockup brief covering product truth, information architecture, visual language, screen inventory, state behavior, copy direction, and no-fabrication constraints.

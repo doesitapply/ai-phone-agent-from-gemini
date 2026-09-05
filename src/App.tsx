@@ -13402,7 +13402,7 @@ export default function App() {
           onComplete={() => setShowSetupWizard(false)}
           configStatus={configStatus}
         />
-        <div className="smirk-ops-shell min-h-screen bg-[#0a0a0a] text-[#e5e2e1] overflow-hidden"
+        <div className={`smirk-ops-shell ${dark ? "smirk-ops-dark" : "smirk-ops-light"} min-h-screen bg-[#0a0a0a] text-[#e5e2e1] overflow-hidden`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
 
           {/* Left Command Sidebar */}

@@ -22,6 +22,7 @@ test("Starter owner navigation remains limited to the missed-call recovery loop"
   assert.match(appSource, /label: "What SMIRK can say"/);
   assert.match(appSource, /Business knowledge/);
   assert.match(appSource, /Line &amp; setup/);
+  assert.match(appSource, /\$\{dark \? "smirk-ops-dark" : "smirk-ops-light"\}/);
   assert.doesNotMatch(appSource, /SMIRK OS/);
 });
 

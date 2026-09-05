@@ -150,6 +150,104 @@
   background: rgba(183, 250, 115, 0.8);
 }
 
+/* ── Owner desk: warm industrial daylight mode ──────────────────────────── */
+/* The same operational grammar as dark mode, but built from field-paper,
+   graphite and equipment-metal rather than generic white application chrome. */
+.smirk-ops-shell.smirk-ops-light {
+  --green: #3e7c44;
+  --green-dim: rgba(62, 124, 68, 0.11);
+  --green-ring: rgba(62, 124, 68, 0.18);
+  --surface-0: #d8d4cb;
+  --surface-1: #e8e4dc;
+  --surface-2: #f2eee6;
+  --surface-3: #c8c3b8;
+  --border: rgba(42, 50, 41, 0.18);
+  --border-hi: rgba(42, 50, 41, 0.32);
+  --text-1: #192019;
+  --text-2: #455044;
+  --text-3: #687168;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(114, 132, 99, 0.14), transparent 28rem),
+    linear-gradient(135deg, #ddd8ce, #d1cdc3) !important;
+  color: #172018 !important;
+}
+
+.smirk-ops-shell.smirk-ops-light .smirk-ops-sidebar,
+.smirk-ops-shell.smirk-ops-light .smirk-ops-header,
+.smirk-ops-shell.smirk-ops-light .smirk-mobile-nav,
+.smirk-ops-shell.smirk-ops-light .smirk-command-rail {
+  background: rgba(233, 229, 221, 0.97) !important;
+  border-color: #b7b1a5 !important;
+  color: #172018 !important;
+}
+
+.smirk-ops-shell.smirk-ops-light .smirk-ops-main {
+  background: transparent !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#0a0a0a]"],
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#0e0e0e]"] {
+  background-color: #f5f1e9 !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#131313]"],
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#171717]"] {
+  background-color: #ebe7df !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#1c1b1b]"],
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#201f1f]"] {
+  background-color: #e3ded4 !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#2a2a2a]"],
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#353534]"] {
+  background-color: #d4cfc5 !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="bg-black"],
+.smirk-ops-shell.smirk-ops-light [class*="bg-gray-950"] {
+  background-color: #f8f4ed !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="border-[#3b4b3d]"],
+.smirk-ops-shell.smirk-ops-light [class*="border-gray-800"],
+.smirk-ops-shell.smirk-ops-light [class*="border-gray-700"] {
+  border-color: #b7b1a5 !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="text-[#e5e2e1]"],
+.smirk-ops-shell.smirk-ops-light [class*="text-[#f1ffef]"],
+.smirk-ops-shell.smirk-ops-light [class*="text-white"],
+.smirk-ops-shell.smirk-ops-light [class*="text-gray-200"] {
+  color: #172018 !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="text-[#b9cbb9]"],
+.smirk-ops-shell.smirk-ops-light [class*="text-[#849585]"],
+.smirk-ops-shell.smirk-ops-light [class*="text-gray-400"],
+.smirk-ops-shell.smirk-ops-light [class*="text-gray-500"],
+.smirk-ops-shell.smirk-ops-light [class*="text-gray-600"] {
+  color: #566154 !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#00ff88]"],
+.smirk-ops-shell.smirk-ops-light [class*="bg-[#00e479]"] {
+  background-color: #477f47 !important;
+  color: #fffdf7 !important;
+}
+
+.smirk-ops-shell.smirk-ops-light [class*="text-[#00e479]"],
+.smirk-ops-shell.smirk-ops-light [class*="text-[#c8e86a]"] {
+  color: #356a3c !important;
+}
+
+.smirk-ops-shell.smirk-ops-light .smirk-ops-sidebar button:hover,
+.smirk-ops-shell.smirk-ops-light .smirk-mobile-nav button:hover,
+.smirk-ops-shell.smirk-ops-light .smirk-command-rail button:hover {
+  background-color: #d0d9c9 !important;
+}
+
 @media (max-width: 640px) {
   .smirk-public .smirk-human-work,
   .smirk-public .smirk-human-work img {
