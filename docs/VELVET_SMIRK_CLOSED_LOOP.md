@@ -52,7 +52,7 @@ The production target is an immutable chain rooted at one `acquisition_record`. 
 
 ## What Is Live and Proven
 
-The following capabilities are not roadmap claims; they are implemented integration behavior in the AI Phone Agent repository and separately verified receiver-recovery evidence.
+The following capabilities are not roadmap claims; they are implemented integration behavior in the SMIRK missed-call recovery repository and separately verified receiver-recovery evidence.
 
 | Capability | Evidence and behavior |
 | --- | --- |

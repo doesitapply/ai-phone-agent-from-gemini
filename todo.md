@@ -1,4 +1,4 @@
-# SMIRK AI Phone Agent — Active Delivery TODO
+# SMIRK Missed-Call Recovery — Active Delivery TODO
 
 - [ ] Repair the GitHub Actions monthly-reset secret/check failure that causes Railway source deployments to skip. The fix is committed locally, but GitHub rejected the push because the active integration lacks `workflows` permission.
 - [ ] Merge and deploy the pending actionable Handoffs, Velvet portal, and verified owner-operator access improvements.
