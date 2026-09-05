@@ -30,7 +30,7 @@ expect("route is workspace-bound", route.includes("VELVET_ALCHEMY_WORKSPACE_MISM
 expect("route is schema-readiness gated", route.includes("isSchemaReady") && route.includes("VELVET_ALCHEMY_ACQUISITION_SCHEMA_NOT_READY"));
 expect("route is rate-limited", route.includes("velvetAcquisitionRateLimit"));
 expect("route registers the acquisition inbox", route.includes('app.post("/api/integrations/velvet/acquisitions"'));
-expect("server preserves the hardened legacy handoff receiver separately", server.includes("registerVelvetHandoffRoutes(app") && domain.includes("normalizeLegacyVelvetHandoffPayload"));
+expect("server preserves the hardened legacy handoff receiver separately", server.includes("createPostgresVelvetHandoffStore") && server.includes("registerVelvetHandoffRoutes(app"));
 expect("store independently enforces evidence classification", route.includes("validateVelvetAcquisitionEvidence(input)"));
 expect("store computes its own provenance hash", route.includes("const payloadHash = buildVelvetAcquisitionPayloadHash(input)"));
 expect("real evidence requires explicit inbox mode", route.includes("VELVET_EVIDENCE_INBOX_MODE") && route.includes("VELVET_ALCHEMY_EVIDENCE_INBOX_MODE_REQUIRED"));

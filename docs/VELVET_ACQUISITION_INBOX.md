@@ -4,7 +4,7 @@
 
 The evidence inbox gives SMIRK one immutable identity inside an existing operator tenant before any contact, call, handoff, approval, checkout, or downstream customer workspace exists. It records provenance; it does not execute outreach or provider actions.
 
-`POST /api/integrations/velvet/acquisitions` requires a dedicated `VELVET_ALCHEMY_ACQUISITION_API_KEY`, an exact configured workspace, durable Postgres storage, and completed acquisition-schema initialization. The legacy `POST /api/integrations/velvet/handoffs` path remains as a synthetic-only compatibility adapter: it turns the old `externalId` into separate deterministic record and event identities, then writes only to this inbox.
+`POST /api/integrations/velvet/acquisitions` requires a dedicated `VELVET_ALCHEMY_ACQUISITION_API_KEY`, an exact configured workspace, durable Postgres storage, and completed acquisition-schema initialization. `POST /api/integrations/velvet/handoffs` remains a separate, hardened queue receiver with its own credential and write contract; it is not an acquisition-inbox alias, and synthetic acquisition fixtures must not be sent to it.
 
 ## Identity Contract
 
@@ -46,6 +46,6 @@ The response returns `receiptId`, `acquisitionId`, classification/contact state,
 
 ## What Remains Separate
 
-Tenant-matched nullable acquisition links now exist for calls, handoffs, launch analytics/ledger, outreach approvals, Stripe fulfillment, provisioning, and activation events. Their writers do not yet propagate the ID, so the portal deliberately reports lifecycle attribution as unavailable. Provider touch receipts, dynamic checkout attribution, activation propagation, and a Velvet feedback outbox require separate guarded vertical slices.
+Tenant-matched nullable acquisition links now exist for calls, handoffs, launch analytics/ledger, outreach approvals, Stripe fulfillment, provisioning, and activation events. Their writers do not yet propagate the ID, so the portal deliberately reports lifecycle attribution as unavailable. A separately keyed post-call outcome callback exists for completed calls linked to legacy Velvet handoffs, but it stays disabled without explicit runtime configuration and is not treated as acquisition feedback until exact acquisition linkage is present. Provider touch receipts, dynamic checkout attribution, activation propagation, and a durable acquisition feedback outbox remain separate guarded slices.
 
 Deployments that previously used `velvet_alchemy_handoff_receipts` need a separate reviewed migration. Existing receipt, handoff, and task rows are not inferred or backfilled from names, phone numbers, or formatted IDs; any migration must prove an exact source identity and preserve the old payload hash before attaching an acquisition ID.

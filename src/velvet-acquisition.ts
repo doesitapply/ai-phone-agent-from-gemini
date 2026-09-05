@@ -36,20 +36,6 @@ export const velvetAcquisitionPayloadSchema = z.object({
 
 export type VelvetAcquisitionPayload = z.infer<typeof velvetAcquisitionPayloadSchema>;
 
-export const legacyVelvetHandoffPayloadSchema = z.object({
-  workspaceId: z.coerce.number().int().positive(),
-  externalId: z.string().trim().min(12).max(160).regex(EXTERNAL_ID),
-  caller: velvetAcquisitionPayloadSchema.shape.caller,
-  companyName: velvetAcquisitionPayloadSchema.shape.companyName,
-  reason: velvetAcquisitionPayloadSchema.shape.reason,
-  urgency: velvetAcquisitionPayloadSchema.shape.urgency,
-  transcriptSnippet: velvetAcquisitionPayloadSchema.shape.transcriptSnippet,
-  recommendedAction: velvetAcquisitionPayloadSchema.shape.recommendedAction,
-  notes: velvetAcquisitionPayloadSchema.shape.notes,
-}).strict();
-
-export type LegacyVelvetHandoffPayload = z.infer<typeof legacyVelvetHandoffPayloadSchema>;
-
 export type VelvetAcquisitionConfig = {
   apiKey: string;
   mode: typeof VELVET_SYNTHETIC_ACQUISITION_MODE | typeof VELVET_EVIDENCE_INBOX_MODE | null;
@@ -222,25 +208,6 @@ export function buildVelvetAcquisitionReceiptId(workspaceId: number, sourceEvent
     .update(`${VELVET_ACQUISITION_SOURCE}:${workspaceId}:event:${sourceEventId}`)
     .digest("hex");
   return `ace_${digest.slice(0, 40)}`;
-}
-
-export function normalizeLegacyVelvetHandoffPayload(
-  payload: LegacyVelvetHandoffPayload,
-): VelvetAcquisitionPayload {
-  const eventDigest = createHash("sha256").update(payload.externalId).digest("hex").slice(0, 32);
-  return velvetAcquisitionPayloadSchema.parse({
-    workspaceId: payload.workspaceId,
-    recordKind: "synthetic",
-    sourceRecordId: payload.externalId,
-    sourceEventId: `${VELVET_SYNTHETIC_EXTERNAL_ID_PREFIX}legacy-event-${eventDigest}`,
-    caller: payload.caller,
-    companyName: payload.companyName,
-    reason: payload.reason,
-    urgency: payload.urgency,
-    transcriptSnippet: payload.transcriptSnippet,
-    recommendedAction: payload.recommendedAction,
-    notes: payload.notes,
-  });
 }
 
 export function buildInitialAcquisitionReviewId(

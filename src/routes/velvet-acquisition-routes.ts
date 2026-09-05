@@ -9,8 +9,6 @@ import {
   buildVelvetAcquisitionPayloadHash,
   buildVelvetAcquisitionReceiptId,
   constantTimeSecretEquals,
-  legacyVelvetHandoffPayloadSchema,
-  normalizeLegacyVelvetHandoffPayload,
   readBearerToken,
   readVelvetAcquisitionConfig,
   validateVelvetAcquisitionEvidence,
@@ -267,7 +265,6 @@ const velvetAcquisitionRateLimit = rateLimit({
 
 export function createVelvetAcquisitionHandler(
   deps: VelvetAcquisitionRouteDeps,
-  payloadFormat: "acquisition" | "legacy-handoff" = "acquisition",
 ): RequestHandler {
   return async (req: Request, res: Response) => {
     const config = readVelvetAcquisitionConfig(deps.env);
@@ -308,9 +305,7 @@ export function createVelvetAcquisitionHandler(
       });
     }
 
-    const rawParsed = payloadFormat === "legacy-handoff"
-      ? legacyVelvetHandoffPayloadSchema.safeParse(req.body)
-      : velvetAcquisitionPayloadSchema.safeParse(req.body);
+    const rawParsed = velvetAcquisitionPayloadSchema.safeParse(req.body);
     if (!rawParsed.success) {
       return res.status(400).json({
         error: "Invalid Velvet Alchemy acquisition payload.",
@@ -321,13 +316,7 @@ export function createVelvetAcquisitionHandler(
         })),
       });
     }
-    let parsed: VelvetAcquisitionPayload;
-    if (payloadFormat === "legacy-handoff") {
-      const legacyParsed = legacyVelvetHandoffPayloadSchema.parse(req.body);
-      parsed = normalizeLegacyVelvetHandoffPayload(legacyParsed);
-    } else {
-      parsed = velvetAcquisitionPayloadSchema.parse(req.body);
-    }
+    const parsed: VelvetAcquisitionPayload = velvetAcquisitionPayloadSchema.parse(req.body);
     if (parsed.workspaceId !== config.workspaceId) {
       return res.status(403).json({
         error: "Workspace is not authorized for this integration.",

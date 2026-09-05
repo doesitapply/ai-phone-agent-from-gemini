@@ -718,7 +718,7 @@ export async function initSchema(): Promise<void> {
     CREATE TABLE IF NOT EXISTS post_call_processing_stages (
       call_sid       TEXT NOT NULL REFERENCES post_call_processing_jobs(call_sid) ON DELETE CASCADE,
       stage          TEXT NOT NULL
-        CHECK (stage IN ('summary', 'opt_out', 'call_webhook', 'crm_sync', 'owner_webhook', 'owner_alert')),
+        CHECK (stage IN ('summary', 'velvet_outcome', 'opt_out', 'call_webhook', 'crm_sync', 'owner_webhook', 'owner_alert')),
       status         TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'running', 'failed', 'completed', 'skipped')),
       attempts       INTEGER NOT NULL DEFAULT 0,
@@ -728,6 +728,23 @@ export async function initSchema(): Promise<void> {
       updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (call_sid, stage)
     )
+  `;
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'post_call_processing_stages_stage_check'
+          AND conrelid = 'post_call_processing_stages'::regclass
+      ) THEN
+        ALTER TABLE post_call_processing_stages DROP CONSTRAINT post_call_processing_stages_stage_check;
+      END IF;
+      ALTER TABLE post_call_processing_stages
+        ADD CONSTRAINT post_call_processing_stages_stage_check
+        CHECK (stage IN ('summary', 'velvet_outcome', 'opt_out', 'call_webhook', 'crm_sync', 'owner_webhook', 'owner_alert'));
+    EXCEPTION WHEN duplicate_object THEN
+      NULL;
+    END $$;
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS post_call_crm_checkpoints (

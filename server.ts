@@ -71,6 +71,7 @@ const EnvSchema = z.object({
   VELVET_ALCHEMY_PORTAL_URL: z.string().optional(),
   VELVET_ALCHEMY_BASE_URL: z.string().optional(),
   VELVET_ALCHEMY_READ_KEY: z.string().optional(),
+  VELVET_ALCHEMY_OUTCOME_KEY: z.string().optional(),
   NODE_ENV: z.enum(["development", "production", "test"]).optional(),
   // OpenClaw Gateway integration
   OPENCLAW_ENABLED: z.enum(["true", "false"]).optional(),
