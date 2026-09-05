@@ -10,7 +10,7 @@ import {
   readVelvetOutcomeConfig,
 } from "../velvet-outcome.js";
 
-const POST_CALL_STAGES = [
+export const POST_CALL_STAGES = [
   "summary",
   "opt_out",
   "call_webhook",
@@ -30,6 +30,52 @@ type PostCallJob = {
   attempts: number;
   lease_token: string;
 };
+
+/**
+ * Claim one due post-call job and atomically ensure it has every stage known to
+ * this worker version. The stage insert is deliberately part of the claim
+ * statement: jobs created before `velvet_outcome` existed, or by an old replica
+ * during a rolling deploy, are repaired before any stage handler runs.
+ *
+ * `ON CONFLICT DO NOTHING` preserves completed/skipped stage rows, so repairing
+ * a legacy job never repeats work that already finished.
+ */
+export async function claimPostCallJobWithStageRepair(
+  sql: any,
+  callSid: string,
+  leaseToken: string = randomUUID(),
+): Promise<PostCallJob | null> {
+  const rows = await sql<PostCallJob[]>`
+    WITH claimed_job AS (
+      UPDATE post_call_processing_jobs
+      SET status = 'running',
+          attempts = attempts + 1,
+          locked_at = NOW(),
+          lease_token = ${leaseToken},
+          last_error = NULL,
+          updated_at = NOW()
+      WHERE call_sid = ${callSid}
+        AND completed_at IS NULL
+        AND available_at <= NOW()
+        AND (
+          status IN ('pending', 'failed')
+          OR (status = 'running' AND locked_at < NOW() - (${POST_CALL_LEASE_MINUTES} * INTERVAL '1 minute'))
+        )
+      RETURNING call_sid, workspace_id, attempts, lease_token
+    ), inserted_stages AS (
+      INSERT INTO post_call_processing_stages (call_sid, stage)
+      SELECT claimed_job.call_sid, stages.stage
+      FROM claimed_job
+      CROSS JOIN UNNEST(${[...POST_CALL_STAGES]}::text[]) AS stages(stage)
+      ON CONFLICT (call_sid, stage) DO NOTHING
+      RETURNING call_sid
+    )
+    SELECT call_sid, workspace_id, attempts, lease_token,
+           (SELECT COUNT(*) FROM inserted_stages) AS repaired_stage_count
+    FROM claimed_job
+  `;
+  return rows[0] || null;
+}
 
 const postCallErrorMessage = (error: unknown): string =>
   String((error as any)?.message || error || "Unknown post-call processing error").slice(0, 2_000);
@@ -178,25 +224,7 @@ export function registerTwilioStatusRoutes(app: Express, deps: TwilioStatusRoute
   };
 
   const claimPostCallJob = async (callSid: string): Promise<PostCallJob | null> => {
-    const leaseToken = randomUUID();
-    const rows = await sql<PostCallJob[]>`
-      UPDATE post_call_processing_jobs
-      SET status = 'running',
-          attempts = attempts + 1,
-          locked_at = NOW(),
-          lease_token = ${leaseToken},
-          last_error = NULL,
-          updated_at = NOW()
-      WHERE call_sid = ${callSid}
-        AND completed_at IS NULL
-        AND available_at <= NOW()
-        AND (
-          status IN ('pending', 'failed')
-          OR (status = 'running' AND locked_at < NOW() - (${POST_CALL_LEASE_MINUTES} * INTERVAL '1 minute'))
-        )
-      RETURNING call_sid, workspace_id, attempts, lease_token
-    `;
-    return rows[0] || null;
+    return claimPostCallJobWithStageRepair(sql, callSid);
   };
 
   const runPostCallStage = async (
