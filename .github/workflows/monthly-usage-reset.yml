@@ -41,9 +41,10 @@ jobs:
             local detail="$1"
             echo "::warning title=Monthly usage reset needs attention::${detail}"
             gh issue create \
+              --repo "${GITHUB_REPOSITORY}" \
               --title "ops: monthly usage reset needs attention" \
               --body "Automated monthly usage reset needs operator attention.\n\n- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\n- Detail: ${detail}\n- Target: ${RAILWAY_URL}\n\nThis is an operational alert. It does not block source deployments." \
-              --label "operations" || echo "::warning title=Monthly usage reset alert issue failed::Could not create the issue; inspect this workflow run."
+              --label "bug" || echo "::warning title=Monthly usage reset alert issue failed::Could not create the issue; inspect this workflow run."
           }
 
           if [ -z "${PROV_SECRET}" ]; then
