@@ -1062,16 +1062,25 @@ function PublicComparePage() {
         <section className="px-5 py-10">
           <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1.05fr_0.95fr]">
             <div className="overflow-hidden border border-[#2f4637]">
-              <div className="grid grid-cols-[0.8fr_1fr_1fr] border-b border-[#2f4637] bg-[#101510] px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585]">
+              <div className="hidden grid-cols-[0.8fr_1fr_1fr] border-b border-[#2f4637] bg-[#101510] px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585] md:grid">
                 <div>Alternative</div>
                 <div>Buyer risk</div>
                 <div>SMIRK lane</div>
               </div>
               {compareRows.map((row) => (
                 <div key={row.category} className="grid gap-3 border-b border-[#173321] px-4 py-4 text-sm last:border-b-0 md:grid-cols-[0.8fr_1fr_1fr]">
-                  <div className="font-semibold text-white">{row.category}</div>
-                  <div className="leading-6 text-gray-400">{row.buyerConcern}</div>
-                  <div className="leading-6 text-gray-200">{row.smirkPosition}</div>
+                  <div>
+                    <div className="mb-1 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585] md:hidden">Alternative</div>
+                    <div className="font-semibold text-white">{row.category}</div>
+                  </div>
+                  <div>
+                    <div className="mb-1 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585] md:hidden">Buyer risk</div>
+                    <div className="leading-6 text-gray-400">{row.buyerConcern}</div>
+                  </div>
+                  <div>
+                    <div className="mb-1 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585] md:hidden">SMIRK lane</div>
+                    <div className="leading-6 text-gray-200">{row.smirkPosition}</div>
+                  </div>
                 </div>
               ))}
             </div>

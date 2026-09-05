@@ -46,6 +46,10 @@ test("public presentation retains an honest no-data recovery workflow format ins
   );
   assert.match(appSource, /Workflow format only—not live customer data/);
   assert.match(appSource, /Name & number captured/);
+  assert.match(appSource, /hidden grid-cols-\[0\.8fr_1fr_1fr\][^\"]*md:grid/);
+  assert.match(appSource, /md:hidden\">Alternative/);
+  assert.match(appSource, /md:hidden\">Buyer risk/);
+  assert.match(appSource, /md:hidden\">SMIRK lane/);
   assert.doesNotMatch(appSource, /Main-line backup/);
   assert.doesNotMatch(appSource, /No AC \/ elderly parent home/);
 });
