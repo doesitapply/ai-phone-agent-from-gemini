@@ -6,7 +6,18 @@ import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
-const opsRoot = path.resolve(repoRoot, "..", "ops");
+const worktreeList = execFileSync("git", ["worktree", "list", "--porcelain"], {
+  cwd: repoRoot,
+  encoding: "utf8",
+});
+const primaryWorktreeRoot = worktreeList.match(/^worktree (.+)$/m)?.[1];
+
+if (!primaryWorktreeRoot) {
+  console.error("FAIL unable to resolve the primary Git worktree for SMIRK ops copy");
+  process.exit(1);
+}
+
+const opsRoot = path.resolve(primaryWorktreeRoot, "..", "ops");
 
 const files = [
   "SMIRK_OUTREACH_BATCH_20.md",
