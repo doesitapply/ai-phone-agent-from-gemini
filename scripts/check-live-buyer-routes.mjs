@@ -115,8 +115,6 @@ await check(
       const plans = Array.isArray(body.plans) ? body.plans : [];
       const expected = new Map([
         ['starter', { price: 197, usage: '500 calls and 1,000 minutes per month.' }],
-        ['pro', { price: 397, usage: '2,000 calls and 5,000 minutes per month.' }],
-        ['enterprise', { price: 697, usage: 'Usage limits and any overage terms require an owner-approved Enterprise policy before checkout is available.' }],
       ]);
 
       if (plans.length !== expected.size) return false;
@@ -139,8 +137,8 @@ await check(
       if (!planShapesReady) return false;
 
       const availability = Object.fromEntries(plans.map((plan) => [plan.id, plan.checkout_available]));
-      if (availability.starter !== true || availability.pro !== false || availability.enterprise !== false) return false;
-      pricingCheckoutAvailability = availability;
+      if (availability.starter !== true || plans.some((plan) => plan.id !== 'starter')) return false;
+      pricingCheckoutAvailability = { starter: true, pro: false, enterprise: false };
       return true;
     } catch {
       return false;
@@ -253,8 +251,8 @@ await check(
   { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
   (status, text, headers) => {
     if (status === 429) return /too many demo requests/i.test(text);
-    return status !== 404 &&
-      /business_name and owner_email required/i.test(text) &&
+    return status === 400 &&
+      /business_name, valid owner_email, and phone required/i.test(text) &&
       cacheProtected(headers);
   }
 );

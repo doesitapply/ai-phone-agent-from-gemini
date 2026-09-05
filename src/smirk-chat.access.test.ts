@@ -8,6 +8,13 @@ test("a shared operator API-key session remains tool-free", () => {
   assert.equal(isToolAllowed("get_velvet_system_state", "operator_readonly", null, null), false);
 });
 
+test("workspace and demo sessions cannot use operator-only tools", () => {
+  for (const accessMode of ["workspace", "demo_operator"] as const) {
+    assert.equal(isToolAllowed("make_call", accessMode, "+15555550123", null), false);
+    assert.equal(isToolAllowed("update_setting", accessMode, null, "update_setting"), false);
+  }
+});
+
 test("an owner mutation requires an exact confirmation", () => {
   assert.equal(isToolAllowed("update_setting", "owner_operator", null, null), false);
   assert.equal(isToolAllowed("update_setting", "owner_operator", null, "update_setting"), true);

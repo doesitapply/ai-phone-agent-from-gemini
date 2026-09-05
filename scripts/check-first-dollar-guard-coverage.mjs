@@ -723,7 +723,7 @@ const checks = [
   {
     label: 'SMIRK chat route passes access mode to backend',
     file: 'src/routes/lead-routes.ts',
-    needle: 'handleSmirkChat(messages, wsId, { accessMode: authMode })',
+    needle: 'handleSmirkChat(messages, wsId, { accessMode, actorEmail:',
   },
   {
     label: 'SMIRK chat debug context requires operator auth',
@@ -743,12 +743,12 @@ const checks = [
   {
     label: 'SMIRK chat blocks workspace and demo access to operator tools',
     file: 'src/smirk-chat.ts',
-    needle: 'const allowedForMode = accessMode === "operator"',
+    needle: 'const allowedForMode = isToolAllowed(name, accessMode, approvedCallTarget, approvedActionTool);',
   },
   {
     label: 'workspace and demo sessions render SMIRK chat without whisper access',
     file: 'src/App.tsx',
-    needle: '<SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession && !isDemoOperator} />',
+    needle: 'canWhisper={!!operatorSession && !isDemoOperator}',
   },
   {
     label: 'appointment create route requires operator auth',
