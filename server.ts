@@ -299,6 +299,14 @@ import { registerAuthRoutes } from "./src/routes/auth-routes.js";
 import { resolveOperatorAdminEmails } from "./src/operator-identity.js";
 import { isVerifiedOwnerChatIdentity, resolveOwnerChatEmails } from "./src/owner-chat-identity.js";
 import { validateGoogleTokenAudience } from "./src/google-auth-safety.js";
+import {
+  clearOwnerSessionCookie,
+  issueOwnerSessionToken,
+  ownerSessionCookie,
+  readOwnerSessionCookie,
+  verifyOwnerSessionToken,
+  type OwnerSession,
+} from "./src/owner-session.js";
 import { registerBuyerRoutes } from "./src/routes/buyer-routes.js";
 import { registerCalendarRoutes } from "./src/routes/calendar-routes.js";
 import { registerCalendlyRoutes } from "./src/routes/calendly-routes.js";
@@ -599,6 +607,12 @@ const isDemoOperatorRequestAllowed = (req: Request): boolean => {
 const dashboardAuth = async (req: Request, res: Response, next: NextFunction) => {
   const operatorApiKey = env.DASHBOARD_API_KEY;
   const demoOperatorApiKey = env.DEMO_OPERATOR_API_KEY;
+  const ownerSession = readVerifiedOwnerSession(req);
+  if (ownerSession) {
+    (req as any).authMode = "operator";
+    (req as any).ownerSession = ownerSession;
+    return next();
+  }
   const providedApiKey = String(req.headers["x-api-key"] || "").trim();
   if (operatorApiKey && providedApiKey && timingSafeSecretEquals(providedApiKey, operatorApiKey)) {
     (req as any).authMode = "operator";
@@ -757,8 +771,33 @@ const verifyGoogleIdToken = async (credential: string): Promise<GoogleIdentity> 
   };
 };
 
+const readVerifiedOwnerSession = (req: Request): OwnerSession | null => {
+  const token = readOwnerSessionCookie(req.headers.cookie);
+  const session = verifyOwnerSessionToken(token, String(env.DASHBOARD_API_KEY || ""));
+  if (!session) return null;
+  if (!googleAdminEmails().includes(session.email)) return null;
+  return session;
+};
+
+const createVerifiedOwnerSession = (identity: GoogleIdentity, res: Response): OwnerSession => {
+  const { token, session } = issueOwnerSessionToken({
+    email: identity.email,
+    name: identity.name,
+    picture: identity.picture,
+    subject: identity.sub,
+  }, String(env.DASHBOARD_API_KEY || ""));
+  res.setHeader("Set-Cookie", ownerSessionCookie(token, IS_PROD));
+  return session;
+};
+
+const clearVerifiedOwnerSession = (res: Response): void => {
+  res.setHeader("Set-Cookie", clearOwnerSessionCookie(IS_PROD));
+};
+
 const resolveVerifiedOwnerChatActor = async (req: Request): Promise<string | null> => {
   if ((req as any).authMode !== "operator") return null;
+  const session = (req as any).ownerSession as OwnerSession | undefined;
+  if (session?.email && googleAdminEmails().includes(session.email)) return session.email;
   const credential = String(req.headers["x-smirk-google-id-token"] || "").trim();
   if (!credential) return null;
   try {
@@ -827,6 +866,9 @@ registerAuthRoutes(app, {
   googleDemoOperatorEmails,
   verifyGoogleIdToken,
   getWorkspacesForEmail,
+  createVerifiedOwnerSession,
+  readVerifiedOwnerSession,
+  clearVerifiedOwnerSession,
 });
 
 ["/api/calls", "/api/agents", "/api/stats", "/api/contacts", "/api/tasks", "/api/handoffs", "/api/team", "/api/summaries", "/api/logs", "/api/webhook-url"].forEach(

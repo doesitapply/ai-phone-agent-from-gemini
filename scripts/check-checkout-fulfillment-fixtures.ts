@@ -16,6 +16,7 @@ import {
   shouldReplaceStripeSubscriptionFact,
 } from "../src/billing-safety.js";
 import {
+  evaluateCheckoutActivationPrerequisites,
   isNativeStripeCheckoutKeyReady,
   registerBuyerRoutes,
   verifyCheckoutPaymentLinkBeforeFulfillment,
@@ -27,6 +28,30 @@ const buyerRoutesSource = fs.readFileSync("src/routes/buyer-routes.ts", "utf8");
 assert.ok(
   buyerRoutesSource.includes('adaptive_pricing: { enabled: false }'),
   "native Checkout must explicitly disable adaptive pricing so its USD subtotal remains deterministic",
+);
+const completeActivationPrerequisites = {
+  signedWebhookReady: true,
+  durablePersistenceReady: true,
+  trustedAppOriginReady: true,
+  automaticFulfillmentReady: true,
+  resendReady: true,
+  senderReady: true,
+  operatorAlertRecipientReady: true,
+  customerPolicyReady: true,
+  revenueReadKeyReady: true,
+  starterFulfillmentIdsReady: true,
+  historicalPaymentLinkReady: true,
+  twilioProvisioningReady: true,
+};
+assert.equal(
+  evaluateCheckoutActivationPrerequisites(completeActivationPrerequisites),
+  true,
+  "checkout may open only when payment, policy, notification, persistence, and managed-number fulfillment are all ready",
+);
+assert.equal(
+  evaluateCheckoutActivationPrerequisites({ ...completeActivationPrerequisites, twilioProvisioningReady: false }),
+  false,
+  "Starter checkout must remain blocked when managed Twilio credentials or workspace secret encryption cannot provision the advertised recovery number",
 );
 const checkoutHandlerStart = saasSource.indexOf("async function handleCheckoutCompleted");
 const buyerIdentityStart = saasSource.indexOf("const ownerEmail = String(", checkoutHandlerStart);

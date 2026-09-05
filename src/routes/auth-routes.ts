@@ -27,6 +27,19 @@ type AuthRouteDeps = {
     api_key: string;
     role: string;
   }>>;
+  createVerifiedOwnerSession: (identity: GoogleIdentity, res: Response) => {
+    email: string;
+    role: "operator";
+    expiresAt: number;
+  };
+  readVerifiedOwnerSession: (req: Request) => {
+    email: string;
+    name?: string;
+    picture?: string;
+    role: "operator";
+    expiresAt: number;
+  } | null;
+  clearVerifiedOwnerSession: (res: Response) => void;
 };
 
 export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
@@ -37,7 +50,36 @@ export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
     googleDemoOperatorEmails,
     verifyGoogleIdToken,
     getWorkspacesForEmail,
+    createVerifiedOwnerSession,
+    readVerifiedOwnerSession,
+    clearVerifiedOwnerSession,
   } = deps;
+
+  app.get("/api/auth/session", (req: Request, res: Response) => {
+    const session = readVerifiedOwnerSession(req);
+    if (!session) return res.status(401).json({ ok: false, authenticated: false });
+    return res.json({
+      ok: true,
+      authenticated: true,
+      mode: "operator",
+      user: {
+        email: session.email,
+        name: session.name,
+        picture: session.picture,
+      },
+      session: {
+        serverSession: true,
+        label: `SMIRK Admin · ${session.email}`,
+        role: session.role,
+        expiresAt: session.expiresAt,
+      },
+    });
+  });
+
+  app.post("/api/auth/logout", express.json(), (_req: Request, res: Response) => {
+    clearVerifiedOwnerSession(res);
+    return res.json({ ok: true });
+  });
 
   app.get("/api/auth/google/config", (_req: Request, res: Response) => {
     const clientId = googleClientIds()[0] || "";
@@ -78,14 +120,16 @@ export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
           return res.status(503).json({ error: "Operator Google sign-in is not configured." });
         }
         if (fullAdminEnabled && allowedAdminEmails.includes(identity.email)) {
+          const ownerSession = createVerifiedOwnerSession(identity, res);
           return res.json({
             ok: true,
             mode: "operator",
             user: identity,
             session: {
-              apiKey: env.DASHBOARD_API_KEY,
+              serverSession: true,
               label: `SMIRK Admin · ${identity.email}`,
               role: "operator",
+              expiresAt: ownerSession.expiresAt,
             },
           });
         }

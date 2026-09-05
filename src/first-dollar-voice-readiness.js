@@ -49,14 +49,16 @@ export function evaluateFirstDollarVoiceReadiness(env = process.env) {
   const streamingTtsReady = Object.values(ttsProviders).some(Boolean);
   const streamingAiReady = openRouterKeyReady && openRouterEnabled && streamingPathEnabled && streamingTtsReady;
 
-  const blockers = [];
-  if (!parentAccountSidReady) blockers.push("TWILIO_ACCOUNT_SID must be an exact Twilio AC... SID");
-  if (!parentAuthTokenReady) blockers.push("TWILIO_AUTH_TOKEN must be a non-placeholder parent-account auth token");
-  if (!workspaceSecretEncryptionReady) blockers.push("WORKSPACE_SECRET_ENCRYPTION_KEY must be a dedicated secret of at least 32 characters");
-  if (!openRouterKeyReady) blockers.push("OPENROUTER_API_KEY must be a non-placeholder OpenRouter key");
-  if (!openRouterEnabled) blockers.push("OPENROUTER_ENABLED must be exactly true");
-  if (!streamingPathEnabled) blockers.push("FAST_LIVE_CALLS must be exactly false because true bypasses the streaming AI path");
-  if (!streamingTtsReady) blockers.push("at least one enabled premium streaming TTS provider must be configured");
+  const provisioningBlockers = [];
+  if (!parentAccountSidReady) provisioningBlockers.push("TWILIO_ACCOUNT_SID must be an exact Twilio AC... SID");
+  if (!parentAuthTokenReady) provisioningBlockers.push("TWILIO_AUTH_TOKEN must be a non-placeholder parent-account auth token");
+  if (!workspaceSecretEncryptionReady) provisioningBlockers.push("WORKSPACE_SECRET_ENCRYPTION_KEY must be a dedicated secret of at least 32 characters");
+  const streamingBlockers = [];
+  if (!openRouterKeyReady) streamingBlockers.push("OPENROUTER_API_KEY must be a non-placeholder OpenRouter key");
+  if (!openRouterEnabled) streamingBlockers.push("OPENROUTER_ENABLED must be exactly true");
+  if (!streamingPathEnabled) streamingBlockers.push("FAST_LIVE_CALLS must be exactly false because true bypasses the streaming AI path");
+  if (!streamingTtsReady) streamingBlockers.push("at least one enabled premium streaming TTS provider must be configured");
+  const blockers = [...provisioningBlockers, ...streamingBlockers];
 
   return {
     twilioProvisioningReady,
@@ -69,6 +71,8 @@ export function evaluateFirstDollarVoiceReadiness(env = process.env) {
     streamingPathEnabled,
     streamingTtsReady,
     ttsProviders,
+    provisioningBlockers,
+    streamingBlockers,
     blockers,
     ready: twilioProvisioningReady && streamingAiReady,
   };

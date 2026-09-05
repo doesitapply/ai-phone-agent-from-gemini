@@ -72,6 +72,8 @@
 - [x] Implement the trade-floor visual system in the live public and owner-facing UI while preserving existing verified product behavior.
 - [x] Remove the blank Starter Settings destination, expose tenant-scoped CRM and business context in the owner desk, and keep provider, agent, integration, and system settings operator-only.
 - [x] Validate priority controls, tenant CRM access, operator Settings isolation, responsive behavior, and no-fabrication requirements for the deployed `96b6a9a6` interface; the closeout hotfixes do not change runtime UI code.
+- [x] Restore a clear customer-owner Settings entry point and simplify the settings surface into plain-language sections without exposing internal-only administrative controls.
+- [ ] Validate priority controls, settings access, responsive behavior, and no-fabrication requirements before release.
 
 ## Human-Centered Recovery Visuals
 
@@ -97,3 +99,69 @@
 - [ ] Add workspace controls and audit evidence for memory promotion, owner override, qualification completion, and escalation.
 - [x] Add regression coverage for meaningful-lead promotion, nonmeaningful-call suppression, repeated-caller context, qualification stop rules, and authorized commitment boundaries.
 - [x] Prevent inbound callers from using the live voice agent to place third-party outbound calls; retain owner-chat confirmation and screened human transfer as the only authorized dial paths.
+- [x] Verify the currently deployed checkout, activation, proof snapshot, caller-memory, and owner-action readiness before declaring SMIRK sellable.
+- [x] Classify SMIRK separately for founder-led selling, assisted onboarding, and autonomous self-service selling, with explicit blockers for each level.
+- [x] Deliver the shortest evidence-based path from the current production state to first revenue without adding nonessential product scope.
+- [x] Inventory every SMIRK backend capability, provider, route family, scheduled process, configuration gate, and customer-facing dependency.
+- [x] Classify each backend capability as live, fully wired but unverified, partially wired, dormant, easily enabled, or requiring substantial integration work.
+- [x] Estimate external vendor and usage costs for each paid capability using current primary-source pricing, separating fixed, usage-based, and implementation costs.
+- [x] Map the practical product and revenue potential of each viable SMIRK configuration without overstating unproven outcomes.
+- [x] Model regulatory and platform-shutdown scenarios for AI voice, recording, automated outreach, SMS, call forwarding, and automated decisions, including survivable fallback configurations.
+- [x] Deliver a prioritized backend capability matrix that identifies what to sell now, enable next, defer, or remove.
+
+## Economics and Operational Hardening
+
+- [ ] Add auditable per-workspace usage and estimated provider-cost telemetry for call minutes, speech-recognition turns, generated voice, LLM usage where available, email, retries, and support-sensitive failure events.
+- [ ] Add protective budget and anomaly controls that preserve the approved call/minute hard caps and surface abnormal cost drivers without inventing precision where providers do not return usage data.
+- [ ] Complete and verify customer billing self-service with a SMIRK-scoped Stripe portal configuration and least-privilege credential path, without changing the approved Starter price or cancellation policy.
+- [ ] Surface plain-language provider and connector health for the dependencies that can materially break answering, qualification, alerts, payment, or fulfillment.
+- [ ] Validate a fresh buyer checkout-to-provisioning-to-activation chain using a controlled safe method before exposing unattended acquisition.
+- [ ] Verify current database backup and restore capabilities and produce an operator recovery runbook instead of assuming Railway data recovery.
+- [ ] Run the complete release-contract suite, deploy only the verified correction set, and record the remaining real-call or transaction proof gates.
+
+## Durable Owner Access and Google Workspace Integrations
+
+- [x] Reproduce and trace the production in-app agent denial for the approved admin account, including browser token state, server identity resolution, workspace membership, and access-mode selection.
+- [x] Replace per-request browser-forwarded Google identity with a durable, secure, server-verified owner session for the approved admin account.
+- [x] Give the verified admin profile access to the full implemented operator capability surface while retaining confirmation gates and immutable audit receipts for consequential actions.
+- [x] Separate operator authentication from Google Sheets and Calendar integration OAuth so losing or refreshing an integration token cannot remove admin authority.
+- [ ] Diagnose and repair Google Sheets/Calendar connection status, consent scopes, callback handling, token persistence, and plain-language reconnect behavior.
+- [ ] Add regression coverage for session creation, expiry, revocation, workspace binding, full admin access, ordinary-member denial, and integration-token isolation.
+- [ ] Deploy and verify the owner session plus Google Workspace connection flow before declaring admin access fixed.
+- [x] Narrowed current scope: make Google dashboard sign-in authenticate `madeinreno775@gmail.com` as the full admin/operator and persist that authority reliably across chat and operator routes.
+- [x] Keep Google Sheets and Calendar product integrations separate from dashboard authentication; native Sheets/Calendar OAuth repair is explicitly deferred from this login fix.
+
+## Complete Frontend Replacement
+
+- [x] Replace the legacy monolithic public frontend with a new component architecture based on the approved warm industrial SMIRK reference, rather than layering additional CSS over old layouts.
+- [x] Replace the legacy signed-in shell with a new simple owner navigation and page hierarchy for Calls, Tasks, Alerts, Settings, and clearly separated advanced admin tools.
+- [x] Preserve all verified backend routes, tenant boundaries, no-fabrication rules, confirmation gates, and evidence receipts while migrating the interface.
+- [x] Integrate reliable Google admin sign-in into the new shell and ensure the approved admin account receives full operator capability without exposing the shared API key to the browser.
+- [x] Remove or quarantine obsolete frontend components, duplicated navigation, decorative telemetry, and internal-only controls from customer surfaces.
+- [ ] Validate every retained public and authenticated route at desktop and mobile breakpoints before replacing the production frontend.
+- [ ] Deploy the verified frontend replacement and confirm the active Railway build serves the new shell rather than the legacy UI.
+
+## Workfloor Visual Fidelity Correction
+
+- [x] Treat the supplied black and ivory workfloor mockups as the exact visual acceptance target, not loose inspiration; reject conventional SaaS cards, soft editorial spacing, and generic landing-page composition.
+- [x] Replace the softened V2 token system with machined black/ivory surfaces, clipped and chamfered panel geometry, restrained lime signal paths, amber approval states, engraved labels, monospace evidence text, physical fasteners, and receipt/instrument motifs.
+- [x] Rebuild the public hero so its silhouette, information density, signal-to-context-to-decision visualization, and bottom workflow rail materially match the supplied SMIRK landing references without using fabricated live data.
+- [x] Rebuild Today as the supplied SMIRK Intelligence Brief: narrow navigation, one dominant owner decision, a three-stage evidence rail, and one obvious next action sourced only from live workspace data.
+- [x] Rebuild Calls as a ledger-plus-evidence-inspector layout that materially matches the supplied calls reference while preserving real call fields, explicit unavailable states, and evidence provenance.
+- [x] Rebuild Tasks and handoffs as the supplied Recovery Queue grammar using only verified backend actions: acknowledge, queue callback, complete with an auditable resolution note.
+- [x] Rebuild Settings and Business Knowledge Pack as an engineered control plane with source provenance, draft/active separation, safe-to-say, needs-owner-approval, and always-escalate states; do not imply inactive knowledge is caller-facing.
+- [x] Preserve a genuine light trade-floor version and dark operator version of the same industrial system rather than two unrelated themes.
+- [ ] Capture and inspect full-page desktop and mobile screenshots for public home, Google login, Today, Calls, Tasks, Settings, and Admin before release; correct any screen that does not visibly belong to the supplied reference family.
+- [ ] Complete the replacement Google Web OAuth client only after the corrected interface passes visual and contract verification, then rotate production configuration and prove the approved admin can log in, retain operator authority, and log out.
+
+## Newly Surfaced P1 Release Blockers
+
+- [ ] Reconcile the current local frontend, owner-session, auth, and readiness changes onto GitHub `main`, which is 33 commits ahead of local `5680193`, without discarding newer acquisition, release-gate, mobile, callback, or public-route fixes.
+- [ ] Re-run the current-main build and release-contract suite after reconciliation before treating any local pass as release evidence.
+- [ ] Reproduce the checkout-readiness gap from merged PR #13 and prove whether Starter checkout can remain enabled when managed Twilio provisioning credentials or the workspace encryption key are absent.
+- [ ] Make managed-Twilio provisioning credentials and the workspace encryption key checkout-blocking prerequisites for the dedicated recovery-number offer; keep optional premium TTS diagnostics non-blocking only if that matches the actual fulfillment boundary.
+- [ ] Add deterministic readiness and checkout tests proving a buyer cannot be charged when the system cannot provision the advertised dedicated recovery number.
+- [ ] Reproduce the Velvet outcome-callback identifier gap from merged PR #12 for accepted external IDs including `velvet-lead-00000001`.
+- [ ] Replace identifier archaeology with an explicit persisted Velvet lead identifier where possible, or fail intake closed when the required identifier cannot be resolved; do not silently skip the promised outcome callback.
+- [ ] Add deterministic intake-to-outcome callback tests covering both the legacy numeric format and the repository's accepted `velvet-lead-*` example.
+- [ ] Prepare a replacement delivery for `gawfer@icloud.com` using a hosted share link or compressed bundle rather than the rejected six-image attachment set, and request confirmation immediately before sending.

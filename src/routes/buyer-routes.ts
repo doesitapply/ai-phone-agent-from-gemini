@@ -495,6 +495,34 @@ export async function verifyCheckoutPaymentLinkBeforeFulfillment(
   }
 }
 
+export function evaluateCheckoutActivationPrerequisites(input: {
+  signedWebhookReady: boolean;
+  durablePersistenceReady: boolean;
+  trustedAppOriginReady: boolean;
+  automaticFulfillmentReady: boolean;
+  resendReady: boolean;
+  senderReady: boolean;
+  operatorAlertRecipientReady: boolean;
+  customerPolicyReady: boolean;
+  revenueReadKeyReady: boolean;
+  starterFulfillmentIdsReady: boolean;
+  historicalPaymentLinkReady: boolean;
+  twilioProvisioningReady: boolean;
+}): boolean {
+  return input.signedWebhookReady
+    && input.durablePersistenceReady
+    && input.trustedAppOriginReady
+    && input.automaticFulfillmentReady
+    && input.resendReady
+    && input.senderReady
+    && input.operatorAlertRecipientReady
+    && input.customerPolicyReady
+    && input.revenueReadKeyReady
+    && input.starterFulfillmentIdsReady
+    && input.historicalPaymentLinkReady
+    && input.twilioProvisioningReady;
+}
+
 const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boolean) => {
   const plans = getPublicPricingPlans(env);
   const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
@@ -597,17 +625,20 @@ const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boole
   // notification. Self-service billing and premium streaming voice are valuable
   // post-sale enhancements, but cannot strand a ready buyer before a proven
   // Starter recovery workflow has its first customer.
-  const activationPrerequisitesReady = signedWebhookReady
-    && durablePersistenceReady
-    && trustedAppOriginReady
-    && automaticFulfillmentReady
-    && resendReady
-    && senderReady
-    && operatorAlertRecipientReady
-    && customerPolicyReady
-    && revenueReadKeyReady
-    && starterFulfillmentIds.ready
-    && historicalPaymentLinkProof.ready;
+  const activationPrerequisitesReady = evaluateCheckoutActivationPrerequisites({
+    signedWebhookReady,
+    durablePersistenceReady,
+    trustedAppOriginReady,
+    automaticFulfillmentReady,
+    resendReady,
+    senderReady,
+    operatorAlertRecipientReady,
+    customerPolicyReady,
+    revenueReadKeyReady,
+    starterFulfillmentIdsReady: starterFulfillmentIds.ready,
+    historicalPaymentLinkReady: historicalPaymentLinkProof.ready,
+    twilioProvisioningReady: voiceReadiness.twilioProvisioningReady,
+  });
   const providerPlanReadiness = buildPlanCheckoutReadiness({
     nativeCheckoutReady,
     activationPrerequisitesReady,
@@ -655,7 +686,10 @@ const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boole
     streamingAiReady: voiceReadiness.streamingAiReady,
     streamingTtsReady: voiceReadiness.streamingTtsReady,
     voiceReadinessBlockers: voiceReadiness.blockers,
-    voiceReadinessLaunchBlocking: false,
+    twilioProvisioningBlockers: voiceReadiness.provisioningBlockers,
+    streamingVoiceBlockers: voiceReadiness.streamingBlockers,
+    voiceReadinessLaunchBlocking: true,
+    streamingVoiceLaunchBlocking: false,
     starterFulfillmentIdBlockers: starterFulfillmentIds.blockers,
     historicalPaymentLinkBlockers: historicalPaymentLinkProof.blockers,
   };

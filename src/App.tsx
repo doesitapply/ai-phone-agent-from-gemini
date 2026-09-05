@@ -2212,8 +2212,9 @@ type WorkspaceSession = {
 };
 
 type OperatorSession = {
-  apiKey: string;
-  googleIdToken?: string;
+  apiKey?: string;
+  serverSession?: boolean;
+  email?: string;
   label: string;
   role: "operator" | "demo_operator";
   capabilities?: string[];
@@ -2449,11 +2450,12 @@ const readOperatorSession = (): OperatorSession | null => {
     const raw = window.localStorage.getItem(OPERATOR_SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed?.apiKey) return null;
+    if (!parsed?.apiKey && !parsed?.serverSession) return null;
     const role = normalizeOperatorRole(parsed.role);
     return {
-      apiKey: String(parsed.apiKey),
-      googleIdToken: typeof parsed.googleIdToken === "string" && parsed.googleIdToken.trim() ? parsed.googleIdToken : undefined,
+      apiKey: typeof parsed.apiKey === "string" && parsed.apiKey.trim() ? String(parsed.apiKey) : undefined,
+      serverSession: parsed.serverSession === true,
+      email: typeof parsed.email === "string" && parsed.email.trim() ? parsed.email.trim().toLowerCase() : undefined,
       label: String(parsed.label || (role === "demo_operator" ? "SMIRK Demo Operator" : "SMIRK Operator Admin")),
       role,
       capabilities: Array.isArray(parsed.capabilities) ? parsed.capabilities.map((item: unknown) => String(item || "").trim()).filter(Boolean) : [],
@@ -2574,7 +2576,6 @@ const contactDncErrorMessage = (error: unknown, fallback = "Unable to update DNC
 
 // ── API Helper ────────────────────────────────────────────────────────────────
 const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
-  const ownerChatToken = path === "/api/chat" ? readOperatorSession()?.googleIdToken : undefined;
   let res: Response;
   try {
     res = await fetch(path, {
@@ -2583,7 +2584,6 @@ const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
       headers: {
         "Content-Type": "application/json",
         ...getWorkspaceAuthHeaders(),
-        ...(ownerChatToken ? { "X-SMIRK-Google-ID-Token": ownerChatToken } : {}),
         ...options?.headers,
       },
     });
@@ -12961,12 +12961,12 @@ export default function App() {
         throw new Error(`${body.error || `HTTP ${res.status}`}${choices}`);
       }
 
-      if (body.mode === "operator" && body.session?.apiKey) {
+      if (body.mode === "operator" && body.session?.serverSession) {
         const now = new Date().toISOString();
         const role = normalizeOperatorRole(body.session.role);
         const nextSession: OperatorSession = {
-          apiKey: String(body.session.apiKey),
-          googleIdToken: credential,
+          serverSession: true,
+          email: String(body.user?.email || "").trim().toLowerCase() || undefined,
           label: String(body.session.label || operatorLabel || (role === "demo_operator" ? "SMIRK Demo Operator" : "SMIRK Operator Admin")),
           role,
           capabilities: Array.isArray(body.session.capabilities) ? body.session.capabilities.map((item: unknown) => String(item || "").trim()).filter(Boolean) : [],
@@ -13022,6 +13022,37 @@ export default function App() {
       })
       .catch(() => setGoogleConfig({ enabled: false }));
   }, []);
+
+  useEffect(() => {
+    if (operatorSession?.serverSession || workspaceSession) return;
+    let cancelled = false;
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then(async (res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (cancelled || !body?.authenticated || !body?.session?.serverSession) return;
+        const now = new Date().toISOString();
+        const nextSession: OperatorSession = {
+          serverSession: true,
+          email: String(body.user?.email || "").trim().toLowerCase() || undefined,
+          label: String(body.session.label || "SMIRK Admin"),
+          role: "operator",
+          capabilities: Array.isArray(body.session.capabilities) ? body.session.capabilities : [],
+          pages: normalizeOperatorPages(body.session.pages),
+          spendRestricted: false,
+          createdAt: now,
+          lastUsedAt: now,
+        };
+        writeWorkspaceSession(null);
+        writeOperatorSession(nextSession);
+        setWorkspaceSession(null);
+        setOperatorSession(nextSession);
+        setOperatorLabel(nextSession.label);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [operatorSession?.serverSession, workspaceSession]);
 
   useEffect(() => {
     if (!googleConfig.enabled || !googleConfig.clientId || workspaceSession || operatorSession) return;
@@ -13089,6 +13120,7 @@ export default function App() {
   }, [googleConfig.clientId, googleConfig.enabled, operatorSession, signInWithGoogle, workspaceSession]);
 
   const signOutWorkspace = useCallback(() => {
+    void fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
     writeWorkspaceSession(null);
     writeOperatorSession(null);
     writeActiveWorkspaceId(null);
@@ -13990,7 +14022,7 @@ export default function App() {
             <SmirkChatBubble
               activeCalls={activeCalls}
               canWhisper={!!operatorSession && !isDemoOperator}
-              hasVerifiedOwnerIdentity={!!operatorSession?.googleIdToken && !isDemoOperator}
+              hasVerifiedOwnerIdentity={operatorSession?.serverSession === true && !isDemoOperator}
             />
           )}
         </div>
@@ -14121,13 +14153,6 @@ function SmirkChatBubble({
         ...getWorkspaceAuthHeaders(),
       };
       // The chat bubble previously duplicated the normal API request path and
-      // omitted this token, leaving a Google-verified owner indistinguishable
-      // from a shared API-key session. The server remains responsible for
-      // validating the Google identity and owner allowlist before any tool is
-      // exposed; this only carries the identity proof to that verifier.
-      if (_opSess?.googleIdToken) {
-        _authHeaders["X-SMIRK-Google-ID-Token"] = _opSess.googleIdToken;
-      }
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: _authHeaders,

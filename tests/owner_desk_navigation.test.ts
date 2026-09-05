@@ -65,14 +65,16 @@ test("owner Intelligence Brief is computed from live call, queue, and evidence d
   assert.doesNotMatch(appSource, /Maria Alvarez/);
 });
 
-test("verified owner identity is forwarded by the chat bubble before server-side call authority is evaluated", () => {
+test("verified owner identity uses the server session before chat call authority is evaluated", () => {
   const appSource = fs.readFileSync("src/App.tsx", "utf8");
 
   assert.match(appSource, /const _authHeaders: Record<string, string> = \{[\s\S]*?\.\.\.getWorkspaceAuthHeaders\(\)/);
-  assert.match(appSource, /if \(_opSess\?\.googleIdToken\) \{[\s\S]*?_authHeaders\["X-SMIRK-Google-ID-Token"\] = _opSess\.googleIdToken/);
   assert.match(appSource, /const res = await fetch\("\/api\/chat", \{[\s\S]*?headers: _authHeaders/);
   assert.match(appSource, /canWhisper=\{!!operatorSession && !isDemoOperator\}/);
-  assert.match(appSource, /hasVerifiedOwnerIdentity=\{!!operatorSession\?\.googleIdToken && !isDemoOperator\}/);
+  assert.match(appSource, /hasVerifiedOwnerIdentity=\{operatorSession\?\.serverSession === true && !isDemoOperator\}/);
+  assert.match(appSource, /fetch\("\/api\/auth\/session", \{ cache: "no-store" \}\)/);
+  assert.doesNotMatch(appSource, /X-SMIRK-Google-ID-Token/);
+  assert.doesNotMatch(appSource, /googleIdToken/);
   assert.match(appSource, /Owner identity verified\./);
   assert.match(appSource, /owner verification is required before I can place a call/);
 });

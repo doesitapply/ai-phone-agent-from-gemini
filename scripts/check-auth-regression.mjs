@@ -208,6 +208,8 @@ if (testCallSecretBlock.includes("req.query") || testCallSecretBlock.includes("p
 }
 
 const publicRouteAllowlist = [
+  { method: "GET", pattern: /^\/api\/auth\/session$/ },
+  { method: "POST", pattern: /^\/api\/auth\/logout$/ },
   { method: "GET", pattern: /^\/api\/auth\/google\/config$/ },
   { method: "POST", pattern: /^\/api\/auth\/google\/exchange$/ },
   { method: "GET", pattern: /^\/api\/twiml\/appointment-confirm$/ },
