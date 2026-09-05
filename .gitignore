@@ -25,3 +25,4 @@ output/launch-touch-packets/
 output/playwright/
 outputs/
 .artifacts/
+.playwright-cli/

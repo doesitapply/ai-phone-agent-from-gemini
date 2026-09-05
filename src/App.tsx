@@ -13109,6 +13109,7 @@ export default function App() {
 
   // Load workspaces
   useEffect(() => {
+    if (!workspaceSession && !operatorSession) return;
     api<any>('/api/workspaces').then((d) => {
       const list = d.workspaces || [];
       setWorkspaces(list);

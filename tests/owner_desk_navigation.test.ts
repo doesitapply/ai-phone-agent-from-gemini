@@ -39,6 +39,11 @@ test("Starter owner navigation remains limited to the missed-call recovery loop"
 test("public presentation retains an honest no-data recovery workflow format instead of fabricated customer activity", () => {
   const appSource = fs.readFileSync("src/App.tsx", "utf8");
 
+  assert.match(
+    appSource,
+    /\/\/ Load workspaces\s+useEffect\(\(\) => \{\s+if \(!workspaceSession && !operatorSession\) return;\s+api<any>\('\/api\/workspaces'\)/,
+    "public routes must not request protected workspace data before a session exists",
+  );
   assert.match(appSource, /Workflow format only—not live customer data/);
   assert.match(appSource, /Name & number captured/);
   assert.doesNotMatch(appSource, /Main-line backup/);
