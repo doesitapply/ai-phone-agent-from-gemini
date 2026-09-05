@@ -110,7 +110,7 @@ expect("fulfillment retries preserve existing owner invites while explicit resen
 expect("voice entitlement enforces both advertised hard caps and rejects non-positive unlimited sentinels", saas.includes("ws.monthly_call_limit <= 0") && saas.includes("ws.monthly_minute_limit <= 0") && saas.includes("Monthly minute limit reached"));
 expect("voice usage-check failures fail closed with safe TwiML", server.includes("Usage limit check failed — blocking call safely") && server.includes("return res.send(twiml.toString());"));
 const pricingPageBlock = app.slice(app.indexOf("function PublicPricingPage()"), app.indexOf("function PublicSuccessPage()"));
-expect("standalone pricing collects buyer identity before checkout", pricingPageBlock.includes("buyerDetailsReady") && pricingPageBlock.includes("businessName, ownerEmail, ownerPhone") && pricingPageBlock.includes("startCheckout(plan, { businessName, ownerEmail, ownerPhone })") && !pricingPageBlock.includes("the setup request still gives the owner a next step"));
+expect("standalone pricing collects buyer identity and policy acknowledgement before checkout", pricingPageBlock.includes("buyerDetailsReady") && pricingPageBlock.includes("businessName, ownerEmail, ownerPhone") && pricingPageBlock.includes("startCheckout(plan, { businessName, ownerEmail, ownerPhone, termsAccepted })") && !pricingPageBlock.includes("the setup request still gives the owner a next step"));
 expect("browser checkout never bypasses server activation readiness with a raw Payment Link", !app.includes("window.location.href = plan.checkout_url") && app.includes("Never bypass the server's first-dollar activation gate"));
 expect("real revenue contract runs buyer activation email behavior fixtures", fs.readFileSync("package.json", "utf8").includes("tsx scripts/check-buyer-activation-email-fixtures.ts"));
 const publicRequestStart = provisioningRoutes.indexOf('app.post("/api/provisioning/request"');
@@ -132,7 +132,7 @@ const publicLandingSubmitEnd = publicLandingBlock.indexOf("const lookupRequest =
 const publicLandingSubmitBlock = publicLandingSubmitStart >= 0 && publicLandingSubmitEnd > publicLandingSubmitStart
   ? publicLandingBlock.slice(publicLandingSubmitStart, publicLandingSubmitEnd)
   : "";
-const paidCheckoutCall = "await startCheckout(selected, { businessName, ownerEmail, ownerPhone });";
+const paidCheckoutCall = "await startCheckout(selected, { businessName, ownerEmail, ownerPhone, termsAccepted });";
 const paidCheckoutIndex = publicLandingSubmitBlock.indexOf(paidCheckoutCall);
 const manualFallbackIndex = publicLandingSubmitBlock.indexOf("const body = await captureProvisioningRequest();", paidCheckoutIndex);
 expect("public activation request route found", Boolean(publicRequestBlock));
@@ -143,7 +143,7 @@ expect("public activation request does not return workspace API keys", !publicRe
 expect("public activation request points to owner email when invite exists", publicRequestBlock.includes("invite_available: true") && publicRequestBlock.includes("next_step: 'check_owner_email'"));
 expect("paid landing checkout precedes manual fallback capture", paidCheckoutIndex >= 0 && manualFallbackIndex > paidCheckoutIndex);
 expect("successful paid checkout returns before fallback capture", publicLandingSubmitBlock.includes(`${paidCheckoutCall}\n          return;`));
-expect("paid landing submits checkout exactly once and promo bypasses checkout", publicLandingSubmitBlock.split(paidCheckoutCall).length === 2 && publicLandingSubmitBlock.includes("if (selected && !promoApplied)"));
+expect("paid landing submits checkout exactly once and retired promo cannot bypass checkout", publicLandingSubmitBlock.split(paidCheckoutCall).length === 2 && publicLandingSubmitBlock.includes("if (selected) {") && !publicLandingSubmitBlock.includes("!promoApplied") && provisioningRoutes.includes("const isSmirk24Promo = (_value: unknown) => false"));
 expect("paid landing copy describes checkout-first fallback honestly", publicLandingBlock.includes("opens secure checkout with the business details you entered") && publicLandingBlock.includes("If checkout is unavailable, we save one setup request"));
 expect("public activation form does not read raw invite link response", !app.includes("inviteLink: body.invite_link"));
 expect("public status lookup does not read raw invite link in app", !app.includes("body.request?.invite_link"));

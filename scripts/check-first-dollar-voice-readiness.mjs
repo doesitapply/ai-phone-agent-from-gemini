@@ -84,7 +84,14 @@ const railwaySetter = fs.readFileSync('scripts/set-first-dollar-live-env.sh', 'u
 const server = fs.readFileSync('server.ts', 'utf8');
 const systemHealth = fs.readFileSync('src/routes/system-health-routes.ts', 'utf8');
 assert.ok(buyerRoutes.includes('evaluateFirstDollarVoiceReadiness(process.env)'), 'buyer readiness must use the shared exact voice predicate');
-assert.ok(buyerRoutes.includes('&& voiceReadiness.ready'), 'checkout activation readiness must require managed Twilio and streaming AI');
+const activationPrerequisitesStart = buyerRoutes.indexOf('const activationPrerequisitesReady =');
+const activationPrerequisitesEnd = buyerRoutes.indexOf('const providerPlanReadiness =', activationPrerequisitesStart);
+const activationPrerequisitesBlock = activationPrerequisitesStart >= 0 && activationPrerequisitesEnd > activationPrerequisitesStart
+  ? buyerRoutes.slice(activationPrerequisitesStart, activationPrerequisitesEnd)
+  : '';
+assert.ok(activationPrerequisitesBlock, 'buyer readiness must declare explicit checkout activation prerequisites');
+assert.doesNotMatch(activationPrerequisitesBlock, /voiceReadiness\.ready/, 'premium voice readiness must remain diagnostic instead of blocking the approved Starter checkout');
+assert.ok(buyerRoutes.includes('voiceReadinessLaunchBlocking: false'), 'buyer readiness must explicitly disclose that premium voice is not a first-dollar checkout blocker');
 for (const source of [localEnvCheck, railwayEnvCheck]) {
   for (const marker of ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'WORKSPACE_SECRET_ENCRYPTION_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_ENABLED', 'FAST_LIVE_CALLS', 'streaming TTS provider']) {
     assert.ok(source.includes(marker), `first-dollar environment contract must require ${marker}`);
@@ -98,4 +105,4 @@ assert.ok(server.includes('if (buffer) return { buffer, contentType: "audio/basi
 assert.ok(systemHealth.includes('describeFirstDollarVoiceHealth(env)'), 'operator health must use the exact first-dollar streaming voice predicate instead of credential presence');
 assert.doesNotMatch(systemHealth, /const voiceOk = !!\(env\.ELEVENLABS_API_KEY/, 'operator health must not report disabled TTS credentials as active');
 
-console.log('OK first-dollar readiness requires managed Twilio plus the actual enabled OpenRouter streaming-TTS path');
+console.log('OK first-dollar voice health validates the streaming path without widening the approved Starter checkout gate');
