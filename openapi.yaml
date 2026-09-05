@@ -27,7 +27,49 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Velvet Alchemy handoff token
+    VelvetAcquisitionBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Dedicated Velvet acquisition token
 paths:
+  "/api/acquisitions":
+    get:
+      operationId: "GET_api_acquisitions"
+      tags:
+        - "acquisitions"
+      summary: "GET /api/acquisitions"
+      x-source: "src/routes/operations-routes.ts:158"
+      x-express-path: "/api/acquisitions"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/acquisitions/{id}":
+    get:
+      operationId: "GET_api_acquisitions_id"
+      tags:
+        - "acquisitions"
+      summary: "GET /api/acquisitions/:id"
+      x-source: "src/routes/operations-routes.ts:188"
+      x-express-path: "/api/acquisitions/:id"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
   "/api/admin/cleanup-smoke-workspaces":
     post:
       operationId: "POST_api_admin_cleanup_smoke_workspaces"
@@ -1360,7 +1402,7 @@ paths:
       tags:
         - "handoffs"
       summary: "GET /api/handoffs"
-      x-source: "src/routes/operations-routes.ts:19"
+      x-source: "src/routes/operations-routes.ts:20"
       x-express-path: "/api/handoffs"
       security:
         - WorkspaceBearerAuth: []
@@ -1380,7 +1422,7 @@ paths:
       tags:
         - "handoffs"
       summary: "POST /api/handoffs/:id/acknowledge"
-      x-source: "src/routes/operations-routes.ts:83"
+      x-source: "src/routes/operations-routes.ts:230"
       x-express-path: "/api/handoffs/:id/acknowledge"
       security:
         - WorkspaceBearerAuth: []
@@ -1400,7 +1442,7 @@ paths:
       tags:
         - "handoffs"
       summary: "POST /api/handoffs/:id/action"
-      x-source: "src/routes/operations-routes.ts:101"
+      x-source: "src/routes/operations-routes.ts:248"
       x-express-path: "/api/handoffs/:id/action"
       security:
         - WorkspaceBearerAuth: []
@@ -1462,6 +1504,25 @@ paths:
       x-express-path: "/api/integrations/crm/test"
       security:
         - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/integrations/velvet/acquisitions":
+    post:
+      operationId: "POST_api_integrations_velvet_acquisitions"
+      tags:
+        - "integrations"
+      summary: "POST /api/integrations/velvet/acquisitions"
+      x-source: "src/routes/velvet-acquisition-routes.ts:403"
+      x-express-path: "/api/integrations/velvet/acquisitions"
+      security:
+        - VelvetAcquisitionBearerAuth: []
       responses:
         "200":
           description: Success response. Body shape is implemented in the route handler.
@@ -3038,7 +3099,7 @@ paths:
       tags:
         - "summaries"
       summary: "GET /api/summaries"
-      x-source: "src/routes/operations-routes.ts:156"
+      x-source: "src/routes/operations-routes.ts:303"
       x-express-path: "/api/summaries"
       security:
         - ApiKeyAuth: []
@@ -3457,7 +3518,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2778"
+      x-source: "server.ts:2789"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3475,7 +3536,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3505"
+      x-source: "server.ts:3516"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

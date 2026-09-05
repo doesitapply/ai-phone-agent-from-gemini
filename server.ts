@@ -63,9 +63,14 @@ const EnvSchema = z.object({
   DEMO_OPERATOR_EMAILS: z.string().optional(),
   SMIRK_OPERATOR_ADMIN_EMAILS: z.string().optional(),
   SMIRK_OWNER_CHAT_EMAILS: z.string().optional(),
+  VELVET_ALCHEMY_ACQUISITION_API_KEY: z.string().optional(),
   VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
+  VELVET_ALCHEMY_HANDOFF_MODE: z.string().optional(),
+  VELVET_ALCHEMY_ACQUISITION_MODE: z.string().optional(),
   VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
-  VELVET_ALCHEMY_PORTAL_URL: z.string().url().optional(),
+  VELVET_ALCHEMY_PORTAL_URL: z.string().optional(),
+  VELVET_ALCHEMY_BASE_URL: z.string().optional(),
+  VELVET_ALCHEMY_READ_KEY: z.string().optional(),
   NODE_ENV: z.enum(["development", "production", "test"]).optional(),
   // OpenClaw Gateway integration
   OPENCLAW_ENABLED: z.enum(["true", "false"]).optional(),
@@ -223,6 +228,7 @@ const requireTestCallSecret = (req: Request, res: Response, next: NextFunction) 
 };
 
 let proofCallSchemaReady = false;
+let acquisitionSchemaReady = false;
 const requireProofCallSchemaReady = (_req: Request, res: Response, next: NextFunction) => {
   if (!DB_ENABLED || !proofCallSchemaReady) {
     return res.status(503).json({
@@ -313,6 +319,11 @@ import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
 import { buildInboundDemoGreeting, buildInboundDemoSystemContext, createInboundDemoStore, registerInboundDemoRoutes } from "./src/inbound-demo.js";
 import { createPostgresVelvetHandoffStore, registerVelvetHandoffRoutes } from "./src/routes/velvet-handoff-routes.js";
+import {
+  createPostgresVelvetAcquisitionStore,
+  registerVelvetAcquisitionRoutes,
+} from "./src/routes/velvet-acquisition-routes.js";
+import { readVelvetAcquisitionConfig } from "./src/velvet-acquisition.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
@@ -3741,6 +3752,19 @@ registerTaskRoutes(app, {
   log,
 });
 
+const velvetPortalUrl = (() => {
+  const rawUrl = String(env.VELVET_ALCHEMY_PORTAL_URL || "").trim();
+  if (!rawUrl) return null;
+  try {
+    const parsed = new URL(rawUrl);
+    const localHttp = parsed.protocol === "http:"
+      && ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+    return parsed.protocol === "https:" || localHttp ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+})();
+
 registerOperationsRoutes(app, {
   dashboardAuth,
   requireOperator,
@@ -3748,10 +3772,19 @@ registerOperationsRoutes(app, {
   dbEnabled: DB_ENABLED,
   getWorkspaceId,
   velvet: {
-    receiverConfigured: !!env.VELVET_ALCHEMY_HANDOFF_API_KEY,
+    receiverConfigured: readVelvetAcquisitionConfig(process.env).configured,
+    isAcquisitionSchemaReady: () => acquisitionSchemaReady,
     workspaceId: env.VELVET_ALCHEMY_WORKSPACE_ID || null,
-    portalUrl: env.VELVET_ALCHEMY_PORTAL_URL || null,
+    portalUrl: velvetPortalUrl,
   },
+});
+
+registerVelvetAcquisitionRoutes(app, {
+  dbEnabled: DB_ENABLED,
+  isSchemaReady: () => acquisitionSchemaReady,
+  env: process.env,
+  store: createPostgresVelvetAcquisitionStore(sql),
+  log,
 });
 
 registerAgentRoutes(app, {
@@ -4424,6 +4457,7 @@ async function startServer() {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           proofCallSchemaReady = false;
+          acquisitionSchemaReady = false;
           await initSaasSchema();
           await initSchema();
           await initProspectorSchema();
@@ -4431,6 +4465,7 @@ async function startServer() {
           await initSequenceSchema();
           await initComplianceSchema();
           await ensureWorkspacePhoneNumbersTable();
+          acquisitionSchemaReady = true;
           // Auto-register the parent-account number to workspace 1. Never purge
           // other rows here: those are durable customer subaccount numbers.
           if (env.TWILIO_PHONE_NUMBER) {

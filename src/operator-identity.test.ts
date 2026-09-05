@@ -1,20 +1,19 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import test from "node:test";
 import { resolveOperatorAdminEmails } from "./operator-identity.js";
 
-describe("resolveOperatorAdminEmails", () => {
-  it("grants full operator eligibility to the verified owner identity across supported login contexts", () => {
-    expect(resolveOperatorAdminEmails({
-      googleAdminEmails: "ops@smirkcalls.com",
-      extraOperatorEmails: "cam@smirkcalls.com, OPS@smirkcalls.com",
-      ownerEmail: "cam@smirkcalls.com",
-    })).toEqual(["ops@smirkcalls.com", "cam@smirkcalls.com"]);
-  });
+test("grants full operator eligibility to the verified owner identity across supported login contexts", () => {
+  assert.deepEqual(resolveOperatorAdminEmails({
+    googleAdminEmails: "ops@smirkcalls.com",
+    extraOperatorEmails: "cam@smirkcalls.com, OPS@smirkcalls.com",
+    ownerEmail: "cam@smirkcalls.com",
+  }), ["ops@smirkcalls.com", "cam@smirkcalls.com"]);
+});
 
-  it("does not promote placeholder owner values to operator access", () => {
-    expect(resolveOperatorAdminEmails({
-      googleAdminEmails: "owner@example.com",
-      extraOperatorEmails: "admin@example.com",
-      ownerEmail: "OWNER@example.com",
-    })).toEqual([]);
-  });
+test("does not promote placeholder owner values to operator access", () => {
+  assert.deepEqual(resolveOperatorAdminEmails({
+    googleAdminEmails: "owner@example.com",
+    extraOperatorEmails: "admin@example.com",
+    ownerEmail: "OWNER@example.com",
+  }), []);
 });

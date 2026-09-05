@@ -8,6 +8,7 @@ type OperationsRouteDeps = {
   getWorkspaceId: (req: Request) => number;
   velvet: {
     receiverConfigured: boolean;
+    isAcquisitionSchemaReady?: () => boolean;
     workspaceId: string | null;
     portalUrl: string | null;
   };
@@ -19,65 +20,211 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
   app.get("/api/handoffs", dashboardAuth, async (req: Request, res: Response) => {
     if (!dbEnabled) return res.status(503).json({ error: "Live handoff data is unavailable because durable storage is not connected.", code: "DURABLE_STORAGE_UNAVAILABLE" });
     const wsId = getWorkspaceId(req);
-    const handoffs = await sql`
-      SELECT
-        h.id,
-        h.call_sid,
-        h.reason,
-        h.urgency,
-        h.status,
-        h.notes,
-        h.recommended_action,
-        h.transcript_snippet,
-        h.created_at,
-        h.acknowledged_at,
-        h.last_action,
-        h.last_action_at,
-        h.resolution_notes,
-        h.resolved_at,
-        h.assigned_to_name,
-        h.assigned_to_phone,
-        h.assigned_to_email,
-        co.name as contact_name,
-        co.phone_number
-      FROM handoffs h
-      LEFT JOIN contacts co ON h.contact_id = co.id
-      WHERE h.workspace_id = ${wsId}
-      ORDER BY
-        CASE WHEN h.status = 'pending' THEN 0 ELSE 1 END,
-        h.created_at DESC
-      LIMIT 50
-    `;
+    const acquisitionSchemaReady = velvet.isAcquisitionSchemaReady?.() ?? false;
+    const handoffs = acquisitionSchemaReady
+      ? await sql`
+          SELECT h.id, h.call_sid, h.acquisition_id, h.reason, h.urgency, h.status,
+                 h.notes, h.recommended_action, h.transcript_snippet, h.created_at,
+                 h.acknowledged_at, h.last_action, h.last_action_at,
+                 h.resolution_notes, h.resolved_at, h.assigned_to_name,
+                 h.assigned_to_phone, h.assigned_to_email,
+                 co.name as contact_name, co.phone_number
+          FROM handoffs h
+          LEFT JOIN contacts co ON h.contact_id = co.id
+          WHERE h.workspace_id = ${wsId}
+          ORDER BY CASE WHEN h.status = 'pending' THEN 0 ELSE 1 END, h.created_at DESC
+          LIMIT 50
+        `
+      : await sql`
+          SELECT h.id, h.call_sid, NULL::TEXT AS acquisition_id, h.reason, h.urgency, h.status,
+                 h.notes, h.recommended_action, h.transcript_snippet, h.created_at,
+                 h.acknowledged_at, h.last_action, h.last_action_at,
+                 h.resolution_notes, h.resolved_at, h.assigned_to_name,
+                 h.assigned_to_phone, h.assigned_to_email,
+                 co.name as contact_name, co.phone_number
+          FROM handoffs h
+          LEFT JOIN contacts co ON h.contact_id = co.id
+          WHERE h.workspace_id = ${wsId}
+          ORDER BY CASE WHEN h.status = 'pending' THEN 0 ELSE 1 END, h.created_at DESC
+          LIMIT 50
+        `;
     res.json({ handoffs });
   });
 
   app.get("/api/velvet/portal", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    if (!dbEnabled) return res.status(503).json({
-      error: "Velvet handoff data is unavailable because durable storage is not connected.",
-      code: "DURABLE_STORAGE_UNAVAILABLE",
-    });
     const wsId = getWorkspaceId(req);
-    const [countRows, handoffs] = await Promise.all([
+    const requestedWorkspaceId = String(wsId);
+    const receiverConfigured = velvet.receiverConfigured && velvet.workspaceId === requestedWorkspaceId;
+    if (!dbEnabled) {
+      return res.status(503).json({
+        error: "Velvet handoff data is unavailable because durable storage is not connected.",
+        code: "DURABLE_STORAGE_UNAVAILABLE",
+        receiverConfigured,
+        receiverReady: false,
+        workspaceId: requestedWorkspaceId,
+        receiverWorkspaceId: velvet.workspaceId,
+        portalUrl: velvet.portalUrl,
+        sourceAttributionAvailable: false,
+        acquisitionInboxAvailable: false,
+        acquisitionSchemaReady: false,
+        pendingCount: 0,
+        acquisitionCounts: { real: 0, synthetic: 0, quarantined: 0 },
+        recentAcquisitions: [],
+        recentHandoffs: [],
+      });
+    }
+    const acquisitionSchemaReady = velvet.isAcquisitionSchemaReady?.() ?? false;
+    const handoffsPromise = acquisitionSchemaReady
+      ? sql`
+          SELECT h.id, h.call_sid, h.acquisition_id, h.reason, h.urgency, h.status, h.notes, h.recommended_action,
+                 h.transcript_snippet, h.created_at, h.acknowledged_at, h.assigned_to_name,
+                 h.assigned_to_phone, h.assigned_to_email, h.last_action, h.last_action_at,
+                 h.resolution_notes, h.resolved_at, co.name AS contact_name, co.phone_number
+          FROM handoffs h
+          LEFT JOIN contacts co ON h.contact_id = co.id
+          WHERE h.workspace_id = ${wsId}
+          ORDER BY h.created_at DESC
+          LIMIT 20
+        `
+      : sql`
+          SELECT h.id, h.call_sid, NULL::TEXT AS acquisition_id, h.reason, h.urgency, h.status, h.notes, h.recommended_action,
+                 h.transcript_snippet, h.created_at, h.acknowledged_at, h.assigned_to_name,
+                 h.assigned_to_phone, h.assigned_to_email, h.last_action, h.last_action_at,
+                 h.resolution_notes, h.resolved_at, co.name AS contact_name, co.phone_number
+          FROM handoffs h
+          LEFT JOIN contacts co ON h.contact_id = co.id
+          WHERE h.workspace_id = ${wsId}
+          ORDER BY h.created_at DESC
+          LIMIT 20
+        `;
+    const [countRows, handoffs, acquisitionCountRows, acquisitions, receiverWorkspaceRows] = await Promise.all([
       sql<{ count: string }[]>`SELECT COUNT(*)::TEXT AS count FROM handoffs WHERE workspace_id = ${wsId} AND status = 'pending'`,
-      sql`
-        SELECT h.id, h.call_sid, h.reason, h.urgency, h.status, h.notes, h.recommended_action,
-               h.transcript_snippet, h.created_at, h.acknowledged_at, h.assigned_to_name,
-               h.assigned_to_phone, h.assigned_to_email, co.name AS contact_name, co.phone_number
-        FROM handoffs h
-        LEFT JOIN contacts co ON h.contact_id = co.id
-        WHERE h.workspace_id = ${wsId}
-        ORDER BY h.created_at DESC
-        LIMIT 20
-      `,
+      handoffsPromise,
+      acquisitionSchemaReady
+        ? sql<{
+            real_count: string;
+            synthetic_count: string;
+            quarantined_count: string;
+          }[]>`
+            SELECT
+              COUNT(*) FILTER (WHERE record_kind = 'real')::TEXT AS real_count,
+              COUNT(*) FILTER (WHERE record_kind = 'synthetic')::TEXT AS synthetic_count,
+              COUNT(*) FILTER (WHERE record_kind = 'quarantined')::TEXT AS quarantined_count
+            FROM acquisition_records
+            WHERE workspace_id = ${wsId}
+          `
+        : Promise.resolve([]),
+      acquisitionSchemaReady
+        ? sql`
+            SELECT acquisition_id, source_system, source_record_id, first_payload_hash,
+                   record_kind, contact_permission, contact_basis, route_decision,
+                   source_observed_at, first_received_at
+            FROM acquisition_records
+            WHERE workspace_id = ${wsId}
+            ORDER BY first_received_at DESC
+            LIMIT 20
+          `
+        : Promise.resolve([]),
+      receiverConfigured && acquisitionSchemaReady
+        ? sql<{ workspace_exists: boolean }[]>`
+            SELECT EXISTS(
+              SELECT 1 FROM workspaces WHERE id = ${wsId}
+            ) AS workspace_exists
+          `
+        : Promise.resolve([]),
     ]);
+    const acquisitionCounts = acquisitionCountRows[0];
+    const receiverReady = Boolean(receiverWorkspaceRows[0]?.workspace_exists);
     res.json({
-      receiverConfigured: velvet.receiverConfigured,
-      workspaceId: velvet.workspaceId,
+      receiverConfigured,
+      receiverReady,
+      workspaceId: requestedWorkspaceId,
+      receiverWorkspaceId: velvet.workspaceId,
       portalUrl: velvet.portalUrl,
       sourceAttributionAvailable: false,
+      acquisitionInboxAvailable: receiverReady && acquisitionSchemaReady,
+      acquisitionSchemaReady,
       pendingCount: Number(countRows[0]?.count || 0),
+      acquisitionCounts: {
+        real: Number(acquisitionCounts?.real_count || 0),
+        synthetic: Number(acquisitionCounts?.synthetic_count || 0),
+        quarantined: Number(acquisitionCounts?.quarantined_count || 0),
+      },
+      recentAcquisitions: acquisitions,
       recentHandoffs: handoffs,
     });
+  });
+
+  app.get("/api/acquisitions", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Acquisition evidence requires durable storage.", code: "ACQUISITION_STORAGE_REQUIRED" });
+    }
+    if (!(velvet.isAcquisitionSchemaReady?.() ?? false)) {
+      return res.status(503).json({ error: "Acquisition evidence schema is not ready.", code: "ACQUISITION_SCHEMA_NOT_READY" });
+    }
+    const wsId = getWorkspaceId(req);
+    const requestedKind = String(req.query.kind || "").trim().toLowerCase();
+    const allowedKinds = ["real", "synthetic", "quarantined"];
+    if (requestedKind && !allowedKinds.includes(requestedKind)) {
+      return res.status(400).json({
+        error: "Invalid acquisition kind filter.",
+        code: "INVALID_ACQUISITION_KIND",
+      });
+    }
+    const recordKind = requestedKind || null;
+    const acquisitions = await sql`
+      SELECT acquisition_id, source_system, source_record_id, first_payload_hash,
+             record_kind, contact_permission, contact_basis, route_decision,
+             source_observed_at, first_received_at
+      FROM acquisition_records
+      WHERE workspace_id = ${wsId}
+        AND (${recordKind}::TEXT IS NULL OR record_kind = ${recordKind})
+      ORDER BY first_received_at DESC
+      LIMIT 100
+    `;
+    return res.json({ acquisitions });
+  });
+
+  app.get("/api/acquisitions/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Acquisition evidence requires durable storage.", code: "ACQUISITION_STORAGE_REQUIRED" });
+    }
+    if (!(velvet.isAcquisitionSchemaReady?.() ?? false)) {
+      return res.status(503).json({ error: "Acquisition evidence schema is not ready.", code: "ACQUISITION_SCHEMA_NOT_READY" });
+    }
+    const acquisitionId = String(req.params.id || "").trim();
+    if (!/^acq_[0-9a-f]{40}$/.test(acquisitionId)) {
+      return res.status(400).json({ error: "Invalid acquisition ID.", code: "INVALID_ACQUISITION_ID" });
+    }
+    const wsId = getWorkspaceId(req);
+    const [recordRows, events, reviews] = await Promise.all([
+      sql`
+        SELECT acquisition_id, source_system, source_record_id, first_payload_hash,
+               record_kind, contact_permission, contact_basis, route_decision,
+               source_observed_at, first_received_at
+        FROM acquisition_records
+        WHERE acquisition_id = ${acquisitionId} AND workspace_id = ${wsId}
+        LIMIT 1
+      `,
+      sql`
+        SELECT receipt_id, source_system, source_event_id, event_type, payload_hash,
+               status, source_observed_at, received_at
+        FROM acquisition_events
+        WHERE acquisition_id = ${acquisitionId} AND workspace_id = ${wsId}
+        ORDER BY received_at ASC
+      `,
+      sql`
+        SELECT review_id, decision, candidate_channel, contact_basis, evidence_hash,
+               evidence_ref, reviewed_by, observed_at, expires_at, created_at
+        FROM acquisition_reviews
+        WHERE acquisition_id = ${acquisitionId} AND workspace_id = ${wsId}
+        ORDER BY created_at ASC
+      `,
+    ]);
+    if (!recordRows[0]) {
+      return res.status(404).json({ error: "Acquisition not found.", code: "ACQUISITION_NOT_FOUND" });
+    }
+    return res.json({ acquisition: recordRows[0], events, reviews });
   });
 
   app.post("/api/handoffs/:id/acknowledge", dashboardAuth, async (req: Request, res: Response) => {

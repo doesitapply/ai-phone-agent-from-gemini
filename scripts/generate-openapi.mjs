@@ -136,6 +136,9 @@ const testCallSecretOnlyPaths = new Set([
 const velvetHandoffPaths = new Set([
   "POST /api/integrations/velvet/handoffs",
 ]);
+const velvetAcquisitionSecretOnlyPaths = new Set([
+  "POST /api/integrations/velvet/acquisitions",
+]);
 
 const publicRateLimitedMarkers = new Set([
   "publicDemoRateLimit",
@@ -169,6 +172,7 @@ function routeTag(openApiPath) {
 function securityFor(method, expressPath, sourceLine) {
   if (testCallSecretOnlyPaths.has(`${method} ${expressPath}`)) return [{ ApiKeyAuth: [] }];
   if (velvetHandoffPaths.has(`${method} ${expressPath}`)) return [{ VelvetHandoffBearerAuth: [] }];
+  if (velvetAcquisitionSecretOnlyPaths.has(`${method} ${expressPath}`)) return [{ VelvetAcquisitionBearerAuth: [] }];
   if (workspaceOnlyPaths.has(`${method} ${expressPath}`)) return [{ WorkspaceBearerAuth: [] }];
   if (expressPath.includes("/auth/google") || expressPath === "/api/version" || expressPath === "/api/pricing") return [];
   if (expressPath.includes("/provisioning/checkout-status") || expressPath.includes("/public-proof-snapshot") || expressPath.includes("/first-dollar-readiness")) return [];
@@ -193,6 +197,11 @@ function validateSecurityInventory(routes) {
     }
     if (testCallSecretOnlyPaths.has(routeKey) && !route.sourceLine.includes("requireTestCallSecret")) {
       failures.push(`${routeKey} must include requireTestCallSecret in openapi.yaml inventory`);
+    }
+    if (velvetAcquisitionSecretOnlyPaths.has(routeKey)
+      && (!route.sourceLine.includes("velvetAcquisitionRateLimit")
+        || !route.sourceLine.includes("createVelvetAcquisitionHandler"))) {
+      failures.push(`${routeKey} must use the dedicated Velvet acquisition handler and rate limit`);
     }
     if (signedWebhookPaths.has(route.expressPath) && security.length !== 0) {
       failures.push(`${route.expressPath} should be listed as a public signed webhook, got ${securityLabel}`);
@@ -294,6 +303,10 @@ function renderOpenApi(routes) {
     "      type: http",
     "      scheme: bearer",
     "      bearerFormat: Velvet Alchemy handoff token",
+    "    VelvetAcquisitionBearerAuth:",
+    "      type: http",
+    "      scheme: bearer",
+    "      bearerFormat: Dedicated Velvet acquisition token",
     "paths:",
   ];
 

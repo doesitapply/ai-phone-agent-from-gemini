@@ -5541,10 +5541,23 @@ function HandoffsPage({ ownerView = false }: { ownerView?: boolean }) {
 
 type VelvetPortalData = {
   receiverConfigured: boolean;
+  receiverReady: boolean;
   workspaceId: string | null;
+  receiverWorkspaceId: string | null;
   portalUrl: string | null;
   sourceAttributionAvailable: boolean;
+  acquisitionInboxAvailable: boolean;
+  acquisitionSchemaReady: boolean;
   pendingCount: number;
+  acquisitionCounts: { real: number; synthetic: number; quarantined: number };
+  recentAcquisitions: Array<{
+    acquisition_id: string;
+    source_record_id: string;
+    record_kind: "real" | "synthetic" | "quarantined";
+    contact_permission: string;
+    route_decision: string;
+    first_received_at: string;
+  }>;
   recentHandoffs: Handoff[];
 };
 
@@ -5584,7 +5597,13 @@ function VelvetAlchemyPage() {
           <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Inbound receiver</div><div className={`mt-2 text-sm font-bold ${data.receiverConfigured ? "text-emerald-400" : "text-amber-400"}`}>{data.receiverConfigured ? "Configured" : "Not configured"}</div></div>
           <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Workspace</div><div className="mt-2 text-sm font-bold text-white">{data.workspaceId || "Not set"}</div></div>
           <a href="/dashboard/handoffs?filter=pending" className={`rounded-xl border p-4 text-left transition-colors hover:border-red-700 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Human attention</div><div className="mt-2 text-2xl font-black text-red-400">{data.pendingCount}</div><div className="mt-1 text-xs text-gray-500">Open pending handoffs →</div></a>
-          <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Attribution</div><div className={`mt-2 text-sm font-bold ${data.sourceAttributionAvailable ? "text-emerald-400" : "text-amber-400"}`}>{data.sourceAttributionAvailable ? "Available" : "Pending source sync"}</div></div>
+          <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Evidence inbox</div><div className={`mt-2 text-sm font-bold ${data.acquisitionInboxAvailable ? "text-emerald-400" : "text-amber-400"}`}>{data.acquisitionInboxAvailable ? "Available" : !data.acquisitionSchemaReady ? "Schema initializing" : !data.receiverConfigured ? "Receiver not configured here" : "Workspace unavailable"}</div></div>
+        </div>
+        <div className={`rounded-xl border p-5 ${card}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-white">Acquisition evidence</h3><p className="mt-1 text-xs text-gray-500">Read-only source receipts. These records do not create contacts, calls, tasks, or handoffs.</p></div><div className="flex gap-2 font-mono text-[10px]"><span className="border border-emerald-900/60 bg-emerald-950/30 px-2 py-1 text-emerald-300">REAL {data.acquisitionCounts.real}</span><span className="border border-cyan-900/60 bg-cyan-950/30 px-2 py-1 text-cyan-300">SYNTHETIC {data.acquisitionCounts.synthetic}</span><span className="border border-amber-900/60 bg-amber-950/30 px-2 py-1 text-amber-300">QUARANTINED {data.acquisitionCounts.quarantined}</span></div></div>
+          <div className="mt-4 space-y-2">
+            {data.recentAcquisitions.length === 0 ? <div className="py-6 text-center text-sm text-gray-500">No acquisition evidence has been received in this workspace.</div> : data.recentAcquisitions.map((record) => <div key={record.acquisition_id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-3"><div><div className="flex items-center gap-2"><span className="rounded border border-gray-700 bg-gray-900 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-gray-300">{record.record_kind}</span><span className="text-sm font-semibold text-white">{record.source_record_id}</span></div><div className="mt-1 text-xs text-gray-500">{record.contact_permission} · {record.route_decision}</div></div><div className="text-xs text-gray-600">{new Date(record.first_received_at).toLocaleString()}</div></div>)}
+          </div>
         </div>
         <div className={`rounded-xl border p-5 ${card}`}>
           <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-white">Operational handoff queue</h3><p className="mt-1 text-xs text-gray-500">This is the SMIRK operator view of shared human-follow-up work. Velvet-specific filtering will activate only after source attribution is persisted with each handoff.</p></div><a href="/dashboard/handoffs" className="text-xs font-bold text-fuchsia-400 hover:text-fuchsia-300">Open Handoffs →</a></div>
@@ -5605,7 +5624,7 @@ function VelvetAlchemyPage() {
             <a href="/dashboard/prospecting" className="group border border-gray-800 bg-black/20 p-3 transition-colors hover:border-fuchsia-700"><div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500">02 · Qualify</div><div className="mt-1 text-sm font-semibold text-white group-hover:text-fuchsia-300">Check lead & compliance →</div></a>
             <a href="/dashboard/prospecting" className="group border border-gray-800 bg-black/20 p-3 transition-colors hover:border-fuchsia-700"><div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500">03 · Execute</div><div className="mt-1 text-sm font-semibold text-white group-hover:text-fuchsia-300">Use approved outreach sequence →</div></a>
           </div>
-          {!data.sourceAttributionAvailable && <p className="mt-3 text-[11px] leading-5 text-amber-200/80">Source-level Velvet attribution is not yet persisted on individual SMIRK handoffs. This portal shows the shared queue honestly until the inbound receiver stores source and idempotency metadata with each record.</p>}
+          {!data.sourceAttributionAvailable && <p className="mt-3 text-[11px] leading-5 text-amber-200/80">Lifecycle attribution is not yet propagated onto SMIRK handoffs, approvals, provider touches, checkout, activation, or feedback. Historical Velvet receipts also require an explicit, reviewed migration; this portal does not infer links from names or phone numbers.</p>}
         </div>
       </>}
     </div>
