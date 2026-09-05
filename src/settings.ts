@@ -273,6 +273,11 @@ export function getConfigStatus(): {
   isConfigured: boolean;
   missingRequired: string[];
   warnings: string[];
+  providerConfiguration: {
+    twilioConfigured: boolean;
+    aiConfigured: boolean;
+    leadSearchConfigured: boolean;
+  };
 } {
   const raw = getRawSettings();
   const missingRequired: string[] = [];
@@ -314,5 +319,14 @@ export function getConfigStatus(): {
     isConfigured: missingRequired.length === 0,
     missingRequired,
     warnings,
+    providerConfiguration: {
+      twilioConfigured: Boolean(raw.TWILIO_ACCOUNT_SID && raw.TWILIO_AUTH_TOKEN && raw.TWILIO_PHONE_NUMBER),
+      aiConfigured: Boolean(
+        raw.GEMINI_API_KEY
+        || (raw.OPENROUTER_ENABLED === "true" && raw.OPENROUTER_API_KEY)
+        || (raw.OPENCLAW_ENABLED === "true" && raw.OPENCLAW_GATEWAY_URL && raw.OPENCLAW_GATEWAY_TOKEN),
+      ),
+      leadSearchConfigured: Boolean(process.env.GOOGLE_PLACES_API_KEY),
+    },
   };
 }

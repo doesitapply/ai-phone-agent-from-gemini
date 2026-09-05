@@ -2172,6 +2172,11 @@ type ConfigStatus = {
   isConfigured: boolean;
   missingRequired: string[];
   warnings: string[];
+  providerConfiguration?: {
+    twilioConfigured: boolean;
+    aiConfigured: boolean;
+    leadSearchConfigured: boolean;
+  };
 };
 
 type RequestLog = {
@@ -13191,10 +13196,11 @@ export default function App() {
       .catch(() => {});
   }, [tab, activeWorkspaceKey, operatorSession, workspaceSession]);
 
-  const missing = new Set<string>(configStatus?.missingRequired ?? []);
-  const twilioReady = !Array.from(missing).some((k) => k.includes("TWILIO"));
-  const aiReady = !Array.from(missing).some((k) => k.includes("GEMINI") || k.includes("OPENROUTER") || k.includes("OPENAI"));
-  const placesReady = !Array.from(missing).some((k) => k.includes("GOOGLE_PLACES"));
+  const providerConfiguration = configStatus?.providerConfiguration;
+  const providerConfigurationKnown = providerConfiguration !== undefined;
+  const twilioReady = providerConfiguration?.twilioConfigured === true;
+  const aiReady = providerConfiguration?.aiConfigured === true;
+  const placesReady = providerConfiguration?.leadSearchConfigured === true;
   const nowLocal = new Date();
   const day = nowLocal.getDay(); // 0 Sun, 6 Sat
   const hour = nowLocal.getHours();
@@ -13853,17 +13859,17 @@ export default function App() {
                 <div className="border-b border-[#3b4b3d] bg-[#201f1f] px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-widest text-[#e5e2e1]">Telemetry</div>
                 <div className="space-y-3 p-3">
                   {[
-                    ['Twilio', twilioReady],
-                    ['LLM Core', aiReady],
-                    ['Lead Search', placesReady],
-                    ['Call Window', inCallWindow],
-                  ].map(([label, ok]) => (
-                    <div key={String(label)}>
+                    { label: 'Twilio', ok: twilioReady, known: providerConfigurationKnown, state: twilioReady ? 'configured' : 'not set' },
+                    { label: 'LLM Core', ok: aiReady, known: providerConfigurationKnown, state: aiReady ? 'configured' : 'not set' },
+                    { label: 'Lead Search', ok: placesReady, known: providerConfigurationKnown, state: placesReady ? 'configured' : 'not set' },
+                    { label: 'Call Window', ok: inCallWindow, known: true, state: inCallWindow ? 'open' : 'closed' },
+                  ].map(({ label, ok, known, state }) => (
+                    <div key={label}>
                       <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase">
                         <span className="text-[#b9cbb9]">{label}</span>
-                        <span className={ok ? 'text-[#00e479]' : 'text-[#ffba20]'}>{ok ? 'online' : 'check'}</span>
+                        <span className={known ? (ok ? 'text-[#00e479]' : 'text-[#ffba20]') : 'text-[#849585]'}>{known ? state : 'unknown'}</span>
                       </div>
-                      <div className="h-1 bg-[#3b4b3d]"><div className={`h-full ${ok ? 'w-full bg-[#00e479]' : 'w-1/2 bg-[#ffba20]'}`} /></div>
+                      <div className="h-1 bg-[#3b4b3d]"><div className={`h-full ${known ? (ok ? 'w-full bg-[#00e479]' : 'w-1/2 bg-[#ffba20]') : 'w-1/4 bg-[#849585]'}`} /></div>
                     </div>
                   ))}
                 </div>

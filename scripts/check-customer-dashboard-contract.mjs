@@ -4,6 +4,7 @@ import fs from "node:fs";
 const app = fs.readFileSync("src/App.tsx", "utf8");
 const setupWizard = fs.readFileSync("src/components/SetupWizard.tsx", "utf8");
 const server = fs.readFileSync("server.ts", "utf8");
+const settings = fs.readFileSync("src/settings.ts", "utf8");
 
 const failures = [];
 
@@ -22,6 +23,11 @@ requireIncludes(app, '? "calls"', "customer active-tab calls fallback");
 requireIncludes(app, "isDemoOperator && !demoOperatorVisibleTabs.has(normalizedTab)", "demo operator active-tab fallback branch");
 requireIncludes(app, "? demoFallbackTab", "demo operator active-tab first-allowed fallback");
 requireIncludes(app, 'operatorSession && !isDemoOperator ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null)', "customer/demo must not poll operator-only config status");
+requireIncludes(settings, "providerConfiguration: {", "config status must expose explicit provider configuration");
+requireIncludes(settings, "twilioConfigured: Boolean(raw.TWILIO_ACCOUNT_SID && raw.TWILIO_AUTH_TOKEN && raw.TWILIO_PHONE_NUMBER)", "Twilio telemetry must require complete configuration");
+requireIncludes(settings, "leadSearchConfigured: Boolean(process.env.GOOGLE_PLACES_API_KEY)", "lead-search telemetry must use an explicit configuration signal");
+requireIncludes(app, "const providerConfigurationKnown = providerConfiguration !== undefined;", "command rail must distinguish unknown provider state");
+requireIncludes(app, "state: twilioReady ? 'configured' : 'not set'", "command rail must label configuration rather than claim provider uptime");
 requireIncludes(app, 'api<Stats>("/api/stats")', "paid customer live metrics poll");
 requireIncludes(app, "const CUSTOMER_NETWORK_ERROR", "app error sanitizer");
 requireIncludes(app, "const CUSTOMER_DATA_ERROR", "app data sanitizer");
@@ -68,4 +74,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log("OK paid customer dashboard contract exposes the recovery controls and hides restricted operator surface");
+console.log("OK paid customer dashboard exposes recovery controls, hides restricted surfaces, and reports provider configuration honestly");
