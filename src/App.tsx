@@ -23,6 +23,7 @@ import {
 
 import { SetupWizard } from "./components/SetupWizard";
 import { BusinessKnowledgePackPanel } from "./components/BusinessKnowledgePackPanel";
+import { PublicRecoveredCallDemo } from "./components/PublicRecoveredCallDemo";
 import { normalizeStrictMailbox } from "./email-safety";
 import { normalizePublicHttpsUrl, normalizeTrustedProductionAppUrl } from "./public-url-safety";
 
@@ -502,14 +503,14 @@ function PublicDashboardPreview() {
   );
 }
 
-const SMIRK_FIELD_WORK_VISUAL = "https://files.manuscdn.com/user_upload_by_module/session_file/91847194/fIPRxIdlFOkcVraW.jpg";
+const SMIRK_FIELD_WORK_VISUAL = "/smirk-images/hero-van.webp";
 
 function PublicHumanWorkVisual() {
   return (
     <figure className="smirk-human-work" aria-labelledby="human-work-caption">
       <img
         src={SMIRK_FIELD_WORK_VISUAL}
-        alt="An electrician working at an electrical panel while a phone remains available for business-call recovery"
+        alt="A service van ready outside a customer's home while SMIRK covers missed calls"
       />
       <figcaption id="human-work-caption" className="smirk-human-work__caption">
         <div className="smirk-human-work__signal">
@@ -765,6 +766,7 @@ function PublicLandingPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
+            <a href="#hear" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] md:inline-flex">Hear a call</a>
             <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Proof</a>
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
@@ -789,8 +791,8 @@ function PublicLandingPage() {
             <a href="#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
               <PhoneForwarded size={16} /> Start recovery setup
             </a>
-            <a href="#how-it-works" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
-              See how it works
+            <a href="#hear" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+              <Headphones size={16} /> Hear a recovered call
             </a>
           </div>
           <div className="mt-7 lg:hidden">
@@ -952,6 +954,8 @@ function PublicLandingPage() {
           </div>
         </section>
         </div>
+
+        <PublicRecoveredCallDemo />
 
         <section className="relative border-t border-[#173321] bg-[#0d100d] px-5 py-10">
           <div className="mx-auto max-w-7xl">

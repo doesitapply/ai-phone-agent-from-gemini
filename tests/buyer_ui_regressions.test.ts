@@ -156,3 +156,31 @@ test("buyer components wire the guards into the rendered flows", () => {
   assert.match(wizardSource, /const validation = validateBusinessSetupStep\(\{/);
   assert.match(wizardSource, /if \(!validation\.valid\) \{ flash\(validation\.errors\[0\], true\); return; \}/);
 });
+
+test("public recovered-call demo uses a real audio asset and labels all synthetic proof", () => {
+  const appSource = fs.readFileSync("src/App.tsx", "utf8");
+  const demoSource = fs.readFileSync("src/components/PublicRecoveredCallDemo.tsx", "utf8");
+  const audioPath = "public/smirk-recovered-call-demo.mp3";
+  const audioPrefix = fs.readFileSync(audioPath).subarray(0, 3).toString("ascii");
+
+  assert.match(appSource, /import \{ PublicRecoveredCallDemo \} from "\.\/components\/PublicRecoveredCallDemo"/);
+  assert.match(appSource, /<PublicRecoveredCallDemo \/>/);
+  assert.match(demoSource, /<source src="\/smirk-recovered-call-demo\.mp3" type="audio\/mpeg" \/>/);
+  assert.match(demoSource, /Synthetic demonstration with fictional business, caller, address, and scenario\./);
+  assert.match(demoSource, /not a customer recording, testimonial, booked-job claim, or revenue result/);
+  assert.doesNotMatch(demoSource, /speechSynthesis|SpeechSynthesisUtterance/);
+  assert.ok(fs.statSync(audioPath).size > 100_000);
+  assert.equal(audioPrefix, "ID3");
+});
+
+test("selective public UI integration keeps checkout consent and owner desk routes intact", () => {
+  const appSource = fs.readFileSync("src/App.tsx", "utf8");
+
+  assert.match(appSource, /termsAccepted,/);
+  assert.match(appSource, /terms_accepted: buyer\?\.termsAccepted/);
+  assert.match(appSource, /const ownerDeskTabs: \{ id: Tab; label: string; icon: React\.ReactElement; badge\?: number \}\[\] = \[/);
+  assert.match(appSource, /\{ id: "calls", label: "Calls"/);
+  assert.match(appSource, /\{ id: "tasks", label: "Tasks"/);
+  assert.match(appSource, /\{ id: "handoffs", label: "Alerts"/);
+  assert.match(appSource, /\{ id: "settings", label: "Settings"/);
+});

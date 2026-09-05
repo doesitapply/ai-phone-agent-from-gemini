@@ -1,4 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 /* ── SMIRK Design Tokens ─────────────────────────────────────────────────── */
@@ -28,19 +27,21 @@
 }
 
 .smirk-public {
-  --public-paper: #0b0d0c;
-  --public-paper-2: #111513;
-  --public-paper-3: #1a201c;
-  --public-ink: #f1f5f1;
-  --public-ink-soft: #bac4bc;
-  --public-muted: #7f8b82;
-  --public-forest: #00e479;
-  --public-forest-deep: #00b961;
-  --public-live: #b7fa73;
-  --public-line: rgba(219, 235, 223, 0.16);
-  --public-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
-  --public-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --public-mono: "JetBrains Mono", ui-monospace, monospace;
+  --public-paper: #f4f1ea;
+  --public-paper-2: #ebe6dc;
+  --public-paper-3: #e0d9cc;
+  --public-ink: #171c19;
+  --public-ink-soft: #3d4540;
+  --public-muted: #6b736e;
+  --public-forest: #1f6b45;
+  --public-forest-deep: #164f33;
+  --public-live: #c8e86a;
+  --public-line: #d9d2c6;
+  --public-danger: #9b3a2f;
+  --public-warn: #9a6b24;
+  --public-display: "Instrument Serif", Georgia, serif;
+  --public-sans: "Figtree", Inter, ui-sans-serif, system-ui, sans-serif;
+  --public-mono: "Figtree", Inter, ui-sans-serif, system-ui, sans-serif;
   background: var(--public-paper) !important;
   color: var(--public-ink) !important;
   font-family: var(--public-sans) !important;
@@ -48,25 +49,24 @@
 
 .smirk-public .bg-emerald-400,
 .smirk-public .bg-emerald-500 {
-  background-color: #00E479 !important;
+  background-color: var(--public-forest) !important;
 }
 
 .smirk-public .text-emerald-300,
 .smirk-public .text-emerald-400,
 .smirk-public .text-emerald-200 {
-  color: #00E479 !important;
+  color: var(--public-forest) !important;
 }
 
 .smirk-public .border-emerald-400\/40,
 .smirk-public .border-emerald-500\/30 {
-  border-color: rgba(0, 228, 121, 0.4) !important;
+  border-color: rgba(31, 107, 69, 0.4) !important;
 }
 
 /* ── Public human-at-work recovery story ────────────────────────────────── */
 .smirk-public .smirk-activation-panel {
-  background:
-    linear-gradient(145deg, rgba(20, 29, 24, 0.98), rgba(9, 13, 11, 0.98)) !important;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.26) !important;
+  background: rgba(255, 255, 255, 0.42) !important;
+  box-shadow: 0 24px 70px rgba(37, 43, 39, 0.09) !important;
 }
 
 .smirk-public .smirk-human-work {
@@ -1206,10 +1206,7 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
    room. Green is reserved for a confirmed state or a consequential action. */
 .smirk-public {
   min-height: 100vh;
-  background:
-    radial-gradient(900px 520px at 93% -8%, rgba(0, 228, 121, 0.075), transparent 64%),
-    radial-gradient(680px 380px at -5% 28%, rgba(99, 140, 111, 0.075), transparent 68%),
-    var(--public-paper) !important;
+  background: var(--public-paper) !important;
   color: var(--public-ink) !important;
   font-family: var(--public-sans) !important;
 }
@@ -1220,8 +1217,8 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
   position: relative;
   z-index: 10;
   border-color: var(--public-line) !important;
-  background: rgba(11, 13, 12, 0.90) !important;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025) !important;
+  background: rgba(244, 241, 234, 0.94) !important;
+  box-shadow: 0 1px 0 rgba(23, 28, 25, 0.04) !important;
   backdrop-filter: blur(14px);
 }
 
@@ -1241,7 +1238,7 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 .smirk-public .font-mono,
 .smirk-public [class*="uppercase"] {
   font-family: var(--public-mono) !important;
-  letter-spacing: 0.10em !important;
+  letter-spacing: 0.12em !important;
 }
 
 .smirk-public .font-mono {
@@ -1260,6 +1257,13 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 .smirk-public .text-emerald-300,
 .smirk-public .text-emerald-400,
 .smirk-public .text-\[\#00e479\] { color: var(--public-forest) !important; }
+.smirk-public .text-amber-50,
+.smirk-public .text-amber-100,
+.smirk-public .text-amber-200,
+.smirk-public .text-amber-300 { color: var(--public-warn) !important; }
+.smirk-public .text-red-100,
+.smirk-public .text-red-200,
+.smirk-public .text-red-300 { color: var(--public-danger) !important; }
 
 .smirk-public [class*="border-[#173321]"],
 .smirk-public [class*="border-[#2f4637]"],
@@ -1279,13 +1283,17 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 .smirk-public [class*="bg-[#00ff88]"],
 .smirk-public [class*="bg-[#00e479]"] {
   background-color: var(--public-forest) !important;
-  color: #07110b !important;
+  color: #ffffff !important;
 }
 
 .smirk-public [class*="border-[#00e479]"],
-.smirk-public [class*="border-emerald"] { border-color: rgba(0, 228, 121, 0.42) !important; }
+.smirk-public [class*="border-emerald"] { border-color: rgba(31, 107, 69, 0.42) !important; }
 .smirk-public [class*="bg-[#00e479]/"],
-.smirk-public [class*="bg-emerald"] { background-color: rgba(0, 228, 121, 0.08) !important; }
+.smirk-public [class*="bg-emerald"] { background-color: rgba(31, 107, 69, 0.08) !important; }
+.smirk-public [class*="border-amber"] { border-color: rgba(154, 107, 36, 0.34) !important; }
+.smirk-public [class*="bg-amber"] { background-color: rgba(154, 107, 36, 0.08) !important; }
+.smirk-public [class*="border-red"] { border-color: rgba(155, 58, 47, 0.34) !important; }
+.smirk-public [class*="bg-red"] { background-color: rgba(155, 58, 47, 0.08) !important; }
 
 .smirk-public a,
 .smirk-public button,
@@ -1295,14 +1303,14 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 
 .smirk-public a[href],
 .smirk-public button { transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease; }
-.smirk-public a:hover { color: var(--public-live) !important; }
+.smirk-public a:hover { color: var(--public-forest-deep) !important; }
 
 .smirk-public input,
 .smirk-public textarea,
 .smirk-public select {
   border-color: var(--public-line) !important;
-  border-radius: 4px !important;
-  background: rgba(5, 8, 6, 0.52) !important;
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.5) !important;
   color: var(--public-ink) !important;
   box-shadow: none !important;
 }
@@ -1313,15 +1321,15 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 .smirk-public textarea:focus,
 .smirk-public select:focus {
   border-color: var(--public-forest) !important;
-  box-shadow: 0 0 0 3px rgba(0, 228, 121, 0.12) !important;
+  box-shadow: 0 0 0 3px rgba(31, 107, 69, 0.12) !important;
 }
 
 .smirk-public .smirk-public-logo {
   color: var(--public-ink) !important;
-  font-family: var(--public-display) !important;
-  font-size: 17px !important;
+  font-family: var(--public-sans) !important;
+  font-size: 18px !important;
   font-weight: 700 !important;
-  letter-spacing: -0.04em !important;
+  letter-spacing: -0.03em !important;
 }
 
 .smirk-public .smirk-public-logo__dot {
@@ -1332,22 +1340,107 @@ hr, [class*="divide-y"] > * + * { border-color: var(--border) !important; }
 
 .smirk-public .smirk-public-preview {
   overflow: hidden;
-  border: 1px solid rgba(183, 250, 115, 0.32) !important;
-  border-radius: 0 !important;
-  background: linear-gradient(155deg, #131a16 0%, #0d110f 78%) !important;
-  color: #e8eee6 !important;
-  box-shadow: 14px 14px 0 rgba(0, 228, 121, 0.055), 0 24px 58px rgba(0, 0, 0, 0.32) !important;
+  border: 1px solid var(--public-line) !important;
+  border-radius: 12px !important;
+  background: rgba(255, 255, 255, 0.42) !important;
+  color: var(--public-ink) !important;
+  box-shadow: 0 22px 54px rgba(37, 43, 39, 0.1) !important;
 }
 
 .smirk-public .smirk-public-preview * { color: inherit; }
-.smirk-public .smirk-public-preview__eyebrow { color: #c8e86a !important; }
-.smirk-public .smirk-public-preview__row { border-color: rgba(232, 238, 230, 0.12) !important; background: rgba(255, 255, 255, 0.035) !important; }
-.smirk-public .smirk-public-preview__tag { border: 1px solid rgba(200, 232, 106, 0.34); border-radius: 0 !important; color: #c8e86a !important; }
-.smirk-public .smirk-public-preview__action { border-top: 1px solid rgba(232, 238, 230, 0.12); background: rgba(0, 0, 0, 0.20) !important; }
+.smirk-public .smirk-public-preview__eyebrow { color: var(--public-forest) !important; }
+.smirk-public .smirk-public-preview__row { border-color: var(--public-line) !important; background: rgba(255, 255, 255, 0.34) !important; }
+.smirk-public .smirk-public-preview__tag { border: 1px solid rgba(31, 107, 69, 0.34); border-radius: 8px !important; color: var(--public-forest) !important; }
+.smirk-public .smirk-public-preview__action { border-top: 1px solid var(--public-line); background: var(--public-paper-2) !important; }
 
 .smirk-public .smirk-signal-label {
-  color: #9bffb5 !important;
-  text-shadow: 0 0 18px rgba(0, 228, 121, 0.20);
+  color: var(--public-forest) !important;
+  text-shadow: none;
+}
+
+.smirk-public-eyebrow,
+.smirk-recovered-call__eyebrow {
+  color: var(--public-forest);
+  font-family: var(--public-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.smirk-recovered-call-section {
+  scroll-margin-top: 76px;
+  border-top: 1px solid var(--public-line);
+  background: var(--public-paper-2);
+}
+
+/* The recovered-call story is the sole dark public surface: the contrast
+   separates the listening moment from the paper-led buyer journey. */
+.smirk-public .smirk-recovered-call {
+  border: 1px solid rgba(232, 238, 230, 0.15) !important;
+  border-radius: 18px !important;
+  background: #121614 !important;
+  color: #e8eee6 !important;
+  box-shadow: 0 26px 64px rgba(23, 28, 25, 0.18) !important;
+}
+
+.smirk-public .smirk-recovered-call a {
+  color: var(--public-live) !important;
+}
+
+.smirk-public .smirk-recovered-call__photo-shade {
+  background: linear-gradient(180deg, transparent 42%, rgba(9, 12, 10, 0.88) 100%);
+}
+
+.smirk-public .smirk-recovered-call__ticket {
+  border: 1px solid rgba(232, 238, 230, 0.18);
+  border-radius: 12px;
+  background: rgba(13, 17, 15, 0.86);
+  color: #e8eee6;
+  backdrop-filter: blur(14px);
+}
+
+.smirk-public .smirk-recovered-call__eyebrow {
+  color: var(--public-live);
+}
+
+.smirk-public .smirk-recovered-call__badge {
+  border: 1px solid rgba(200, 232, 106, 0.38);
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: var(--public-live);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.smirk-public .smirk-recovered-call audio {
+  color-scheme: dark;
+}
+
+.smirk-public .smirk-recovered-call__fact,
+.smirk-public .smirk-recovered-call__task {
+  border: 1px solid rgba(232, 238, 230, 0.1);
+  background: #1a201c;
+}
+
+.smirk-public .smirk-recovered-call__task {
+  background: #20271f;
+}
+
+.smirk-public .smirk-recovered-call dt {
+  color: #9aa39b;
+  font-family: var(--public-sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.smirk-public .smirk-recovered-call details {
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
 }
 
 /* Optional daylight mode, deliberately mineral rather than bright white. */
