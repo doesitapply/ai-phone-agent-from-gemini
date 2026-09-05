@@ -226,10 +226,9 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
       const workspace = await getWorkspaceById(id);
       if (!workspace) return res.status(404).json({ error: "Workspace not found" });
       const normalizedPlan = String(workspace.plan || "").trim().toLowerCase();
-      const expectedTier = ["pro", "enterprise", "agency"].includes(normalizedPlan) ? "pro" : "basic";
+      const presentationTier = ["pro", "enterprise", "agency"].includes(normalizedPlan) ? "pro" : "basic";
       const billingEntitled = hasWorkspaceBillingEntitlement(workspace.plan, workspace.subscription_status);
-      const basicStatus = billingEntitled ? 200 : 402;
-      const proStatus = billingEntitled ? (expectedTier === "pro" ? 200 : 403) : 402;
+      const workspaceStatus = billingEntitled ? 200 : 402;
       return res.json({
         ok: true,
         workspace: {
@@ -239,16 +238,19 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
           subscription_status: workspace.subscription_status || null,
           mode: workspace.mode || null,
         },
-        expected_tier: expectedTier,
+        expected_tier: presentationTier,
+        presentation_tier: presentationTier,
+        access_model: "billing_entitled_workspace",
+        server_plan_gate: false,
         billing_entitled: billingEntitled,
         route_access: {
-          "/api/calls": basicStatus,
-          "/api/contacts": basicStatus,
-          "/api/tasks": basicStatus,
-          "/api/stats": proStatus,
-          "/api/workspace-overview": proStatus,
-          "/api/recovery/queue": proStatus,
-          "/api/handoffs": proStatus,
+          "/api/calls": workspaceStatus,
+          "/api/contacts": workspaceStatus,
+          "/api/tasks": workspaceStatus,
+          "/api/stats": workspaceStatus,
+          "/api/workspace-overview": workspaceStatus,
+          "/api/recovery/queue": workspaceStatus,
+          "/api/handoffs": workspaceStatus,
         },
         credential_revealed: false,
       });

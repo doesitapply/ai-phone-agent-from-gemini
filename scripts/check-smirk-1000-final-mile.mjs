@@ -116,9 +116,8 @@ function basicChaosEvidence(commit) {
   const currentCommitMatches = artifact?.gitCommit === commit;
   const ok = Boolean(
     artifact?.ok === true &&
-      artifact?.code === "BASIC_CHAOS_PASSED" &&
-      Number(artifact?.allowedRequests || 0) > 0 &&
-      Number(artifact?.restrictedRequests || 0) > 0 &&
+      artifact?.code === "STARTER_OWNER_CHAOS_PASSED" &&
+      Number(artifact?.workspaceRequests || 0) > 0 &&
       artifact?.cleanupRequired === false &&
       currentCommitMatches
   );
@@ -130,8 +129,8 @@ function basicChaosEvidence(commit) {
     command:
       "APP_URL=<target> DASHBOARD_API_KEY=<operator-key> ALLOW_SMIRK_BASIC_CHAOS_PROVISION=1 CONFIRM_SMIRK_BASIC_CHAOS_CLEANUP=delete-temp-basic-workspace npm run -s check:basic-chaos",
     summary: ok
-      ? `Basic chaos passed with ${artifact.allowedRequests} allowed and ${artifact.restrictedRequests} restricted requests`
-      : "Basic chaos artifact missing, stale, dirty, or incomplete",
+      ? `Starter owner chaos passed with ${artifact.workspaceRequests} paid workspace requests`
+      : "Starter owner chaos artifact missing, stale, dirty, or incomplete",
     detail: {
       artifact: artifactMeta(basicChaosArtifactPath),
       checkedAt: artifact?.checkedAt || null,
@@ -142,8 +141,7 @@ function basicChaosEvidence(commit) {
       provisioned: artifact?.provisioned ?? null,
       cleanedUp: artifact?.cleanedUp ?? null,
       cleanupRequired: artifact?.cleanupRequired ?? null,
-      allowedRequests: artifact?.allowedRequests ?? null,
-      restrictedRequests: artifact?.restrictedRequests ?? null,
+      workspaceRequests: artifact?.workspaceRequests ?? null,
       code: artifact?.code || null,
       identitySource: artifact?.identitySource || null,
       stripeSmokeArtifactPath: artifact?.stripeSmokeArtifactPath || null,
@@ -214,7 +212,7 @@ const checks = [
     "SMIRK 1000/1000 System Tracker",
     "No-DB Mock Mode",
     "Handyman Shield",
-    "Basic Chaos Testing",
+    "Starter Owner Chaos Testing",
     "production readiness still requires live parity",
   ], "interactive tracker exists with final-mile modules and production-readiness caveat"),
   fileContainsEvidence("safe-database-architecture-roadmap", roadmapPath, [
@@ -265,16 +263,16 @@ const requirementAudit = [
     evidence: "npm run -s check:customer-dashboard && npm run -s check:plan-boundaries",
   },
   {
-    requirement: "Basic chaos validation",
+    requirement: "Starter owner chaos validation",
     status: checkById("basic-chaos-validation")?.ok
       ? readJson(basicChaosArtifactPath)?.identitySource === "stripe-smoke-workspace"
-        ? "complete-stripe-provisioned-basic"
+        ? "complete-stripe-provisioned-starter"
         : "complete-local-live-pending"
       : "incomplete",
     evidence: "output/basic-chaos-last.json",
     caveat: readJson(basicChaosArtifactPath)?.identitySource === "stripe-smoke-workspace"
-      ? "Basic chaos used the approved Stripe smoke workspace identity."
-      : "Production Basic chaos still requires a current live deploy plus a real or approved live Stripe-created Basic workspace.",
+      ? "Starter owner chaos used the approved Stripe smoke workspace identity."
+      : "Production Starter owner chaos still requires a current live deploy plus a real or approved live Stripe-created Starter workspace.",
   },
   {
     requirement: "Non-spam local acquisition audit workflow",
@@ -364,7 +362,7 @@ const report = {
     command: check.command,
   })),
   nextAction: liveParity?.ok
-    ? "Run the post-deploy proof and live Basic chaos gates."
+    ? "Run the post-deploy proof and live Starter owner chaos gates."
     : `Deploy the current commit with ${deployApprovalToken}, then rerun this audit.`,
   artifactPath: outputPath,
 };

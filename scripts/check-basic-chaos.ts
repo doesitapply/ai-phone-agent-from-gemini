@@ -32,13 +32,15 @@ const stripeSmokeArtifactPath = path.resolve(process.env.SMIRK_STRIPE_SMOKE_ARTI
 const stripeSmokeApprovalPhrase =
   "APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live";
 
-const allowedBasicEndpoints = ["/calls", "/contacts", "/tasks"];
-const restrictedProEndpoints = [
+const paidWorkspaceEndpoints = [
+  "/calls",
+  "/contacts",
+  "/tasks",
   "/stats",
   "/call-intelligence",
   "/triage",
   "/handoffs",
-  "/recovery",
+  "/recovery/queue",
   "/appointments",
   "/calendar/events",
   "/workspace-overview",
@@ -98,7 +100,7 @@ async function provisionBasicWorkspace(): Promise<BasicIdentity> {
     method: "POST",
     headers: operatorHeaders(),
     body: JSON.stringify({
-      name: `SMIRK Basic Chaos ${suffix}`,
+      name: `SMIRK Starter Owner Chaos ${suffix}`,
       owner_email: `basic-chaos-${suffix}@example.local`,
       plan: "starter",
       mode: "missed_call_recovery",
@@ -137,7 +139,7 @@ async function resolveStripeSmokeWorkspace(): Promise<BasicIdentity> {
   const smokeOwnerEmail = String(artifact.webhook?.owner_email || artifact.ownerEmail || "").trim().toLowerCase();
   if (!smokeOwnerEmail) {
     throw new Error(
-      "Stripe smoke artifact does not expose the smoke owner email for operator-side Basic chaos resolution. " +
+      "Stripe smoke artifact does not expose the smoke owner email for operator-side Starter owner chaos resolution. " +
       "Rerun npm run check:stripe-webhook-handoff-live after this commit, then rerun check:basic-chaos."
     );
   }
@@ -184,19 +186,41 @@ async function resolveBasicIdentity(): Promise<BasicIdentity> {
   return provisionBasicWorkspace();
 }
 
-function assertNoProLeak(path: string, body: any): void {
-  const serialized = JSON.stringify(body || {});
-  const leaked = [
-    "proofFreshness",
-    "setupReadiness",
-    "prospectTotalLeads",
-    "avgAiLatencyMs",
-    "pendingHandoffs",
-    "ownerEmailAlertsSent",
-    "completeProofCalls",
-  ].filter((field) => serialized.includes(field));
+function assertNoCredentialLeak(path: string, body: any): void {
+  const secretKeys = new Set([
+    "api_key",
+    "twilio_auth_token",
+    "stripe_secret_key",
+    "dashboard_api_key",
+    "openrouter_api_key",
+    "elevenlabs_api_key",
+    "gemini_api_key",
+    "google_service_account_json",
+  ]);
+  const leaked: string[] = [];
+  const visit = (value: any, prefix = "response"): void => {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, `${prefix}[${index}]`));
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, nested] of Object.entries(value)) {
+      const location = `${prefix}.${key}`;
+      if (
+        secretKeys.has(key.toLowerCase())
+        && nested !== null
+        && nested !== ""
+        && nested !== "***"
+        && nested !== "[REDACTED]"
+      ) {
+        leaked.push(location);
+      }
+      visit(nested, location);
+    }
+  };
+  visit(body);
   if (leaked.length > 0) {
-    throw new Error(`${path} leaked Pro-suite fields for a Basic token: ${leaked.join(", ")}`);
+    throw new Error(`${path} exposed unmasked operator or provider credentials: ${leaked.join(", ")}`);
   }
 }
 
@@ -231,7 +255,7 @@ async function waitForBasicSurface(identity: BasicIdentity): Promise<void> {
 
   while (Date.now() < deadline) {
     try {
-      const results = await Promise.all(allowedBasicEndpoints.map((path) =>
+      const results = await Promise.all(paidWorkspaceEndpoints.map((path) =>
         requestJson(path, { headers: basicHeaders(identity) }).then((result) => ({ path, ...result }))
       ));
       const notReady = results.find((result) => result.status !== 200);
@@ -250,30 +274,19 @@ async function runChaos(identity: BasicIdentity) {
   await verifyIdentityIsBasic(identity);
   await waitForBasicSurface(identity);
 
-  const allowedResults = await Promise.all(allowedBasicEndpoints.flatMap((path) =>
+  const workspaceResults = await Promise.all(paidWorkspaceEndpoints.flatMap((path) =>
     Array.from({ length: concurrency }, () => requestJson(path, { headers: basicHeaders(identity) }).then((result) => ({ path, ...result })))
   ));
 
-  for (const result of allowedResults) {
+  for (const result of workspaceResults) {
     if (result.status !== 200) {
-      throw new Error(`${result.path} should be available to Basic, got HTTP ${result.status}: ${JSON.stringify(result.body)}`);
+      throw new Error(`${result.path} should be available to a paid Starter owner, got HTTP ${result.status}: ${JSON.stringify(result.body)}`);
     }
-    assertNoProLeak(result.path, result.body);
-  }
-
-  const restrictedResults = await Promise.all(restrictedProEndpoints.flatMap((path) =>
-    Array.from({ length: concurrency }, () => requestJson(path, { headers: basicHeaders(identity) }).then((result) => ({ path, ...result })))
-  ));
-
-  for (const result of restrictedResults) {
-    if (result.status !== 403 || result.body?.code !== "PRO_SUITE_REQUIRED") {
-      throw new Error(`${result.path} should return PRO_SUITE_REQUIRED for Basic, got HTTP ${result.status}: ${JSON.stringify(result.body)}`);
-    }
+    assertNoCredentialLeak(result.path, result.body);
   }
 
   return {
-    allowedRequests: allowedResults.length,
-    restrictedRequests: restrictedResults.length,
+    workspaceRequests: workspaceResults.length,
   };
 }
 
@@ -313,7 +326,7 @@ async function main() {
     cleanedUp,
     concurrency,
     ...chaos,
-    code: "BASIC_CHAOS_PASSED",
+    code: "STARTER_OWNER_CHAOS_PASSED",
     cleanupRequired: identity.provisioned && !cleanedUp,
     cleanupCommand: identity.provisioned && !cleanedUp ? identity.cleanupCommand : undefined,
     artifactPath,
