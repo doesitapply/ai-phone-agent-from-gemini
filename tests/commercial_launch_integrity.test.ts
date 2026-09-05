@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -32,7 +33,14 @@ test("public recovery preview explains the workflow without fabricated customer 
 });
 
 test("public human-at-work story explains recovery without manufacturing customer or revenue proof", () => {
-  assert.match(app, /const SMIRK_FIELD_WORK_VISUAL = "https:\/\/files\.manuscdn\.com\/user_upload_by_module\/session_file\/91847194\/fIPRxIdlFOkcVraW\.jpg"/);
+  const hero = readFileSync(new URL("../public/smirk-images/hero-van.webp", import.meta.url));
+  const provenance = readFileSync(new URL("../public/smirk-images/PROVENANCE.md", import.meta.url), "utf8");
+  const heroSha256 = createHash("sha256").update(hero).digest("hex");
+
+  assert.match(app, /const SMIRK_FIELD_WORK_VISUAL = "\/smirk-images\/hero-van\.webp"/);
+  assert.equal(heroSha256, "7b22530b9ad5feb2017c7197bf4d8678f266280a0ba050a6535a0c2e793762dc");
+  assert.match(provenance, /user-supplied\s+`smirk-ui-pack\/photos` source set/);
+  assert.match(provenance, new RegExp(heroSha256));
   assert.match(app, /Working the job/);
   assert.match(app, /Signal captured/);
   assert.match(app, /Context recorded/);
