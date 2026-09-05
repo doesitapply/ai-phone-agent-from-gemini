@@ -5,6 +5,7 @@ import { dispatchTool } from "../src/function-calling.ts";
 
 const ctx = {
   callSid: "CA_voice_task_dispatch_regression",
+  workspaceId: 1,
   contactId: 42,
   callerPhone: "+17753863205",
   fromPhone: "+17754203005",

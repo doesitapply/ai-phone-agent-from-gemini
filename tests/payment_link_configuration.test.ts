@@ -16,9 +16,13 @@ const legacyDeferredPlans = evaluatePaymentLinkConfiguration({
   STRIPE_PAYMENT_LINK_PRO: "https://buy.stripe.com/legacy",
   STRIPE_PAYMENT_LINK_ENTERPRISE_ID: "plink_legacyenterprise",
 });
-assert.equal(legacyDeferredPlans.ready, true, "incomplete deferred plan settings must not block the active Starter launch");
-assert.ok(legacyDeferredPlans.deferredPlanWarnings.includes("pro-payment-link-pair-incomplete"), "legacy Pro configuration must remain visible as a warning");
-assert.ok(legacyDeferredPlans.deferredPlanWarnings.includes("enterprise-payment-link-pair-incomplete"), "legacy Enterprise configuration must remain visible as a warning");
+assert.equal(legacyDeferredPlans.ready, false, "independently purchasable deferred links must fail closed until removed or approved");
+assert.ok(legacyDeferredPlans.blockers.includes("pro-payment-link-pair-incomplete"), "incomplete Pro configuration must be explicit");
+assert.ok(legacyDeferredPlans.blockers.includes("enterprise-payment-link-pair-incomplete"), "incomplete Enterprise configuration must be explicit");
+assert.ok(legacyDeferredPlans.blockers.includes("pro-payment-link-out-of-first-dollar-scope"), "Pro must remain outside the Starter-only launch");
+assert.ok(legacyDeferredPlans.blockers.includes("enterprise-payment-link-out-of-first-dollar-scope"), "Enterprise must remain outside the Starter-only launch");
+assert.ok(legacyDeferredPlans.deferredPlanWarnings.includes("pro-payment-link-deferred-until-post-first-dollar-review"), "Pro deferral must remain visible");
+assert.ok(legacyDeferredPlans.deferredPlanWarnings.includes("enterprise-payment-link-deferred-until-post-first-dollar-review"), "Enterprise deferral must remain visible");
 
 const missingStarterId = evaluatePaymentLinkConfiguration({
   STRIPE_PAYMENT_LINK_STARTER: starter.STRIPE_PAYMENT_LINK_STARTER,
@@ -26,4 +30,4 @@ const missingStarterId = evaluatePaymentLinkConfiguration({
 assert.equal(missingStarterId.ready, false, "a missing canonical Starter ID must block checkout");
 assert.ok(missingStarterId.blockers.includes("starter-payment-link-pair-incomplete"), "missing Starter pair must be explicit");
 
-console.log("Payment-link configuration checks passed (8 assertions).");
+console.log("Payment-link configuration checks passed (12 assertions).");
