@@ -12974,7 +12974,7 @@ export default function App() {
       try {
         const [active, s, cs] = await Promise.all([
           api<ActiveCall[]>("/api/calls/active"),
-          isCustomerView && !workspacePlanHasFullSuite(workspacePlan) ? Promise.resolve(null) : api<Stats>("/api/stats"),
+          api<Stats>("/api/stats"),
           operatorSession && !isDemoOperator ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null),
         ]);
         setActiveCalls(active || []);

@@ -57,7 +57,6 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
   DEMO_OPERATOR_API_KEY: z.string().optional(),
-  ALLOW_NO_DB_PUBLIC_DEMO: z.enum(["true", "false"]).optional(),
   PUBLIC_PROOF_WORKSPACE_ID: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
   GOOGLE_ADMIN_EMAILS: z.string().optional(),
@@ -593,27 +592,6 @@ const isDemoOperatorRequestAllowed = (req: Request): boolean => {
   return DEMO_OPERATOR_ALLOWED_ROUTES.some((entry) => entry.method === method && entry.pattern.test(requestPath));
 };
 
-const isNoDbPublicDemoRequestAllowed = (req: Request): boolean => {
-  const method = req.method.toUpperCase() === "HEAD" ? "GET" : req.method.toUpperCase();
-  return method === "GET" && isDemoOperatorRequestAllowed(req);
-};
-
-const rejectNoDbPublicDemoRequest = (req: Request, res: Response) => {
-  const requestPath = dashboardRequestPath(req);
-  log("warn", "No-DB public demo write request blocked", {
-    requestId: (req as any).requestId,
-    method: req.method,
-    path: requestPath,
-    ip: req.ip,
-  });
-  return res.status(403).json({
-    error: "The public no-database demo is read-only.",
-    code: "NO_DB_PUBLIC_DEMO_READ_ONLY",
-    method: req.method,
-    path: requestPath,
-  });
-};
-
 const dashboardAuth = async (req: Request, res: Response, next: NextFunction) => {
   const operatorApiKey = env.DASHBOARD_API_KEY;
   const demoOperatorApiKey = env.DEMO_OPERATOR_API_KEY;
@@ -720,23 +698,6 @@ const workspaceBillingPortalAuth = async (req: Request, res: Response, next: Nex
 const requireOperator = (req: Request, res: Response, next: NextFunction) => {
   if ((req as any).authMode === "operator" || (req as any).authMode === "demo_operator") return next();
   return res.status(403).json({ error: "Forbidden. Operator access required." });
-};
-
-const hasProSuitePlan = (plan: unknown): boolean => {
-  const normalized = String(plan || "").trim().toLowerCase();
-  return normalized === "pro" || normalized === "enterprise" || normalized === "agency";
-};
-
-const requireProSuite = (req: Request, res: Response, next: NextFunction) => {
-  if ((req as any).authMode === "operator" || (req as any).authMode === "demo_operator") return next();
-  const workspace = (req as any).workspaceAuth;
-  if (!workspace) return next();
-  if (hasProSuitePlan(workspace.plan)) return next();
-  return res.status(403).json({
-    error: "This workspace is on the Basic dashboard. Upgrade to Pro to open the full suite.",
-    code: "PRO_SUITE_REQUIRED",
-    required_plan: "pro",
-  });
 };
 
 type GoogleIdentity = {
@@ -867,17 +828,6 @@ registerAuthRoutes(app, {
 ["/api/calls", "/api/agents", "/api/stats", "/api/contacts", "/api/tasks", "/api/handoffs", "/api/team", "/api/summaries", "/api/logs", "/api/webhook-url"].forEach(
   (route) => app.use(route, dashboardAuth)
 );
-
-[
-  "/api/stats",
-  "/api/call-intelligence",
-  "/api/triage",
-  "/api/handoffs",
-  "/api/recovery",
-  "/api/appointments",
-  "/api/calendar/events",
-  "/api/workspace-overview",
-].forEach((route) => app.use(route, dashboardAuth, requireProSuite));
 
 // ── Twilio Signature Validation ───────────────────────────────────────────────
 const twilioValidate = async (req: Request, res: Response, next: NextFunction) => {

@@ -1383,6 +1383,7 @@ paths:
       x-source: "src/routes/operations-routes.ts:83"
       x-express-path: "/api/handoffs/:id/acknowledge"
       security:
+        - WorkspaceBearerAuth: []
         - ApiKeyAuth: []
       responses:
         "200":
@@ -1402,6 +1403,7 @@ paths:
       x-source: "src/routes/operations-routes.ts:101"
       x-express-path: "/api/handoffs/:id/action"
       security:
+        - WorkspaceBearerAuth: []
         - ApiKeyAuth: []
       responses:
         "200":
@@ -3455,7 +3457,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2825"
+      x-source: "server.ts:2775"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3473,7 +3475,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3546"
+      x-source: "server.ts:3496"
       x-express-path: "/api/twilio/process"
       security: []
       responses:
@@ -3893,7 +3895,7 @@ paths:
       tags:
         - "workspace-knowledge"
       summary: "DELETE /api/workspace/knowledge/:id"
-      x-source: "src/routes/workspace-knowledge-routes.ts:183"
+      x-source: "src/routes/workspace-knowledge-routes.ts:182"
       x-express-path: "/api/workspace/knowledge/:id"
       security:
         - WorkspaceBearerAuth: []
@@ -3913,7 +3915,7 @@ paths:
       tags:
         - "workspace-knowledge"
       summary: "POST /api/workspace/knowledge/import"
-      x-source: "src/routes/workspace-knowledge-routes.ts:141"
+      x-source: "src/routes/workspace-knowledge-routes.ts:140"
       x-express-path: "/api/workspace/knowledge/import"
       security:
         - WorkspaceBearerAuth: []
@@ -3933,7 +3935,7 @@ paths:
       tags:
         - "workspace-knowledge"
       summary: "POST /api/workspace/knowledge/packs"
-      x-source: "src/routes/workspace-knowledge-routes.ts:70"
+      x-source: "src/routes/workspace-knowledge-routes.ts:69"
       x-express-path: "/api/workspace/knowledge/packs"
       security:
         - WorkspaceBearerAuth: []
@@ -3953,7 +3955,7 @@ paths:
       tags:
         - "workspace-knowledge"
       summary: "POST /api/workspace/knowledge/packs/:id/activate"
-      x-source: "src/routes/workspace-knowledge-routes.ts:93"
+      x-source: "src/routes/workspace-knowledge-routes.ts:92"
       x-express-path: "/api/workspace/knowledge/packs/:id/activate"
       security:
         - WorkspaceBearerAuth: []
@@ -3973,7 +3975,7 @@ paths:
       tags:
         - "workspace-knowledge"
       summary: "POST /api/workspace/knowledge/packs/reset"
-      x-source: "src/routes/workspace-knowledge-routes.ts:118"
+      x-source: "src/routes/workspace-knowledge-routes.ts:117"
       x-express-path: "/api/workspace/knowledge/packs/reset"
       security:
         - WorkspaceBearerAuth: []

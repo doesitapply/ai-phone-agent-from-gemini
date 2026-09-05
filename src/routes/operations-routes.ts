@@ -80,7 +80,7 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
     });
   });
 
-  app.post("/api/handoffs/:id/acknowledge", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  app.post("/api/handoffs/:id/acknowledge", dashboardAuth, async (req: Request, res: Response) => {
     if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });
@@ -98,7 +98,7 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
     res.json({ success: true, status: "acknowledged" });
   });
 
-  app.post("/api/handoffs/:id/action", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  app.post("/api/handoffs/:id/action", dashboardAuth, async (req: Request, res: Response) => {
     if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });

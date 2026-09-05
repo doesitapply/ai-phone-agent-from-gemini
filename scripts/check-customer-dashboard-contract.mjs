@@ -11,8 +11,7 @@ function requireIncludes(source, needle, label) {
   if (!source.includes(needle)) failures.push(`${label}: missing ${needle}`);
 }
 
-requireIncludes(app, 'const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "contacts", "tasks"]);', "starter/basic customer nav");
-requireIncludes(app, 'const PRO_WORKSPACE_TABS = new Set<Tab>([', "pro customer nav");
+requireIncludes(app, 'const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "handoffs", "tasks", "settings", "crm"]);', "starter customer nav");
 requireIncludes(app, 'const OPERATOR_ONLY_TABS = new Set<Tab>([', "operator-only nav denylist");
 requireIncludes(app, "const workspacePlan = normalizeWorkspacePlan(currentWorkspace?.plan || workspaceSession?.plan);", "workspace plan source");
 requireIncludes(app, "const customerVisibleTabs = workspacePlanHasFullSuite(workspacePlan) ? PRO_WORKSPACE_TABS : BASIC_WORKSPACE_TABS;", "plan-based customer nav");
@@ -23,31 +22,26 @@ requireIncludes(app, '? "calls"', "customer active-tab calls fallback");
 requireIncludes(app, "isDemoOperator && !demoOperatorVisibleTabs.has(normalizedTab)", "demo operator active-tab fallback branch");
 requireIncludes(app, "? demoFallbackTab", "demo operator active-tab first-allowed fallback");
 requireIncludes(app, 'operatorSession && !isDemoOperator ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null)', "customer/demo must not poll operator-only config status");
-requireIncludes(app, 'isCustomerView && !workspacePlanHasFullSuite(workspacePlan) ? Promise.resolve(null) : api<Stats>("/api/stats")', "basic customer must not poll pro-only stats");
+requireIncludes(app, 'api<Stats>("/api/stats")', "paid customer live metrics poll");
 requireIncludes(app, "const CUSTOMER_NETWORK_ERROR", "app error sanitizer");
 requireIncludes(app, "const CUSTOMER_DATA_ERROR", "app data sanitizer");
 requireIncludes(app, "const CUSTOMER_AUTH_ERROR", "app auth sanitizer");
 requireIncludes(setupWizard, "function safeSetupError", "setup wizard sanitizer");
-requireIncludes(server, "const requireProSuite = (req: Request, res: Response, next: NextFunction) => {", "server pro-suite entitlement middleware");
-requireIncludes(server, 'code: "PRO_SUITE_REQUIRED"', "server pro-suite entitlement response");
-requireIncludes(server, '"/api/workspace-overview"', "server pro-suite dashboard API guard");
-requireIncludes(server, '"/api/call-intelligence"', "server pro-suite review API guard");
-requireIncludes(server, '"/api/recovery"', "server pro-suite recovery API guard");
-requireIncludes(server, '"/api/appointments"', "server pro-suite calendar API guard");
-requireIncludes(server, '"/api/handoffs"', "server pro-suite handoff API guard");
-requireIncludes(server, '"/api/stats"', "server pro-suite stats API guard");
+if (server.includes("requireProSuite") || server.includes("PRO_SUITE_REQUIRED")) {
+  failures.push("single-offer customer workflow must not retain a hidden Pro-only API gate");
+}
 
 const customerShellBlock = app.match(/const customerHiddenTabs = new Set<Tab>\(\[([\s\S]*?)\]\);/)?.[1] || "";
-for (const tab of ["campaigns", "settings", "mission_control", "prospecting", "agent", "voice", "leads", "integrations", "agents", "compliance", "logs", "workspaces", "system_health"]) {
+for (const tab of ["campaigns", "mission_control", "prospecting", "agent", "voice", "leads", "integrations", "agents", "compliance", "logs", "workspaces", "system_health"]) {
   if (!customerShellBlock.includes(`"${tab}"`)) failures.push(`customer hidden tabs: ${tab} is not hidden from customer sessions`);
 }
 
 const basicTabsBlock = app.match(/const BASIC_WORKSPACE_TABS = new Set<Tab>\(\[([\s\S]*?)\]\);/)?.[1] || "";
-for (const tab of ["calls", "contacts", "tasks"]) {
-  if (!basicTabsBlock.includes(`"${tab}"`)) failures.push(`basic dashboard tabs: ${tab} is not available to starter/basic workspaces`);
+for (const tab of ["calls", "handoffs", "tasks", "settings", "crm"]) {
+  if (!basicTabsBlock.includes(`"${tab}"`)) failures.push(`starter owner tabs: ${tab} is not available to the paid customer workspace`);
 }
-for (const tab of ["dashboard", "review", "crm", "calendar", "handoffs", "recovery", "analytics", "settings", "agent", "voice", "integrations", "logs", "system_health", "workspaces"]) {
-  if (basicTabsBlock.includes(`"${tab}"`)) failures.push(`basic dashboard tabs: ${tab} must not be available to starter/basic workspaces`);
+for (const tab of ["dashboard", "review", "calendar", "recovery", "analytics", "agent", "voice", "integrations", "logs", "system_health", "workspaces"]) {
+  if (basicTabsBlock.includes(`"${tab}"`)) failures.push(`starter owner tabs: ${tab} must remain behind an operator or future paid-suite boundary`);
 }
 
 const proTabsBlock = app.match(/const PRO_WORKSPACE_TABS = new Set<Tab>\(\[([\s\S]*?)\]\);/)?.[1] || "";
@@ -74,4 +68,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log("OK customer dashboard contract hides operator surface and sanitizes owner-visible failures");
+console.log("OK paid customer dashboard contract exposes the recovery controls and hides restricted operator surface");

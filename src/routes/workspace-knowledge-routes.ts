@@ -46,10 +46,9 @@ export function registerWorkspaceKnowledgeRoutes(app: Express, deps: WorkspaceKn
   app.get("/api/workspace/knowledge", dashboardAuth, async (req: Request, res: Response) => {
     try {
       if (!dbEnabled) {
-        return res.json({
-          sources: [],
-          packs: [],
-          agent_context: "Database is not connected yet. Add Postgres before importing workspace knowledge.",
+        return res.status(503).json({
+          error: "Business knowledge is unavailable because durable workspace storage is not connected.",
+          code: "DURABLE_STORAGE_UNAVAILABLE",
         });
       }
       const wsId = getWorkspaceId(req);

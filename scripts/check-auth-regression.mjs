@@ -106,22 +106,15 @@ if (!dashboardAuthBlock.includes('!operatorApiKey && !demoOperatorApiKey && !IS_
 if (!dashboardAuthBlock.includes("OPERATOR_AUTH_NOT_CONFIGURED") || !dashboardAuthBlock.includes("return res.status(503)")) {
   fail("dashboardAuth must fail closed when production operator credentials are missing");
 }
-if (!dashboardAuthBlock.includes('env.ALLOW_NO_DB_PUBLIC_DEMO === "true"')) {
-  fail("production no-DB public demo access must require an explicit opt-in");
-}
-if (!server.includes('const isNoDbPublicDemoRequestAllowed = (req: Request): boolean => {')
-  || !server.includes('return method === "GET" && isDemoOperatorRequestAllowed(req);')) {
-  fail("no-DB public demo access must be restricted to the curated read-only demo route allowlist");
-}
-if (!server.includes('code: "NO_DB_PUBLIC_DEMO_READ_ONLY"')) {
-  fail("blocked no-DB public demo writes must return a stable denial code");
-}
-if (!dashboardAuthBlock.includes("if (noDbPublicDemoEnabled && workspaceToken)")) {
-  fail("mock workspace bearer auth must require the explicit no-DB public demo gate");
-}
-const noDbReadOnlyGuardCount = (dashboardAuthBlock.match(/!isNoDbPublicDemoRequestAllowed\(req\)/g) || []).length;
-if (noDbReadOnlyGuardCount < 2) {
-  fail("dashboardAuth must enforce the no-DB read-only allowlist for both mock bearer and anonymous fallback auth");
+for (const removedNoDbDemoMarker of [
+  "ALLOW_NO_DB_PUBLIC_DEMO",
+  "isNoDbPublicDemoRequestAllowed",
+  "rejectNoDbPublicDemoRequest",
+  "NO_DB_PUBLIC_DEMO_READ_ONLY",
+]) {
+  if (server.includes(removedNoDbDemoMarker)) {
+    fail(`production must not retain a no-database fixture or public-demo access path: ${removedNoDbDemoMarker}`);
+  }
 }
 if (!leadRoutes.includes('app.post("/api/chat", dashboardAuth, chatRateLimit')) {
   fail("SMIRK chat must use its dedicated limiter after authentication and before the Gemini handler");
@@ -290,7 +283,11 @@ const workspaceDashboardRouteAllowlist = [
   { method: "POST", route: "/api/tasks/:id/complete", reason: "buyer callback task actions" },
   { method: "POST", route: "/api/tasks/bulk-complete", reason: "buyer callback task actions" },
   { method: "GET", route: "/api/handoffs", reason: "buyer handoff queue" },
-  { method: "POST", route: "/api/handoffs/:id/acknowledge", reason: "buyer handoff action" },
+  { method: "POST", route: "/api/handoffs/:id/acknowledge", reason: "buyer handoff acknowledgement" },
+  { method: "POST", route: "/api/handoffs/:id/action", reason: "buyer handoff action" },
+  { method: "POST", route: "/api/workspace/knowledge/packs", reason: "buyer reviewed knowledge-pack draft" },
+  { method: "POST", route: "/api/workspace/knowledge/packs/:id/activate", reason: "buyer reviewed knowledge-pack activation" },
+  { method: "POST", route: "/api/workspace/knowledge/packs/reset", reason: "buyer knowledge-pack reset" },
   { method: "POST", route: "/api/calls", reason: "buyer outbound proof/test call" },
   { method: "GET", route: "/api/workspaces", reason: "workspace session selection plus operator list branch" },
   { method: "GET", route: "/api/appointments", reason: "buyer calendar read" },
@@ -376,7 +373,9 @@ for (const source of routeSources) {
     const isProtectedMissionControlArrayRoute = declarationLine.includes(
       'app.get(["/mission-control", "/mission-control/*"], dashboardAuth, requireOperator',
     );
-    if (!isProtectedMissionControlArrayRoute) {
+    const isExplicitPublicPolicyRoute = source.name === path.join("src", "routes", "public-policy-routes.ts")
+      && declarationLine.includes("app.get(route,");
+    if (!isProtectedMissionControlArrayRoute && !isExplicitPublicPolicyRoute) {
       fail(`${source.name}:${lineNumber}: route declaration is not covered by the auth scanner: ${declarationLine.trim()}`);
     }
   }
@@ -607,7 +606,7 @@ if (!server.includes("registerBossModeRoutes(app, dashboardAuth, requireOperator
   fail("Boss Mode routes must be registered with dashboardAuth and requireOperator");
 }
 for (const snippet of [
-  'export type ChatAccessMode = "operator" | "workspace" | "demo_operator";',
+  'export type ChatAccessMode = "owner_operator" | "operator_readonly" | "workspace" | "demo_operator";',
 ]) {
   if (!smirkChat.includes(snippet)) {
     fail(`workspace SMIRK chat must preserve the constrained tool access contract: ${snippet}`);
@@ -622,7 +621,7 @@ if (!smirkChat.includes("const WORKSPACE_ALLOWED_TOOLS = new Set([")) {
 if (!smirkChat.includes("const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode)")) {
   fail("workspace SMIRK chat must preserve the constrained tool access contract: const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode)");
 }
-if (!smirkChat.includes('const allowedForMode = accessMode === "operator"') || !smirkChat.includes("WORKSPACE_ALLOWED_TOOLS.has(name)")) {
+if (!smirkChat.includes("const allowedForAccessMode = isOwnerOperatorMode(accessMode)") || !smirkChat.includes("WORKSPACE_ALLOWED_TOOLS.has(name)")) {
   fail("workspace SMIRK chat must deny tools outside the workspace allowlist");
 }
 for (const forbiddenWorkspaceTool of [
@@ -1134,7 +1133,7 @@ if (!triageBlock) {
     "LEFT JOIN contacts co ON c.contact_id = co.id AND co.workspace_id = c.workspace_id",
     "LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid AND cs.workspace_id = c.workspace_id",
     "WHERE c.workspace_id = ${wsId}",
-    "from_number: r.from_number",
+    "fromNumber: r.from_number",
     "res.json({",
   ]) {
     if (!triageBlock.includes(required)) {
