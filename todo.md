@@ -78,3 +78,11 @@
 - [x] Create human-at-work visual assets that show service professionals unavailable on a job while SMIRK captures an incoming business opportunity.
 - [x] Integrate the approved human-centered visual story into the public trade-floor interface without representing illustrative calls, customer details, revenue, or outcomes as real.
 - [x] Validate the human-centered desktop and mobile presentation for clarity, accessibility, and no-fabrication compliance.
+
+## Unified Contractor Workfloor Release
+
+- [ ] Consolidate the contractor-at-work public story and trade-floor owner interface into one clear visual system across the usable customer journey.
+- [ ] Resurface valuable existing customer capabilities behind plain-language owner controls, preserving restricted administrator features and consent-sensitive outreach functions behind appropriate access boundaries.
+- [ ] Run release-readiness verification for builds, authorized API behavior, checkout readiness, owner chat authority, dashboard live-data state, and proof-call prerequisites.
+- [ ] Push only the verified release set to the configured `main` deployment path and monitor Railway until it reports a healthy active deployment.
+- [ ] Run the controlled production proof call and record the call, summary, alert, one callback/handoff outcome, and dashboard receipt before broad marketing or checkout exposure.

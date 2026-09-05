@@ -2243,7 +2243,7 @@ const normalizeWorkspacePlan = (plan: unknown): WorkspacePlan => {
 
 const workspacePlanHasFullSuite = (plan: WorkspacePlan) => plan === "pro" || plan === "enterprise";
 
-const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "handoffs", "tasks", "settings"]);
+const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "handoffs", "tasks", "settings", "crm"]);
 const PRO_WORKSPACE_TABS = new Set<Tab>([
   "dashboard",
   "review",
