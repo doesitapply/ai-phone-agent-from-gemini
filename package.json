@@ -15,6 +15,7 @@
     "check:openapi": "node scripts/generate-openapi.mjs --check",
     "lint": "tsc --noEmit",
     "test": "npm run -s lint && npm run -s check:unit && npm run -s check:deploy-identity && npm run -s check:velvet-control && npm run -s check:velvet-handoff && npm run -s check:velvet-acquisition && npm run -s check:velvet-outcome && npm run -s check:git-deploy-sync:fixtures && npm run -s check:deploy-archive-safety && npm run -s check:launch-prospect-readiness:fixtures && npm run -s check:launch-ledger-reconciliation && npm run -s check:demo-operator-access && npm run -s check:telegram-approval-safety && npm run -s check:first-customer-next-action && npm run -s check:real-revenue-contract && node --check scripts/place-operator-alert-call.mjs && npm run -s smoke:operator-alert-call",
+    "check:release": "npm test && npm run -s check:auth && npm run -s check:openapi && npm run build",
     "check:unit": "node --import tsx --test src/*.test.ts tests/*.test.ts",
     "check:deploy-identity": "node --import tsx --test tests/deploy_identity.test.ts",
     "check:velvet-control": "node --import tsx --test tests/velvet_control.test.ts",
@@ -297,8 +298,9 @@
   "overrides": {
     "axios": "1.18.1",
     "body-parser": "1.20.6",
-    "brace-expansion@2": "2.1.2",
+    "brace-expansion@2": "2.1.4",
     "form-data": "4.0.6",
-    "protobufjs": "7.6.5"
+    "protobufjs": "7.6.5",
+    "qs": "6.16.0"
   }
 }

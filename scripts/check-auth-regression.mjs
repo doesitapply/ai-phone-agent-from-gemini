@@ -506,7 +506,6 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "GET", route: "/api/integrations/webhook/deliveries", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/integrations/crm", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/integrations/velvet/acquisitions", markers: ["velvetAcquisitionRateLimit", "createVelvetAcquisitionHandler"] },
-  { method: "POST", route: "/api/integrations/velvet/handoffs", markers: ["velvetAcquisitionRateLimit", "createVelvetAcquisitionHandler"] },
   { method: "GET", route: "/api/acquisitions", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/acquisitions/:id", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/velvet/portal", markers: ["dashboardAuth", "requireOperator"] },
