@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import test from "node:test";
 import { buildDecisionReadyIncidents, type RecoveryTriageCandidate } from "./triage-policy.js";
 
 const base = (overrides: Partial<RecoveryTriageCandidate> = {}): RecoveryTriageCandidate => ({
@@ -18,48 +19,40 @@ const base = (overrides: Partial<RecoveryTriageCandidate> = {}): RecoveryTriageC
   ...overrides,
 });
 
-describe("buildDecisionReadyIncidents", () => {
-  it("routes an incomplete missed call to review instead of P0 callback work", () => {
-    const [incident] = buildDecisionReadyIncidents([base()]);
+test("routes an incomplete missed call to review instead of P0 callback work", () => {
+  const [incident] = buildDecisionReadyIncidents([base()]);
 
-    expect(incident).toMatchObject({
-      priority: "P2",
-      action: "review",
-      kind: "capture_review",
-      label: "Call capture incomplete — review",
-    });
-    expect(incident.detail).toContain("do not treat this as an automatic callback instruction");
-  });
+  assert.equal(incident.priority, "P2");
+  assert.equal(incident.action, "review");
+  assert.equal(incident.kind, "capture_review");
+  assert.equal(incident.label, "Call capture incomplete — review");
+  assert.match(incident.detail, /do not treat this as an automatic callback instruction/);
+});
 
-  it("keeps an explicit callback outcome with conversation evidence as P0 recovery work", () => {
-    const [incident] = buildDecisionReadyIncidents([base({
-      turnCount: 4,
-      outcome: "callback_needed",
-      summary: "Caller asked for an afternoon callback about an HVAC repair.",
-      nextAction: "Call after 2 PM.",
-    })]);
+test("keeps an explicit callback outcome with conversation evidence as P0 recovery work", () => {
+  const [incident] = buildDecisionReadyIncidents([base({
+    turnCount: 4,
+    outcome: "callback_needed",
+    summary: "Caller asked for an afternoon callback about an HVAC repair.",
+    nextAction: "Call after 2 PM.",
+  })]);
 
-    expect(incident).toMatchObject({
-      priority: "P0",
-      action: "recovery",
-      kind: "recovery",
-      label: "Callback requested",
-    });
-  });
+  assert.equal(incident.priority, "P0");
+  assert.equal(incident.action, "recovery");
+  assert.equal(incident.kind, "recovery");
+  assert.equal(incident.label, "Callback requested");
+});
 
-  it("collapses nearby repeat attempts from the same caller into one review decision", () => {
-    const incidents = buildDecisionReadyIncidents([
-      base({ callSid: "CA_new", startedAt: "2026-08-22T18:02:00.000Z" }),
-      base({ callSid: "CA_middle", startedAt: "2026-08-22T18:01:00.000Z" }),
-      base({ callSid: "CA_old", startedAt: "2026-08-22T18:00:00.000Z" }),
-    ]);
+test("collapses nearby repeat attempts from the same caller into one review decision", () => {
+  const incidents = buildDecisionReadyIncidents([
+    base({ callSid: "CA_new", startedAt: "2026-08-22T18:02:00.000Z" }),
+    base({ callSid: "CA_middle", startedAt: "2026-08-22T18:01:00.000Z" }),
+    base({ callSid: "CA_old", startedAt: "2026-08-22T18:00:00.000Z" }),
+  ]);
 
-    expect(incidents).toHaveLength(1);
-    expect(incidents[0]).toMatchObject({
-      duplicateCount: 3,
-      priority: "P2",
-      action: "review",
-    });
-    expect(incidents[0].label).toContain("3 repeat missed calls");
-  });
+  assert.equal(incidents.length, 1);
+  assert.equal(incidents[0].duplicateCount, 3);
+  assert.equal(incidents[0].priority, "P2");
+  assert.equal(incidents[0].action, "review");
+  assert.match(incidents[0].label, /3 repeat missed calls/);
 });

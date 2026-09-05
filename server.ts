@@ -30,6 +30,7 @@ import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITT
 import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
 import { dispatchTool, TOOL_DECLARATIONS } from "./src/function-calling.js";
 import { buildWorkspaceKnowledgeContext } from "./src/workspace-knowledge.js";
+import { resolveDeployIdentity } from "./src/deploy-identity.js";
 
 // ── Load env before importing modules that use it ─────────────────────────────
 // Load settings: /tmp/.env.local in production (Railway read-only fs), .env.local in dev
@@ -63,9 +64,15 @@ const EnvSchema = z.object({
   DEMO_OPERATOR_EMAILS: z.string().optional(),
   SMIRK_OPERATOR_ADMIN_EMAILS: z.string().optional(),
   SMIRK_OWNER_CHAT_EMAILS: z.string().optional(),
+  VELVET_ALCHEMY_ACQUISITION_API_KEY: z.string().optional(),
   VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
+  VELVET_ALCHEMY_HANDOFF_MODE: z.string().optional(),
+  VELVET_ALCHEMY_ACQUISITION_MODE: z.string().optional(),
   VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
-  VELVET_ALCHEMY_PORTAL_URL: z.string().url().optional(),
+  VELVET_ALCHEMY_PORTAL_URL: z.string().optional(),
+  VELVET_ALCHEMY_BASE_URL: z.string().optional(),
+  VELVET_ALCHEMY_READ_KEY: z.string().optional(),
+  VELVET_ALCHEMY_OUTCOME_KEY: z.string().optional(),
   NODE_ENV: z.enum(["development", "production", "test"]).optional(),
   // OpenClaw Gateway integration
   OPENCLAW_ENABLED: z.enum(["true", "false"]).optional(),
@@ -168,19 +175,9 @@ if (!envResult.success) {
 const env = envResult.data;
 const PORT = parseInt(env.PORT || "3000", 10);
 const IS_PROD = env.NODE_ENV === "production";
-const DEPLOY_VERSION =
-  process.env.SMIRK_DEPLOY_VERSION ||
-  process.env.RAILWAY_GIT_COMMIT_SHA ||
-  process.env.SOURCE_VERSION ||
-  process.env.VERCEL_GIT_COMMIT_SHA ||
-  process.env.npm_package_version ||
-  "dev";
-const DEPLOY_BRANCH =
-  process.env.SMIRK_DEPLOY_BRANCH ||
-  process.env.RAILWAY_GIT_BRANCH ||
-  process.env.VERCEL_GIT_COMMIT_REF ||
-  process.env.GITHUB_REF_NAME ||
-  "unknown";
+const deployIdentity = resolveDeployIdentity(process.env);
+const DEPLOY_VERSION = deployIdentity.version;
+const DEPLOY_BRANCH = deployIdentity.branch;
 
 // ── Simple API key auth for demo endpoints (landing page trigger) ─────────────
 const readBearerToken = (req: Request): string => {
@@ -223,6 +220,7 @@ const requireTestCallSecret = (req: Request, res: Response, next: NextFunction) 
 };
 
 let proofCallSchemaReady = false;
+let acquisitionSchemaReady = false;
 const requireProofCallSchemaReady = (_req: Request, res: Response, next: NextFunction) => {
   if (!DB_ENABLED || !proofCallSchemaReady) {
     return res.status(503).json({
@@ -313,6 +311,11 @@ import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
 import { buildInboundDemoGreeting, buildInboundDemoSystemContext, createInboundDemoStore, registerInboundDemoRoutes } from "./src/inbound-demo.js";
 import { createPostgresVelvetHandoffStore, registerVelvetHandoffRoutes } from "./src/routes/velvet-handoff-routes.js";
+import {
+  createPostgresVelvetAcquisitionStore,
+  registerVelvetAcquisitionRoutes,
+} from "./src/routes/velvet-acquisition-routes.js";
+import { readVelvetAcquisitionConfig } from "./src/velvet-acquisition.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
@@ -1011,6 +1014,12 @@ const getAi = () => {
   if (!env.GEMINI_API_KEY) return null; // Optional — OpenRouter handles AI if not set
   return new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
 };
+
+const hasParentTwilioConfiguration = () => Boolean(
+  env.TWILIO_ACCOUNT_SID
+  && env.TWILIO_AUTH_TOKEN
+  && env.TWILIO_PHONE_NUMBER,
+);
 
 const getTwilioClient = () => {
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) throw new Error("Twilio credentials not configured.");
@@ -1919,9 +1928,8 @@ setInterval(() => {
 // Runs every 60s. Finds open callback tasks whose due_at has passed and fires
 // an outbound Twilio call. Marks the task as in_progress to prevent double-fire.
 const executeScheduledCallbacks = async (): Promise<void> => {
-  if (!DB_ENABLED) return;
+  if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;
   const twilioClient = getTwilioClient();
-  if (!twilioClient || !env.TWILIO_PHONE_NUMBER) return;
   try {
     const dueTasks = await sql<{
       id: number;
@@ -2003,8 +2011,9 @@ setInterval(() => {
 // that haven't been confirmation-called yet. Places an outbound call using
 // the ECHO agent to confirm the appointment.
 const executeAppointmentConfirmations = async () => {
-  if (!DB_ENABLED || !getTwilioClient() || !env.TWILIO_PHONE_NUMBER) return;
+  if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;
   try {
+    const twilioClient = getTwilioClient();
     const now = new Date();
     const windowStart = new Date(now.getTime() + 20 * 60 * 60 * 1000); // 20h from now
     const windowEnd   = new Date(now.getTime() + 26 * 60 * 60 * 1000); // 26h from now
@@ -2034,7 +2043,7 @@ const executeAppointmentConfirmations = async () => {
           hour: "numeric", minute: "2-digit", timeZoneName: "short"
         });
         const twimlUrl = `${getAppUrl()}/api/twiml/appointment-confirm?apptId=${appt.id}&service=${encodeURIComponent(appt.service_type)}&time=${encodeURIComponent(apptTime)}`;
-        const call = await getTwilioClient()!.calls.create({
+        const call = await twilioClient.calls.create({
           to: phone,
           from: env.TWILIO_PHONE_NUMBER!,
           url: twimlUrl,
@@ -2062,13 +2071,14 @@ setInterval(() => {
 
 // ── Sequence Engine: execute due follow-up steps every 60 seconds ─────────────
 setInterval(() => {
-  if (!DB_ENABLED) return;
-  const twilioClient = getTwilioClient();
+  if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;
   const fromNumber = env.TWILIO_PHONE_NUMBER;
-  if (!twilioClient || !fromNumber) return;
-  executeDueSequenceSteps(twilioClient, fromNumber, getAppUrl()).catch((err: any) => {
-    log("warn", "Sequence engine interval error", { error: err.message });
-  });
+  if (!fromNumber) return;
+  Promise.resolve()
+    .then(() => executeDueSequenceSteps(getTwilioClient(), fromNumber, getAppUrl()))
+    .catch((err: any) => {
+      log("warn", "Sequence engine interval error", { error: err.message });
+    });
 }, 60_000); // every 60 seconds
 
 
@@ -3741,6 +3751,19 @@ registerTaskRoutes(app, {
   log,
 });
 
+const velvetPortalUrl = (() => {
+  const rawUrl = String(env.VELVET_ALCHEMY_PORTAL_URL || "").trim();
+  if (!rawUrl) return null;
+  try {
+    const parsed = new URL(rawUrl);
+    const localHttp = parsed.protocol === "http:"
+      && ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+    return parsed.protocol === "https:" || localHttp ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+})();
+
 registerOperationsRoutes(app, {
   dashboardAuth,
   requireOperator,
@@ -3748,10 +3771,19 @@ registerOperationsRoutes(app, {
   dbEnabled: DB_ENABLED,
   getWorkspaceId,
   velvet: {
-    receiverConfigured: !!env.VELVET_ALCHEMY_HANDOFF_API_KEY,
+    receiverConfigured: readVelvetAcquisitionConfig(process.env).configured,
+    isAcquisitionSchemaReady: () => acquisitionSchemaReady,
     workspaceId: env.VELVET_ALCHEMY_WORKSPACE_ID || null,
-    portalUrl: env.VELVET_ALCHEMY_PORTAL_URL || null,
+    portalUrl: velvetPortalUrl,
   },
+});
+
+registerVelvetAcquisitionRoutes(app, {
+  dbEnabled: DB_ENABLED,
+  isSchemaReady: () => acquisitionSchemaReady,
+  env: process.env,
+  store: createPostgresVelvetAcquisitionStore(sql),
+  log,
 });
 
 registerAgentRoutes(app, {
@@ -4424,6 +4456,7 @@ async function startServer() {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           proofCallSchemaReady = false;
+          acquisitionSchemaReady = false;
           await initSaasSchema();
           await initSchema();
           await initProspectorSchema();
@@ -4431,6 +4464,7 @@ async function startServer() {
           await initSequenceSchema();
           await initComplianceSchema();
           await ensureWorkspacePhoneNumbersTable();
+          acquisitionSchemaReady = true;
           // Auto-register the parent-account number to workspace 1. Never purge
           // other rows here: those are durable customer subaccount numbers.
           if (env.TWILIO_PHONE_NUMBER) {

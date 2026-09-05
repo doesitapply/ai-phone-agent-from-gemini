@@ -14,8 +14,14 @@
     "generate:openapi": "node scripts/generate-openapi.mjs",
     "check:openapi": "node scripts/generate-openapi.mjs --check",
     "lint": "tsc --noEmit",
-    "test": "npm run -s lint && npm run -s check:velvet-control && npm run -s check:git-deploy-sync:fixtures && npm run -s check:deploy-archive-safety && npm run -s check:launch-prospect-readiness:fixtures && npm run -s check:launch-ledger-reconciliation && npm run -s check:demo-operator-access && npm run -s check:telegram-approval-safety && npm run -s check:first-customer-next-action && npm run -s check:real-revenue-contract && node --check scripts/place-operator-alert-call.mjs && npm run -s smoke:operator-alert-call",
+    "test": "npm run -s lint && npm run -s check:unit && npm run -s check:deploy-identity && npm run -s check:velvet-control && npm run -s check:velvet-handoff && npm run -s check:velvet-acquisition && npm run -s check:velvet-outcome && npm run -s check:git-deploy-sync:fixtures && npm run -s check:deploy-archive-safety && npm run -s check:launch-prospect-readiness:fixtures && npm run -s check:launch-ledger-reconciliation && npm run -s check:demo-operator-access && npm run -s check:telegram-approval-safety && npm run -s check:first-customer-next-action && npm run -s check:real-revenue-contract && node --check scripts/place-operator-alert-call.mjs && npm run -s smoke:operator-alert-call",
+    "check:release": "npm test && npm run -s check:auth && npm run -s check:openapi && npm run build",
+    "check:unit": "node --import tsx --test src/*.test.ts tests/*.test.ts",
+    "check:deploy-identity": "node --import tsx --test tests/deploy_identity.test.ts",
     "check:velvet-control": "node --import tsx --test tests/velvet_control.test.ts",
+    "check:velvet-acquisition": "node scripts/check-velvet-acquisition-contract.mjs && node scripts/check-velvet-operator-ui.mjs && node --import tsx --test tests/acquisition_lifecycle.test.ts tests/velvet_acquisition_route.test.ts tests/velvet_acquisition_store.test.ts tests/velvet_acquisition_read.test.ts",
+    "check:velvet-acquisition:postgres": "tsx scripts/check-velvet-acquisition-postgres.ts",
+    "check:velvet-outcome": "node --import tsx --test tests/velvet_outcome.test.ts",
     "check:auth": "node scripts/check-auth-regression.mjs . && tsx scripts/check-chat-route-security.ts && tsx scripts/check-google-auth-safety.ts && node scripts/check-call-usage-accounting.mjs",
     "check:auth-regression": "npm run check:auth",
     "check:demo-operator-access": "node scripts/check-demo-operator-access.mjs",
@@ -292,8 +298,9 @@
   "overrides": {
     "axios": "1.18.1",
     "body-parser": "1.20.6",
-    "brace-expansion@2": "2.1.2",
+    "brace-expansion@2": "2.1.4",
     "form-data": "4.0.6",
-    "protobufjs": "7.6.5"
+    "protobufjs": "7.6.5",
+    "qs": "6.16.0"
   }
 }

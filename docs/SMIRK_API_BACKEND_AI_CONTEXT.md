@@ -18,7 +18,7 @@ Use these files first:
 | `src/routes/*.ts` | Modular API handlers by product/backend domain. |
 | `src/saas.ts` | Workspaces, plans, usage limits, invites, activation events, Stripe webhook handling, and SaaS schema. |
 | `src/db.ts` | Postgres connection and schema initialization. |
-| `src/App.tsx` | React app, public pages, customer dashboard, operator surfaces, and plan-gated navigation. |
+| `src/App.tsx` | React app, public pages, the focused Starter owner desk, and operator-only navigation. |
 | `README.md` | Human-facing status, product scope, verification commands, and market framing. |
 | `SMIRK_FOR_DUMMIES.md` | Plain-English product state and limitations. |
 | `SMIRK_GRANT_MATRIX.md` | Secret/workspace separation and operator credential boundaries. |
@@ -62,8 +62,14 @@ Current implemented boundary:
 
 ```text
 Velvet protected sender
+  -> POST /api/integrations/velvet/acquisitions
+  -> dedicated acquisition bearer + exact workspace + real/synthetic fence
+  -> immutable acquisition root + append-only receipt + initial hold/not-permitted review
+  -> no contact, call, message, task, handoff, approval, or outreach
+
+Separately, approved work can enter through
   -> POST /api/integrations/velvet/handoffs
-  -> dedicated bearer + workspace validation + strict payload validation
+  -> dedicated handoff bearer + workspace validation + strict payload validation
   -> idempotency receipt keyed by workspace/source/external ID/payload hash
   -> SMIRK contact + external_handoff call + pending handoff + open task + call event
 ```
@@ -74,10 +80,10 @@ Current gaps that must remain explicit:
 
 | Requirement | State |
 | --- | --- |
-| Full immutable `acquisition_record` root with source evidence | Not implemented in SMIRK. |
-| Velvet-specific route/contactability decision and approval bound to an outreach payload | Not implemented as durable linked records. |
-| Automatic idempotent outcome feedback to Velvet | Not implemented in source. |
-| Stripe/payment/retention linked to the originating Velvet evidence | Not implemented. |
+| Immutable `acquisition_record` root with source evidence | Implemented as a tenant-scoped evidence inbox with append-only intake events/reviews. |
+| Velvet-specific route/contactability decision and approval bound to an outreach payload | Intake records `hold` or `not_permitted`; the reviewed transition and universal writer propagation are not implemented. |
+| Automatic idempotent outcome feedback to Velvet | Implemented only for completed calls linked to legacy Velvet handoffs; separately keyed, configuration-gated, and not a durable acquisition outbox. |
+| Stripe/payment/retention linked to the originating Velvet evidence | Tenant-safe link columns exist; end-to-end propagation and real-loop proof are not implemented. |
 | Receiver bearer, idempotency, and durable SMIRK handoff/task creation | Implemented and separately sender-side proven. |
 
 ## Runtime Architecture
@@ -113,37 +119,35 @@ There are four practical auth classes.
 | --- | --- | --- |
 | Public/signed webhook | Provider signature or route-specific validation. Some dev paths may be unsigned locally. | Twilio webhooks, Stripe webhook, Calendly webhook, public pricing/version/proof/health. |
 | Operator API key | `X-Api-Key: <DASHBOARD_API_KEY>` through `dashboardAuth`. | Admin, logs, config, agents, compliance, integrations, prospecting, workspace admin, destructive maintenance. |
-| Workspace bearer token | `Authorization: Bearer <workspace.api_key>` through `dashboardAuth`. | Customer dashboard, calls, contacts, tasks, profile, knowledge, recovery, overview, proof status. |
+| Workspace bearer token | `Authorization: Bearer <workspace.api_key>` through `dashboardAuth`; normal product access also requires billing entitlement. | Tenant-scoped customer dashboard, calls, contacts, tasks, profile, knowledge, recovery, overview, and proof status. |
 | Provisioning/test secrets | `Authorization: Bearer <PHONE_AGENT_PROVISIONING_SECRET>` or explicit test-call secret. | Provisioning automation and guarded test-call routes. |
 
 Important middleware:
 
-- `dashboardAuth` in `server.ts`: accepts an operator `X-Api-Key` or a workspace bearer token. A disconnected database never grants a fixture workspace identity.
+- `dashboardAuth` in `server.ts`: accepts an operator `X-Api-Key` or resolves a workspace bearer token from durable storage. Normal workspace access requires billing entitlement, binds `authMode=workspace`, stores the authenticated workspace on the request, and pins `X-Workspace-Id` to that workspace. A disconnected database never grants a fixture workspace identity.
 - `requireOperator` in `server.ts`: requires operator auth mode. Workspace users should never pass this.
-- `requireProSuite` in `server.ts`: lets operators through, lets `pro`, `enterprise`, and `agency` workspaces through, and blocks Basic/Starter workspaces with `code: "PRO_SUITE_REQUIRED"`.
+- `workspaceBillingPortalAuth` in `server.ts`: authenticates the exact workspace bearer without requiring active billing only for billing recovery. It does not grant normal product access or accept an operator-selected tenant.
 - `api-middleware.ts`: applies route-specific rate limits and Twilio validation middleware.
 
-Do not loosen these without tests. The product depends on Basic users seeing a simple customer dashboard while operators keep the machine room.
+Do not loosen these without tests. The product depends on tenant-scoped, billing-entitled workspace access while operators keep the machine room.
 
-## Plans and UI Partitioning
+## Sellable Offer, Compatibility Labels, And UI Partitioning
 
-The SaaS plan source is `PLAN_LIMITS` in `src/saas.ts`:
+Starter is the one sellable customer offer. `PLAN_LIMITS` and durable records still recognize legacy/future values, but those values are not an authorization hierarchy:
 
-| Plan | Meaning |
+| Stored/presented value | Current meaning |
 | --- | --- |
-| `free` | Demo/trial style access with small limits. |
-| `starter` | Basic customer dashboard tier. |
-| `pro` | Full customer suite tier. |
-| `enterprise` | Agency/high-volume tier. |
-
-Product language often calls the low tier Basic/Starter and the higher tier Pro/Agency. In code, expect `starter`, `pro`, and `enterprise`.
+| `starter` | Canonical sellable missed-call recovery offer and focused owner desk. |
+| `free` | Demo/trial compatibility state; any access remains subject to the explicit demo/billing rules. |
+| `pro` / `enterprise` | Legacy or future presentation/configuration values. They are not currently sellable backend entitlements and grant no extra workspace or operator API authority. |
 
 Rules:
 
-- Starter/Basic customers should get Calls, Contacts, Tasks, basic proof, and alert setup.
-- Pro/Agency customers can access the broader customer suite.
+- Starter customers should see the focused owner desk: Calls, Tasks, Alerts, and tenant-scoped CRM/business context. Provider, agent, integration, and system settings remain operator-only.
+- A billing-entitled workspace bearer may use customer workspace APIs only within its authenticated tenant. The server does not impose a second, hidden Pro gate on those APIs.
+- UI visibility is presentation, not authorization. Legacy/future Pro or Agency labels do not grant backend rights.
 - Operator/admin tools must stay behind `requireOperator` and should not mount for customer sessions.
-- Restricted Pro-suite APIs should return `PRO_SUITE_REQUIRED`, not raw failures.
+- Workspace identity must never be able to select another tenant or inherit operator access.
 
 Validate with:
 
@@ -175,7 +179,8 @@ npm run -s check:auth-regression
 | `recovery-routes.ts` | `/api/recovery/*` | Workspace/operator, direct dial operator-only | Missed-call recovery queue, close/callback actions, stats. |
 | `calendar-routes.ts` | `/api/appointments*`, `/api/calendar/events`, `/api/calendar/test-booking` | Workspace reads, operator writes/test booking | Appointments and calendar surfaces. |
 | `calendly-routes.ts` | `/api/calendly/webhook`, `/api/calendly/config` | Signed/public webhook, workspace config read | Calendly webhook and config exposure. |
-| `operations-routes.ts` | `/api/handoffs`, `/api/summaries` | Workspace handoffs, operator summaries | Handoff acknowledgment and operator summary list. |
+| `operations-routes.ts` | `/api/handoffs`, `/api/summaries`, `/api/acquisitions*`, `/api/velvet/portal` | Workspace handoffs, operator evidence/lifecycle reads | Handoff queue, acquisition lifecycle, and evidence-honest Velvet portal. |
+| `velvet-acquisition-routes.ts` | `/api/integrations/velvet/acquisitions` | Dedicated Velvet acquisition bearer | Evidence-only, tenant-bound, idempotent acquisition intake with strict synthetic separation. |
 | `velvet-handoff-routes.ts` | `/api/integrations/velvet/handoffs` | Dedicated Velvet inbound bearer | Strict external handoff intake, receipt/idempotency, and durable internal handoff/task creation. |
 | `proof-routes.ts` | `/api/events`, `/api/public-proof-snapshot` | Operator events, public proof snapshot | Proof/event feed and public masked snapshot. |
 | `settings-routes.ts` | `/api/settings*`, `/api/logs`, `/api/agent/identity`, `/api/config-status` | Operator | Settings, logs, service tests, agent identity. |
@@ -216,6 +221,8 @@ High-level entities another agent should understand:
 - `contact_custom_fields`: extracted structured fields and confidence.
 - `appointments`: scheduling records.
 - `handoffs`: human handoff/acknowledgment workflow.
+- `acquisition_records`: immutable tenant-scoped Velvet source identity and first evidence snapshot.
+- `acquisition_events` / `acquisition_reviews`: append-only receipts, links, decisions, and feedback lifecycle evidence.
 - `velvet_alchemy_handoff_receipts`: receiver-side idempotency and receipt state keyed by workspace, source, external ID, and payload hash.
 - `call_events` / `request_logs` / audit tables: proof, operations, diagnostics, compliance trail.
 - Prospecting/sequence/lead tables: operator-only outbound/prospecting surfaces.
@@ -278,14 +285,28 @@ Velvet protected sender
 
 Do not add a “self-test” that claims to prove the Velvet sender and SMIRK receiver use the same secret unless the test executes from Velvet’s protected sender runtime. A SMIRK-only loopback proves only SMIRK’s own configuration.
 
+### Velvet Acquisition Evidence Intake
+
+```text
+Velvet evidence sender
+  -> POST /api/integrations/velvet/acquisitions with its own bearer
+  -> exact configured workspace + durable-schema check
+  -> strict real/synthetic classification and stable source identities
+  -> immutable acquisition root + append-only event + initial safety review
+  -> 201 RECEIVED or 200 DUPLICATE, with externalAction: none
+```
+
+This endpoint is not an alias for the handoff receiver. Never turn an evidence receipt into an automatic contact, call, message, task, checkout, or approval.
+
 ### Customer Dashboard
 
 ```text
 Workspace bearer token
   -> dashboardAuth
-  -> workspace-scoped APIs
-  -> Starter/Basic sees simplified dashboard
-  -> Pro/Agency sees broader suite
+  -> active billing entitlement for normal product access
+  -> authenticated workspace identity pins tenant scope
+  -> customer workspace APIs (no hidden Pro server gate)
+  -> focused Starter owner desk
   -> operator-only pages stay inaccessible and unmounted for customers
 ```
 
@@ -342,7 +363,7 @@ Important safety behaviors:
 - DNC routes exist and are operator-controlled.
 - DNC/compliance controls are guardrails, not legal advice.
 - Destructive smoke cleanup and live proof/write checks are guarded by explicit env confirmations.
-- Basic/Starter workspaces must not see Pro/operator data.
+- Workspace customers must never see another tenant's data or operator-only data.
 - Public proof snapshots must stay masked.
 
 ## Verification Commands
@@ -385,6 +406,7 @@ Guarded live-write checks require explicit user approval and env confirmations. 
 - This doc describes the local checkout. It does not prove production is running this commit.
 - `openapi.yaml` exposes route inventory and rough security labels, not exact request/response schemas.
 - Some legacy/operator/prospecting surfaces are broader than the narrow customer product.
+- Legacy/future Pro or Agency presentation is not a currently sellable offer or a backend entitlement; only an explicit future product decision and matching contracts could change that.
 - No-DB mode is a local demo and debugging path, not a replacement for production persistence.
 - Live Stripe/Twilio/Railway proof depends on configured external accounts and explicit approvals.
-- The Velvet receiver proof does not imply complete source-to-revenue attribution or automatic learning. Those require the missing acquisition root, approval/touch ledger, conversion linkage, and outcome callback.
+- The Velvet receiver and acquisition tests do not imply complete source-to-revenue attribution or automatic learning. The root and a scoped legacy callback exist; reviewed routing, universal downstream propagation, conversion/retention linkage, a durable acquisition feedback outbox, and a controlled real-loop proof remain required.

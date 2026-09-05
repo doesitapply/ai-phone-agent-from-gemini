@@ -382,6 +382,211 @@ export async function initSchema(): Promise<void> {
     ON velvet_alchemy_handoff_receipts(workspace_id, received_at DESC)
   `;
 
+  // ── Acquisition evidence inbox ─────────────────────────────────────────────
+  // This is the immutable source root for pre-contact evidence. Intake does not
+  // create contacts, calls, handoffs, tasks, approvals, touches, or checkouts.
+  await sql`
+    CREATE TABLE IF NOT EXISTS acquisition_records (
+      acquisition_id       TEXT PRIMARY KEY,
+      workspace_id         INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
+      source_system        TEXT NOT NULL,
+      source_record_id     TEXT NOT NULL,
+      first_payload_hash   TEXT NOT NULL,
+      record_kind          TEXT NOT NULL DEFAULT 'quarantined'
+        CHECK (record_kind IN ('real', 'synthetic', 'quarantined')),
+      contact_permission   TEXT NOT NULL DEFAULT 'unverified'
+        CHECK (contact_permission IN ('unverified', 'not_permitted', 'eligible_for_later_review')),
+      contact_basis        TEXT NOT NULL DEFAULT 'not_evaluated',
+      route_decision       TEXT NOT NULL DEFAULT 'hold'
+        CHECK (route_decision IN ('hold', 'observe_only', 'eligible_for_later_review')),
+      source_snapshot      JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source_observed_at   TIMESTAMPTZ,
+      first_received_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, source_system, source_record_id),
+      UNIQUE (acquisition_id, workspace_id),
+      CHECK (first_payload_hash ~ '^[0-9a-f]{64}$'),
+      CHECK (
+        record_kind <> 'synthetic'
+        OR (
+          contact_permission = 'not_permitted'
+          AND contact_basis = 'synthetic_fixture'
+          AND route_decision = 'hold'
+        )
+      )
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_acquisition_records_workspace_received
+    ON acquisition_records(workspace_id, first_received_at DESC)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_acquisition_records_workspace_kind
+    ON acquisition_records(workspace_id, record_kind, first_received_at DESC)
+  `;
+
+  // Source event identity is deliberately distinct from source record identity:
+  // retries deduplicate on the event while later feedback targets the record.
+  await sql`
+    CREATE TABLE IF NOT EXISTS acquisition_events (
+      receipt_id          TEXT PRIMARY KEY,
+      acquisition_id     TEXT NOT NULL,
+      workspace_id       INTEGER NOT NULL,
+      source_system      TEXT NOT NULL,
+      source_event_id    TEXT NOT NULL,
+      event_type         TEXT NOT NULL DEFAULT 'source_received',
+      channel            TEXT,
+      approval_id        TEXT,
+      call_sid           TEXT,
+      handoff_id         INTEGER,
+      external_delivery_id TEXT,
+      payload_hash       TEXT NOT NULL,
+      status             TEXT NOT NULL DEFAULT 'received'
+        CHECK (status IN (
+          'received', 'quarantined', 'prepared', 'attempted', 'provider_accepted',
+          'delivered', 'failed', 'replied', 'checkout_completed', 'activated',
+          'feedback_pending', 'feedback_delivered'
+        )),
+      payload_snapshot   JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source_observed_at TIMESTAMPTZ,
+      received_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      FOREIGN KEY (acquisition_id, workspace_id)
+        REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT,
+      UNIQUE (workspace_id, source_system, source_event_id),
+      CHECK (payload_hash ~ '^[0-9a-f]{64}$')
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_acquisition_events_record_received
+    ON acquisition_events(acquisition_id, received_at DESC)
+  `;
+
+  // Reviews are append-only observations. There is intentionally no execute
+  // state here; contact and provider actions remain behind separate controls.
+  await sql`
+    CREATE TABLE IF NOT EXISTS acquisition_reviews (
+      review_id          TEXT PRIMARY KEY,
+      acquisition_id    TEXT NOT NULL,
+      workspace_id      INTEGER NOT NULL,
+      decision          TEXT NOT NULL
+        CHECK (decision IN ('observe_only', 'not_contactable', 'eligible_for_later_review')),
+      candidate_channel TEXT NOT NULL DEFAULT 'none',
+      contact_basis     TEXT NOT NULL,
+      evidence_hash     TEXT NOT NULL,
+      evidence_ref      TEXT,
+      reviewed_by       TEXT NOT NULL,
+      observed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at        TIMESTAMPTZ,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      FOREIGN KEY (acquisition_id, workspace_id)
+        REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT,
+      CHECK (evidence_hash ~ '^[0-9a-f]{64}$'),
+      CHECK (
+        decision <> 'not_contactable'
+        OR candidate_channel = 'none'
+      )
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_acquisition_reviews_record_created
+    ON acquisition_reviews(acquisition_id, created_at DESC)
+  `;
+  await sql`
+    CREATE OR REPLACE FUNCTION guard_acquisition_record_identity()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'acquisition evidence cannot be deleted' USING ERRCODE = '23000';
+      END IF;
+      IF OLD.acquisition_id IS DISTINCT FROM NEW.acquisition_id
+        OR OLD.workspace_id IS DISTINCT FROM NEW.workspace_id
+        OR OLD.source_system IS DISTINCT FROM NEW.source_system
+        OR OLD.source_record_id IS DISTINCT FROM NEW.source_record_id
+        OR OLD.first_payload_hash IS DISTINCT FROM NEW.first_payload_hash
+        OR OLD.record_kind IS DISTINCT FROM NEW.record_kind
+        OR OLD.contact_permission IS DISTINCT FROM NEW.contact_permission
+        OR OLD.contact_basis IS DISTINCT FROM NEW.contact_basis
+        OR OLD.route_decision IS DISTINCT FROM NEW.route_decision
+        OR OLD.source_snapshot IS DISTINCT FROM NEW.source_snapshot
+        OR OLD.source_observed_at IS DISTINCT FROM NEW.source_observed_at
+        OR OLD.first_received_at IS DISTINCT FROM NEW.first_received_at
+      THEN
+        RAISE EXCEPTION 'acquisition source identity is immutable' USING ERRCODE = '23000';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `;
+  await sql`
+    CREATE OR REPLACE FUNCTION guard_append_only_acquisition_evidence()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      RAISE EXCEPTION 'acquisition event and review evidence is append-only' USING ERRCODE = '23000';
+    END;
+    $$ LANGUAGE plpgsql
+  `;
+  await sql`
+    DO $$
+    BEGIN
+      -- pg_trigger.tgtype 27 is ROW + BEFORE + UPDATE + DELETE. Checking the
+      -- complete shape lets startup repair stale or disabled trigger objects.
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_acquisition_record_identity'
+          AND tgrelid = 'acquisition_records'::regclass
+          AND tgfoid = 'guard_acquisition_record_identity()'::regprocedure
+          AND tgtype = 27
+          AND tgenabled = 'O'
+          AND NOT tgisinternal
+          AND tgnargs = 0
+          AND tgattr = ''::int2vector
+          AND tgqual IS NULL
+      ) THEN
+        DROP TRIGGER IF EXISTS trg_acquisition_record_identity ON acquisition_records;
+        CREATE TRIGGER trg_acquisition_record_identity
+        BEFORE UPDATE OR DELETE ON acquisition_records
+        FOR EACH ROW EXECUTE FUNCTION guard_acquisition_record_identity();
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_acquisition_events_append_only'
+          AND tgrelid = 'acquisition_events'::regclass
+          AND tgfoid = 'guard_append_only_acquisition_evidence()'::regprocedure
+          AND tgtype = 27
+          AND tgenabled = 'O'
+          AND NOT tgisinternal
+          AND tgnargs = 0
+          AND tgattr = ''::int2vector
+          AND tgqual IS NULL
+      ) THEN
+        DROP TRIGGER IF EXISTS trg_acquisition_events_append_only ON acquisition_events;
+        CREATE TRIGGER trg_acquisition_events_append_only
+        BEFORE UPDATE OR DELETE ON acquisition_events
+        FOR EACH ROW EXECUTE FUNCTION guard_append_only_acquisition_evidence();
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_acquisition_reviews_append_only'
+          AND tgrelid = 'acquisition_reviews'::regclass
+          AND tgfoid = 'guard_append_only_acquisition_evidence()'::regprocedure
+          AND tgtype = 27
+          AND tgenabled = 'O'
+          AND NOT tgisinternal
+          AND tgnargs = 0
+          AND tgattr = ''::int2vector
+          AND tgqual IS NULL
+      ) THEN
+        DROP TRIGGER IF EXISTS trg_acquisition_reviews_append_only ON acquisition_reviews;
+        CREATE TRIGGER trg_acquisition_reviews_append_only
+        BEFORE UPDATE OR DELETE ON acquisition_reviews
+        FOR EACH ROW EXECUTE FUNCTION guard_append_only_acquisition_evidence();
+      END IF;
+    END
+    $$
+  `;
+
   // ── Webhook deliveries ──────────────────────────────────────────────────────
   await sql`
     CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -554,7 +759,7 @@ export async function initSchema(): Promise<void> {
     CREATE TABLE IF NOT EXISTS post_call_processing_stages (
       call_sid       TEXT NOT NULL REFERENCES post_call_processing_jobs(call_sid) ON DELETE CASCADE,
       stage          TEXT NOT NULL
-        CHECK (stage IN ('summary', 'opt_out', 'call_webhook', 'crm_sync', 'owner_webhook', 'owner_alert')),
+        CHECK (stage IN ('summary', 'velvet_outcome', 'opt_out', 'call_webhook', 'crm_sync', 'owner_webhook', 'owner_alert')),
       status         TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'running', 'failed', 'completed', 'skipped')),
       attempts       INTEGER NOT NULL DEFAULT 0,
@@ -564,6 +769,23 @@ export async function initSchema(): Promise<void> {
       updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (call_sid, stage)
     )
+  `;
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'post_call_processing_stages_stage_check'
+          AND conrelid = 'post_call_processing_stages'::regclass
+      ) THEN
+        ALTER TABLE post_call_processing_stages DROP CONSTRAINT post_call_processing_stages_stage_check;
+      END IF;
+      ALTER TABLE post_call_processing_stages
+        ADD CONSTRAINT post_call_processing_stages_stage_check
+        CHECK (stage IN ('summary', 'velvet_outcome', 'opt_out', 'call_webhook', 'crm_sync', 'owner_webhook', 'owner_alert'));
+    EXCEPTION WHEN duplicate_object THEN
+      NULL;
+    END $$;
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS post_call_crm_checkpoints (
@@ -614,6 +836,137 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS last_action_at TIMESTAMPTZ`;
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS resolution_notes TEXT`;
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`;
+
+  // Reserve tenant-safe, nullable joins for later lifecycle evidence. The
+  // source workspace is explicit on tables whose own workspace can represent
+  // a newly provisioned customer rather than the pre-conversion operator.
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS acquisition_id TEXT`;
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS acquisition_id TEXT`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS acquisition_id TEXT`;
+  for (const table of [
+    "provisioning_requests",
+    "activation_events",
+    "stripe_checkout_fulfillments",
+    "stripe_paid_checkout_exceptions",
+  ]) {
+    await sql.unsafe(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS acquisition_id TEXT`);
+    await sql.unsafe(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS acquisition_workspace_id INTEGER`);
+    await sql.unsafe(`
+      UPDATE ${table} child
+      SET acquisition_workspace_id = acquisition.workspace_id
+      FROM acquisition_records acquisition
+      WHERE child.acquisition_id = acquisition.acquisition_id
+        AND child.acquisition_workspace_id IS NULL
+    `);
+  }
+  await sql`ALTER TABLE calls DROP CONSTRAINT IF EXISTS calls_acquisition_id_fkey`;
+  await sql`ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_acquisition_id_fkey`;
+  await sql`ALTER TABLE handoffs DROP CONSTRAINT IF EXISTS handoffs_acquisition_id_fkey`;
+  await sql`ALTER TABLE provisioning_requests DROP CONSTRAINT IF EXISTS provisioning_requests_acquisition_id_fkey`;
+  await sql`ALTER TABLE activation_events DROP CONSTRAINT IF EXISTS activation_events_acquisition_id_fkey`;
+  await sql`ALTER TABLE stripe_checkout_fulfillments DROP CONSTRAINT IF EXISTS stripe_checkout_fulfillments_acquisition_id_fkey`;
+  await sql`ALTER TABLE stripe_paid_checkout_exceptions DROP CONSTRAINT IF EXISTS stripe_paid_checkout_exceptions_acquisition_id_fkey`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_calls_sid_workspace_unique ON calls(call_sid, workspace_id)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_handoffs_id_workspace_unique ON handoffs(id, workspace_id)`;
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'calls_acquisition_tenant_fkey'
+          AND conrelid = 'calls'::regclass
+      ) THEN
+        ALTER TABLE calls ADD CONSTRAINT calls_acquisition_tenant_fkey
+        FOREIGN KEY (acquisition_id, workspace_id)
+        REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'tasks_acquisition_tenant_fkey'
+          AND conrelid = 'tasks'::regclass
+      ) THEN
+        ALTER TABLE tasks ADD CONSTRAINT tasks_acquisition_tenant_fkey
+        FOREIGN KEY (acquisition_id, workspace_id)
+        REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'handoffs_acquisition_tenant_fkey'
+          AND conrelid = 'handoffs'::regclass
+      ) THEN
+        ALTER TABLE handoffs ADD CONSTRAINT handoffs_acquisition_tenant_fkey
+        FOREIGN KEY (acquisition_id, workspace_id)
+        REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'acquisition_events_call_tenant_fkey'
+          AND conrelid = 'acquisition_events'::regclass
+      ) THEN
+        ALTER TABLE acquisition_events ADD CONSTRAINT acquisition_events_call_tenant_fkey
+        FOREIGN KEY (call_sid, workspace_id)
+        REFERENCES calls(call_sid, workspace_id) ON DELETE RESTRICT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'acquisition_events_handoff_tenant_fkey'
+          AND conrelid = 'acquisition_events'::regclass
+      ) THEN
+        ALTER TABLE acquisition_events ADD CONSTRAINT acquisition_events_handoff_tenant_fkey
+        FOREIGN KEY (handoff_id, workspace_id)
+        REFERENCES handoffs(id, workspace_id) ON DELETE RESTRICT;
+      END IF;
+    END
+    $$
+  `;
+  await sql`ALTER TABLE acquisition_events DROP CONSTRAINT IF EXISTS acquisition_events_call_sid_fkey`;
+  await sql`ALTER TABLE acquisition_events DROP CONSTRAINT IF EXISTS acquisition_events_handoff_id_fkey`;
+  await sql`
+    DO $$
+    DECLARE
+      table_name TEXT;
+      constraint_prefix TEXT;
+    BEGIN
+      FOREACH table_name IN ARRAY ARRAY[
+        'provisioning_requests',
+        'activation_events',
+        'stripe_checkout_fulfillments',
+        'stripe_paid_checkout_exceptions'
+      ] LOOP
+        constraint_prefix := table_name || '_acquisition_source';
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = constraint_prefix || '_pair_check'
+            AND conrelid = to_regclass(table_name)
+        ) THEN
+          EXECUTE format(
+            'ALTER TABLE %I ADD CONSTRAINT %I CHECK ((acquisition_id IS NULL) = (acquisition_workspace_id IS NULL))',
+            table_name,
+            constraint_prefix || '_pair_check'
+          );
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = constraint_prefix || '_fkey'
+            AND conrelid = to_regclass(table_name)
+        ) THEN
+          EXECUTE format(
+            'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (acquisition_id, acquisition_workspace_id) REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT',
+            table_name,
+            constraint_prefix || '_fkey'
+          );
+        END IF;
+      END LOOP;
+    END
+    $$
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_calls_acquisition ON calls(workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_tasks_acquisition ON tasks(workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_handoffs_acquisition ON handoffs(workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_provisioning_requests_acquisition ON provisioning_requests(acquisition_workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_activation_events_acquisition ON activation_events(acquisition_workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_stripe_checkout_fulfillments_acquisition ON stripe_checkout_fulfillments(acquisition_workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_stripe_paid_checkout_exceptions_acquisition ON stripe_paid_checkout_exceptions(acquisition_workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
   await sql`ALTER TABLE plugin_tools ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE field_definitions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
@@ -980,6 +1333,8 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_events_occurred ON launch_events(occurred_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_events_name_source ON launch_events(event_name, source, occurred_at DESC)`;
+  await sql`ALTER TABLE launch_events ADD COLUMN IF NOT EXISTS acquisition_id TEXT`;
+  await sql`ALTER TABLE launch_events ADD COLUMN IF NOT EXISTS acquisition_workspace_id INTEGER`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS launch_ledger (
@@ -1008,6 +1363,8 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_ledger_state ON launch_ledger(next_state, created_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_ledger_vertical ON launch_ledger(vertical, created_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_ledger_channel ON launch_ledger(channel, created_at DESC)`;
+  await sql`ALTER TABLE launch_ledger ADD COLUMN IF NOT EXISTS acquisition_id TEXT`;
+  await sql`ALTER TABLE launch_ledger ADD COLUMN IF NOT EXISTS acquisition_workspace_id INTEGER`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS launch_outreach_approvals (
@@ -1044,6 +1401,99 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_outreach_approvals_status ON launch_outreach_approvals(status, expires_at)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_outreach_approvals_target ON launch_outreach_approvals(target_kind, target_ref)`;
+  await sql`ALTER TABLE launch_outreach_approvals ADD COLUMN IF NOT EXISTS acquisition_id TEXT`;
+  await sql`ALTER TABLE launch_outreach_approvals ADD COLUMN IF NOT EXISTS acquisition_workspace_id INTEGER`;
+  for (const table of ["launch_events", "launch_ledger", "launch_outreach_approvals"]) {
+    await sql.unsafe(`
+      UPDATE ${table} child
+      SET acquisition_workspace_id = acquisition.workspace_id
+      FROM acquisition_records acquisition
+      WHERE child.acquisition_id = acquisition.acquisition_id
+        AND child.acquisition_workspace_id IS NULL
+    `);
+  }
+  await sql`ALTER TABLE launch_events DROP CONSTRAINT IF EXISTS launch_events_acquisition_id_fkey`;
+  await sql`ALTER TABLE launch_ledger DROP CONSTRAINT IF EXISTS launch_ledger_acquisition_id_fkey`;
+  await sql`ALTER TABLE launch_outreach_approvals DROP CONSTRAINT IF EXISTS launch_outreach_approvals_acquisition_id_fkey`;
+  await sql`
+    DO $$
+    DECLARE
+      table_name TEXT;
+      constraint_prefix TEXT;
+    BEGIN
+      FOREACH table_name IN ARRAY ARRAY[
+        'launch_events',
+        'launch_ledger',
+        'launch_outreach_approvals'
+      ] LOOP
+        constraint_prefix := table_name || '_acquisition_source';
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = constraint_prefix || '_pair_check'
+            AND conrelid = to_regclass(table_name)
+        ) THEN
+          EXECUTE format(
+            'ALTER TABLE %I ADD CONSTRAINT %I CHECK ((acquisition_id IS NULL) = (acquisition_workspace_id IS NULL))',
+            table_name,
+            constraint_prefix || '_pair_check'
+          );
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = constraint_prefix || '_fkey'
+            AND conrelid = to_regclass(table_name)
+        ) THEN
+          EXECUTE format(
+            'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (acquisition_id, acquisition_workspace_id) REFERENCES acquisition_records(acquisition_id, workspace_id) ON DELETE RESTRICT',
+            table_name,
+            constraint_prefix || '_fkey'
+          );
+        END IF;
+      END LOOP;
+    END
+    $$
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_launch_events_acquisition ON launch_events(acquisition_workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_launch_ledger_acquisition ON launch_ledger(acquisition_workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_launch_outreach_approvals_acquisition ON launch_outreach_approvals(acquisition_workspace_id, acquisition_id) WHERE acquisition_id IS NOT NULL`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_launch_outreach_approvals_evidence_join_unique
+    ON launch_outreach_approvals(approval_id, acquisition_id, acquisition_workspace_id)
+  `;
+  await sql`
+    UPDATE launch_outreach_approvals approval
+    SET acquisition_id = linked.acquisition_id,
+        acquisition_workspace_id = linked.workspace_id
+    FROM (
+      SELECT approval_id, MIN(acquisition_id) AS acquisition_id, MIN(workspace_id) AS workspace_id
+      FROM acquisition_events
+      WHERE approval_id IS NOT NULL
+      GROUP BY approval_id
+      HAVING COUNT(DISTINCT (acquisition_id, workspace_id)) = 1
+    ) linked
+    WHERE approval.approval_id = linked.approval_id
+      AND approval.acquisition_id IS NULL
+      AND approval.acquisition_workspace_id IS NULL
+  `;
+  await sql`ALTER TABLE acquisition_events DROP CONSTRAINT IF EXISTS acquisition_events_approval_id_fkey`;
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'acquisition_events_approval_evidence_fkey'
+          AND conrelid = 'acquisition_events'::regclass
+      ) THEN
+        ALTER TABLE acquisition_events
+        ADD CONSTRAINT acquisition_events_approval_evidence_fkey
+        FOREIGN KEY (approval_id, acquisition_id, workspace_id)
+        REFERENCES launch_outreach_approvals(approval_id, acquisition_id, acquisition_workspace_id)
+        ON DELETE RESTRICT;
+      END IF;
+    END
+    $$
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_acquisition_events_approval ON acquisition_events(approval_id) WHERE approval_id IS NOT NULL`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS launch_outreach_approval_audit (

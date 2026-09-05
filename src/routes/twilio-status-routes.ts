@@ -4,14 +4,20 @@ import {
   runCheckpointedCrmSync,
   type CrmCheckpointAction,
 } from "../post-call-durability.js";
+import {
+  deliverVelvetOutcome,
+  mapSmirkOutcomeToVelvet,
+  readVelvetOutcomeConfig,
+} from "../velvet-outcome.js";
 
-const POST_CALL_STAGES = [
+export const POST_CALL_STAGES = [
   "summary",
   "opt_out",
   "call_webhook",
   "crm_sync",
   "owner_webhook",
   "owner_alert",
+  "velvet_outcome",
 ] as const;
 const POST_CALL_LEASE_MINUTES = 5;
 const POST_CALL_SWEEP_INTERVAL_MS = 30_000;
@@ -24,6 +30,52 @@ type PostCallJob = {
   attempts: number;
   lease_token: string;
 };
+
+/**
+ * Claim one due post-call job and atomically ensure it has every stage known to
+ * this worker version. The stage insert is deliberately part of the claim
+ * statement: jobs created before `velvet_outcome` existed, or by an old replica
+ * during a rolling deploy, are repaired before any stage handler runs.
+ *
+ * `ON CONFLICT DO NOTHING` preserves completed/skipped stage rows, so repairing
+ * a legacy job never repeats work that already finished.
+ */
+export async function claimPostCallJobWithStageRepair(
+  sql: any,
+  callSid: string,
+  leaseToken: string = randomUUID(),
+): Promise<PostCallJob | null> {
+  const rows = await sql<PostCallJob[]>`
+    WITH claimed_job AS (
+      UPDATE post_call_processing_jobs
+      SET status = 'running',
+          attempts = attempts + 1,
+          locked_at = NOW(),
+          lease_token = ${leaseToken},
+          last_error = NULL,
+          updated_at = NOW()
+      WHERE call_sid = ${callSid}
+        AND completed_at IS NULL
+        AND available_at <= NOW()
+        AND (
+          status IN ('pending', 'failed')
+          OR (status = 'running' AND locked_at < NOW() - (${POST_CALL_LEASE_MINUTES} * INTERVAL '1 minute'))
+        )
+      RETURNING call_sid, workspace_id, attempts, lease_token
+    ), inserted_stages AS (
+      INSERT INTO post_call_processing_stages (call_sid, stage)
+      SELECT claimed_job.call_sid, stages.stage
+      FROM claimed_job
+      CROSS JOIN UNNEST(${[...POST_CALL_STAGES]}::text[]) AS stages(stage)
+      ON CONFLICT (call_sid, stage) DO NOTHING
+      RETURNING call_sid
+    )
+    SELECT call_sid, workspace_id, attempts, lease_token,
+           (SELECT COUNT(*) FROM inserted_stages) AS repaired_stage_count
+    FROM claimed_job
+  `;
+  return rows[0] || null;
+}
 
 const postCallErrorMessage = (error: unknown): string =>
   String((error as any)?.message || error || "Unknown post-call processing error").slice(0, 2_000);
@@ -53,6 +105,9 @@ type TwilioStatusRouteDeps = {
     FROM_NAME?: string;
     OWNER_EMAIL?: string;
     OWNER_PHONE?: string;
+    VELVET_ALCHEMY_OUTCOME_KEY?: string;
+    VELVET_ALCHEMY_BASE_URL?: string;
+    VELVET_ALCHEMY_WORKSPACE_ID?: string;
   };
   getWorkspaceId: (req: Request) => number;
   getWorkspaceMode: (workspaceId: number) => Promise<string>;
@@ -169,25 +224,7 @@ export function registerTwilioStatusRoutes(app: Express, deps: TwilioStatusRoute
   };
 
   const claimPostCallJob = async (callSid: string): Promise<PostCallJob | null> => {
-    const leaseToken = randomUUID();
-    const rows = await sql<PostCallJob[]>`
-      UPDATE post_call_processing_jobs
-      SET status = 'running',
-          attempts = attempts + 1,
-          locked_at = NOW(),
-          lease_token = ${leaseToken},
-          last_error = NULL,
-          updated_at = NOW()
-      WHERE call_sid = ${callSid}
-        AND completed_at IS NULL
-        AND available_at <= NOW()
-        AND (
-          status IN ('pending', 'failed')
-          OR (status = 'running' AND locked_at < NOW() - (${POST_CALL_LEASE_MINUTES} * INTERVAL '1 minute'))
-        )
-      RETURNING call_sid, workspace_id, attempts, lease_token
-    `;
-    return rows[0] || null;
+    return claimPostCallJobWithStageRepair(sql, callSid);
   };
 
   const runPostCallStage = async (
@@ -361,6 +398,74 @@ export function registerTwilioStatusRoutes(app: Express, deps: TwilioStatusRoute
         throw new Error(`Mandatory post-call summary artifacts did not complete for ${job.call_sid}`);
       }
       log("info", "Post-call intelligence complete", { callSid: job.call_sid, workspaceId: job.workspace_id });
+      return "completed";
+    },
+    velvet_outcome: async () => {
+      const config = readVelvetOutcomeConfig(env);
+      if (!config.configured) {
+        log("info", "Velvet outcome callback skipped because it is not configured", {
+          callSid: job.call_sid,
+          workspaceId: job.workspace_id,
+          missing: config.missing,
+        });
+        return "skipped";
+      }
+      if (config.workspaceId !== job.workspace_id) {
+        log("warn", "Velvet outcome callback skipped for an unbound workspace", {
+          callSid: job.call_sid,
+          jobWorkspaceId: job.workspace_id,
+          configuredWorkspaceId: config.workspaceId,
+        });
+        return "skipped";
+      }
+
+      const [handoffRows, summaryRows, callRows] = await Promise.all([
+        sql<{ external_id: string | null }[]>`
+          SELECT h.extracted_fields ->> 'external_id' AS external_id
+          FROM tasks t
+          JOIN handoffs h ON h.call_sid = t.call_sid AND h.workspace_id = t.workspace_id
+          WHERE t.callback_call_sid = ${job.call_sid}
+            AND t.workspace_id = ${job.workspace_id}
+          ORDER BY t.id DESC
+          LIMIT 1`,
+        sql<{ outcome: string | null; summary: string | null }[]>`
+          SELECT outcome, summary
+          FROM call_summaries
+          WHERE call_sid = ${job.call_sid} AND workspace_id = ${job.workspace_id}
+          LIMIT 1`,
+        sql<{ duration_seconds: number | null; started_at: Date | string | null }[]>`
+          SELECT duration_seconds, started_at
+          FROM calls
+          WHERE call_sid = ${job.call_sid} AND workspace_id = ${job.workspace_id}
+          LIMIT 1`,
+      ]);
+      const externalId = handoffRows[0]?.external_id;
+      if (!externalId) return "skipped";
+      const velvetOutcome = mapSmirkOutcomeToVelvet(summaryRows[0]?.outcome);
+      if (!velvetOutcome) {
+        log("warn", "Velvet outcome callback skipped for an unmapped SMIRK outcome", {
+          callSid: job.call_sid,
+          smirkOutcome: summaryRows[0]?.outcome ?? null,
+        });
+        return "skipped";
+      }
+      const delivery = await deliverVelvetOutcome({
+        externalId,
+        callId: job.call_sid,
+        outcome: velvetOutcome,
+        summary: summaryRows[0]?.summary || "SMIRK completed a call without a generated summary.",
+        callDuration: callRows[0]?.duration_seconds ?? null,
+        calledAt: callRows[0]?.started_at ?? null,
+      }, { env });
+      if (!delivery.delivered) {
+        log("warn", "Velvet outcome callback skipped", {
+          callSid: job.call_sid,
+          workspaceId: job.workspace_id,
+          reason: delivery.reason,
+        });
+        return "skipped";
+      }
+      logEvent(job.call_sid, "VELVET_ALCHEMY_OUTCOME_DELIVERED", { externalId, outcome: velvetOutcome });
       return "completed";
     },
     opt_out: async () => {

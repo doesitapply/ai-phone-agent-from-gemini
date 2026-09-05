@@ -920,6 +920,9 @@ async function handleSmirkChatViaOpenRouter({
     }
 
     for (const toolCall of message.tool_calls) {
+      if (toolCall.type !== "function") {
+        throw new Error(`OpenRouter returned unsupported tool call type: ${toolCall.type}`);
+      }
       const name = toolCall.function.name;
       let args: Record<string, unknown> = {};
       try {

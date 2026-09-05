@@ -60,7 +60,9 @@ expect("operator session advertises read_only_demo", files.operatorRoutes.includ
 expect("operator session lists blocked spend actions", files.operatorRoutes.includes("outbound_calls") && files.operatorRoutes.includes("sms") && files.operatorRoutes.includes("prospecting"));
 expect("workspace list treats demo as operator access", files.workspaceAdminRoutes.includes('(req as any).authMode === "operator" || (req as any).authMode === "demo_operator"'));
 
-expect("chat supports demo_operator access mode", files.chat.includes('export type ChatAccessMode = "operator" | "workspace" | "demo_operator";'));
+const chatAccessMode = files.chat.match(/export type ChatAccessMode\s*=([^;]+);/)?.[1] || "";
+expect("chat supports demo_operator access mode", chatAccessMode.includes('"demo_operator"'));
+expect("chat keeps owner and shared-operator authority distinct", chatAccessMode.includes('"owner_operator"') && chatAccessMode.includes('"operator_readonly"'));
 expect("chat defines demo operator allowed tools", files.chat.includes("const DEMO_OPERATOR_ALLOWED_TOOLS = new Set("));
 const demoChatBlock = files.chat.match(/const DEMO_OPERATOR_ALLOWED_TOOLS[\s\S]*?\n\]\);/)?.[0] || "";
 expect("demo chat does not include make_call", !demoChatBlock.includes("make_call"));

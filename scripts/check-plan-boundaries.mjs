@@ -5,6 +5,7 @@ const files = {
   buyerRoutes: fs.readFileSync("src/routes/buyer-routes.ts", "utf8"),
   saas: fs.readFileSync("src/saas.ts", "utf8"),
   server: fs.readFileSync("server.ts", "utf8"),
+  entitlementProbe: fs.readFileSync("src/routes/workspace-admin-routes.ts", "utf8"),
   customerDashboard: fs.readFileSync("scripts/check-customer-dashboard-contract.mjs", "utf8"),
   liveEntitlements: fs.readFileSync("scripts/check-live-workspace-entitlements.mjs", "utf8"),
   stripeSmoke: fs.readFileSync("scripts/check-stripe-webhook-handoff-live.mjs", "utf8"),
@@ -29,12 +30,12 @@ expect("subscription updates strictly normalize metadata, nickname, lookup key, 
 expect("plan normalizer accepts Basic as Starter", includes("saas", '["starter", "basic"].includes(value)') && includes("saas", 'value.includes("basic")'));
 expect("plan normalizer accepts Agency as Enterprise", includes("saas", '["enterprise", "agency"].includes(value)') && includes("saas", 'value.includes("agency")'));
 expect("plan normalizer preserves Pro", includes("saas", 'if (value === "pro") return "pro";') && includes("saas", 'value.includes("pro")'));
-expect("Starter/Basic is not in pro-suite server allowlist", includes("server", 'normalized === "pro" || normalized === "enterprise" || normalized === "agency"') && !includes("server", 'normalized === "starter" || normalized === "basic"'));
-expect("pro-suite APIs return PRO_SUITE_REQUIRED for non-Pro workspace tokens", includes("server", 'code: "PRO_SUITE_REQUIRED"') && includes("server", 'required_plan: "pro"'));
-expect("pro-suite middleware covers advanced customer APIs", includes("server", '"/api/stats"') && includes("server", '"/api/handoffs"') && includes("server", '"/api/recovery"') && includes("server", '"/api/workspace-overview"'));
-expect("dashboard contract locks Starter/Basic visible tabs", includes("customerDashboard", "BASIC_WORKSPACE_TABS") && includes("customerDashboard", '"calls"') && includes("customerDashboard", '"contacts"') && includes("customerDashboard", '"tasks"'));
+expect("single-offer server has no hidden Pro-only API gate", !includes("server", "requireProSuite") && !includes("server", "PRO_SUITE_REQUIRED"));
+expect("operator-only APIs retain their server authorization boundary", includes("server", "requireOperator"));
+expect("entitlement probe declares paid workspace access without a server plan gate", includes("entitlementProbe", 'access_model: "billing_entitled_workspace"') && includes("entitlementProbe", "server_plan_gate: false"));
+expect("dashboard contract locks Starter owner visible tabs", includes("customerDashboard", "BASIC_WORKSPACE_TABS") && includes("customerDashboard", '"calls"') && includes("customerDashboard", '"handoffs"') && includes("customerDashboard", '"tasks"') && includes("customerDashboard", '"crm"'));
 expect("dashboard contract locks Pro customer suite", includes("customerDashboard", "PRO_WORKSPACE_TABS") && includes("customerDashboard", '"handoffs"') && includes("customerDashboard", '"recovery"') && includes("customerDashboard", '"analytics"'));
-expect("live entitlement proof expects Basic pro-suite denial and Pro pro-suite access", includes("liveEntitlements", 'expectedTier === "pro" ? 200 : 403') && includes("liveEntitlements", 'expectedTier,'));
+expect("live entitlement proof checks billing-entitled workspace access", includes("liveEntitlements", 'access_model === "billing_entitled_workspace"') && includes("liveEntitlements", "server_plan_gate === false") && !includes("liveEntitlements", 'presentationTier === "pro" ? 200 : 403'));
 expect("Stripe smoke still exercises Starter paid path", includes("stripeSmoke", 'plan: "starter"') && includes("stripeSmoke", "SMIRK Stripe Webhook Smoke"));
 
 if (failures.length) {
@@ -43,4 +44,4 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log("OK plan boundary contract keeps Basic/Starter and Pro/Agency pricing, provisioning, and entitlement behavior aligned");
+console.log("OK plan boundary contract keeps the single-offer Starter launch, legacy plan normalization, paid workspace access, and operator boundary aligned");

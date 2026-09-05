@@ -1,6 +1,6 @@
 # SMIRK 1000/1000 Roadmap
 
-Last updated: July 6, 2026 America/Los_Angeles.
+Last updated: September 5, 2026 America/Los_Angeles.
 
 This roadmap turns the current `875 / 1000` state into a practical launch path. It is deliberately split between what is needed to sell the first customer and what belongs later in the enterprise database architecture.
 
@@ -15,11 +15,11 @@ Verified locally from the current checkout:
 | TypeScript | `npm run lint` passed. |
 | Production build | `npm run build` passed. |
 | Customer dashboard contract | `npm run -s check:customer-dashboard` passed. |
-| Plan boundary contract | `npm run -s check:plan-boundaries` passed. |
+| Offer and access contracts | `npm run -s check:plan-boundaries`, `npm run -s check:customer-dashboard`, and `npm run -s check:auth-regression` cover the one sellable Starter offer, tenant-scoped workspace access, and operator-only APIs. |
 | Contact/DNC contract | `npm run -s check:contact-management` passed. |
 | First-dollar scope | `npm run -s check:first-dollar-offer-scope` passed. |
 | No-DB storage guard | `npm run -s check:no-db-storage-guard` verifies that customer-facing data routes fail closed without durable storage. |
-| Local Basic chaos | Temporary local Postgres-backed Starter workspace provisioning passed; 36 Basic-allowed requests and 96 Pro-restricted requests returned the expected boundaries, then cleanup succeeded. |
+| Historical July access proof | The old July plan-denial result belongs to the July report and is not the current access model. It must not be counted as proof of today's billing-entitled Starter owner contract. |
 | Durable Twilio intake buffer | `npm run -s check:webhook-buffer` verifies raw inbound Twilio payload buffering, guarded replay, and stale-buffer lag monitoring without blocking call handling. |
 | Final-mile audit | `npm run -s check:smirk-1000-final-mile` reports local final-mile completion separately from production readiness. |
 
@@ -30,8 +30,8 @@ Target score: `1000 / 1000`.
 | Milestone | Points | Status | Proof command or artifact |
 | --- | ---: | --- | --- |
 | Fail-closed no-database storage guard | +35 | Implemented locally | `npm run build && npm run -s check:no-db-storage-guard` |
-| Handyman Shield UI partition | +50 | Implemented and contract-tested | `npm run -s check:customer-dashboard && npm run -s check:plan-boundaries` |
-| Basic chaos validation | +40 | Proven locally with approved temp provisioning; Stripe-created live Basic proof still pending | `npm run -s check:basic-chaos` with a real Basic token, explicit temp provisioning, or `SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1` after approved Stripe smoke |
+| Focused Starter owner UI | +50 | Implemented and contract-tested | `npm run -s check:customer-dashboard && npm run -s check:plan-boundaries` |
+| Starter Owner Chaos Testing | +40 | Compatibility harness updated; must pass on each target claimed | `npm run check:basic-chaos` must return `STARTER_OWNER_CHAOS_PASSED` for concurrent billing-entitled Starter owner API access with masked credentials |
 | Safe local acquisition audit loop | Supporting | Implemented as manual-review drafts | `python3 scripts/outbound_auditor.py --targets docs/outbound-auditor-targets.example.json --output /tmp/smirk-audit-test` |
 | Interactive tracker | Supporting | Built | `docs/SMIRK_1000_TRACKER.html` |
 | Final-mile audit | Supporting | Built | `npm run -s check:smirk-1000-final-mile` |
@@ -45,30 +45,14 @@ npm run -s check:customer-dashboard
 npm run -s check:plan-boundaries
 npm run -s check:contact-management
 npm run -s check:first-dollar-offer-scope
-SMIRK_BASIC_CHAOS_WORKSPACE_ID=<real-basic-workspace-id> SMIRK_BASIC_CHAOS_TOKEN=<real-basic-token> npm run -s check:basic-chaos
+npm run check:basic-chaos
 npm run -s check:smirk-1000-final-mile
 npm run -s check:first-customer-10of10
 ```
 
-The local DB-backed Basic chaos path is now proven. The final-mile audit can therefore report `localScore: 1000` and `localFinalMileComplete: true`. The remaining proof gap is live Basic chaos validation after production runs the current commit. The strongest Phase 1 proof is an approved Stripe smoke that creates a Starter workspace, followed by Basic chaos against that exact Stripe-created workspace. Contract tests and local provisioning are not enough to call the production surface done.
+The compatibility command name remains `check:basic-chaos`, but the old July plan-denial model is retired. The current Starter Owner Chaos Testing contract exercises owner APIs concurrently through a billing-entitled Starter identity and verifies that credentials remain masked. Only the explicit `STARTER_OWNER_CHAOS_PASSED` result counts for the target under test.
 
-To create a temporary Starter workspace through the real operator API, use:
-
-```bash
-ALLOW_SMIRK_BASIC_CHAOS_PROVISION=1 DASHBOARD_API_KEY=<operator-key> npm run -s check:basic-chaos
-```
-
-If this provisions a temporary workspace, rerun with `CONFIRM_SMIRK_BASIC_CHAOS_CLEANUP=delete-temp-basic-workspace` to remove it after evidence is captured.
-
-To prove the paid Starter path instead of a direct operator-created workspace, use this sequence after live deploy parity is restored:
-
-```bash
-ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live
-SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1 DASHBOARD_API_KEY=<operator-key> APP_URL=https://www.smirkcalls.com npm run -s check:basic-chaos
-APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply
-```
-
-The first and third commands are approval-gated production mutations. The Basic chaos command itself only reads the approved smoke artifact, resolves the Stripe-created Starter workspace through operator-only APIs, floods allowed Basic endpoints, and verifies Pro-suite endpoints return `PRO_SUITE_REQUIRED`.
+That result is still narrower than launch proof. A local pass does not establish current production parity, real payment, activation, tenant-isolation behavior on the deployed artifact, or a completed controlled call-to-callback loop. Any temporary live workspace, Stripe smoke, cleanup, or proof call remains behind its own approval gate.
 
 ## Phase 2: Buyer-Ready Product Surface
 
@@ -76,9 +60,10 @@ Goal: make SMIRK understandable to a contractor in 30 seconds.
 
 | Workstream | Required outcome |
 | --- | --- |
-| Basic dashboard | Calls, Contacts, Tasks only. No logs, config, integrations, health, telemetry, or operator tools. |
-| Pro dashboard | Full customer suite without operator-only machinery. |
-| Operator cockpit | Keep workspaces, logs, compliance, settings, voice config, health, provisioning, and deploy/proof tools behind operator auth. |
+| Starter owner desk | Keep the one sellable offer focused on Calls, Tasks, Alerts, and tenant-scoped CRM/business context; keep provider and system settings operator-only. |
+| Workspace APIs | Require billing entitlement for normal product access and pin every customer read/write to the authenticated tenant; do not add a hidden Pro server gate. |
+| Legacy/future presentation | Treat `pro`, `enterprise`, and Pro/Agency UI concepts as compatibility or future planning only, not sellable backend entitlements. |
+| Operator cockpit | Keep workspaces, logs, compliance, settings, voice config, health, provisioning, and deploy/proof tools behind `requireOperator`. |
 | Onboarding | Reduce customer setup to business identity, protected phone number, owner alert email/phone, and proof call. |
 | Demo | A real, isolated demo workspace should use approved business data and a controlled proof call; disconnected storage must never substitute fixture records. |
 
@@ -136,9 +121,9 @@ Recommended sequence:
 1. Run `npm run build && npm run -s check:no-db-storage-guard`.
 2. Deploy the current commit so live parity is restored.
 3. Run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` against production after deploy.
-4. Provision or identify one live Starter/Basic workspace.
-5. Run `SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1 DASHBOARD_API_KEY=<operator-key> APP_URL=https://www.smirkcalls.com npm run -s check:basic-chaos` against the approved Stripe-created Starter workspace, or run with a real Basic token.
+4. Identify one approved billing-entitled Starter workspace on the current deployed commit.
+5. Run `npm run check:basic-chaos` against that target and require `STARTER_OWNER_CHAOS_PASSED`; treat any needed provisioning or paid smoke as a separate approval-gated action.
 6. Run `npm run -s check:smirk-1000-final-mile` and confirm `productionReady: true`.
 7. Run `npm run -s check:first-customer-10of10`.
-8. Record a Basic demo and a Pro/operator comparison.
+8. Record a Starter owner demo and a separate operator-only comparison without implying a sellable Pro entitlement.
 9. Use `scripts/outbound_auditor.py` to create manual-review outreach drafts for one niche.

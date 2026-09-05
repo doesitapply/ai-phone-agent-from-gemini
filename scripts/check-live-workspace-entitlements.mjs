@@ -140,7 +140,7 @@ function summarizeWorkspace(workspace) {
   };
 }
 
-async function checkWorkspace(operatorApiKey, workspace, expectedTier) {
+async function checkWorkspace(operatorApiKey, workspace, presentationTier) {
   const probe = await requestOperator(`/api/workspaces/${encodeURIComponent(workspace.id)}/entitlement-probe`, operatorApiKey);
   if (!probe.ok || probe.body?.ok !== true || probe.body?.credential_revealed !== false) {
     return {
@@ -152,20 +152,18 @@ async function checkWorkspace(operatorApiKey, workspace, expectedTier) {
     };
   }
 
-  const basicEndpoints = [
+  const workspaceEndpoints = [
     ["/api/calls", 200],
     ["/api/contacts", 200],
     ["/api/tasks", 200],
-  ];
-  const proEndpoints = [
-    ["/api/stats", expectedTier === "pro" ? 200 : 403],
-    ["/api/workspace-overview", expectedTier === "pro" ? 200 : 403],
-    ["/api/recovery/queue", expectedTier === "pro" ? 200 : 403],
-    ["/api/handoffs", expectedTier === "pro" ? 200 : 403],
+    ["/api/stats", 200],
+    ["/api/workspace-overview", 200],
+    ["/api/recovery/queue", 200],
+    ["/api/handoffs", 200],
   ];
 
   const checks = [];
-  for (const [endpoint, expectedStatus] of [...basicEndpoints, ...proEndpoints]) {
+  for (const [endpoint, expectedStatus] of workspaceEndpoints) {
     const actualStatus = Number(probe.body?.route_access?.[endpoint] || 0);
     checks.push({
       endpoint,
@@ -178,9 +176,13 @@ async function checkWorkspace(operatorApiKey, workspace, expectedTier) {
   return {
     workspace: summarizeWorkspace(workspace),
     ok: checks.every((check) => check.ok)
-      && probe.body?.expected_tier === expectedTier
+      && probe.body?.presentation_tier === presentationTier
+      && probe.body?.access_model === "billing_entitled_workspace"
+      && probe.body?.server_plan_gate === false
       && probe.body?.billing_entitled === true,
-    expectedTier,
+    presentationTier,
+    accessModel: probe.body?.access_model || null,
+    serverPlanGate: probe.body?.server_plan_gate ?? null,
     credentialRevealed: false,
     checks,
   };
@@ -235,7 +237,7 @@ const out = {
     proWorkspaceTested: Boolean(proWorkspace),
     note: basicWorkspace
       ? null
-      : "No Starter/Basic live workspace exists yet, so Basic blocking is covered by static contract until an approved paid/provisioning smoke creates one.",
+      : "No Starter/Basic live workspace exists yet, so its paid workspace access remains covered by the static contract until an approved paid/provisioning smoke creates one.",
   },
   testedWorkspaces: results,
 };

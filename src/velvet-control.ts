@@ -23,7 +23,7 @@ export function getVelvetControlConfiguration(
 
 async function velvetGet(path: string): Promise<Record<string, unknown>> {
   const config = getVelvetControlConfiguration();
-  if (!config.configured) return { ok: false, state: "not_configured", reason: config.reason };
+  if (config.configured === false) return { ok: false, state: "not_configured", reason: config.reason };
 
   try {
     const response = await fetch(`${config.baseUrl}/api/v1${path}`, {

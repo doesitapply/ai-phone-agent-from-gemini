@@ -38,17 +38,17 @@ The loop is only credible when the same lead identity survives every transition.
 
 ## The Evidence Chain
 
-The production target is an immutable chain rooted at one `acquisition_record`. The identifiers below are conceptual requirements; the current database has several downstream records but does not yet persist the complete root-to-revenue model.
+The production target is an immutable chain rooted at one `acquisition_record`. SMIRK now persists that root and append-only intake evidence, and its downstream schema has tenant-matched acquisition link columns. The complete root-to-revenue chain is still incomplete because most downstream writers do not yet propagate those links.
 
 | Link | Required evidence | Current state |
 | --- | --- | --- |
-| Discovery | External Velvet lead ID, business identity, source URL or source evidence, discovery time, research snapshot. | **Partial.** Velvet retains this; SMIRK’s receiver currently stores an external handoff ID and payload hash, not a durable full source-evidence root. |
-| Decision | Contactability decision, selected channel, rules evaluated, reason, and decision version. | **Target.** Existing compliance and DNC controls exist, but a Velvet-specific durable routing decision is not yet linked to the inbound record. |
-| Authorization | Actor/policy that approved the exact outreach payload, time, and expiry. | **Target.** Operator confirmation and chat confirmation gates exist, but an immutable Velvet approval artifact is not yet bound to every downstream touch. |
-| Execution | Unique touch ID, exact channel, time, workspace, call/task/handoff links, and outcome. | **Partial/live.** SMIRK persists contacts, calls, handoffs, tasks, call events, transcripts, and summaries; complete cross-system touch lineage remains incomplete. |
-| Conversion | Demo, activation, Stripe customer/subscription/payment, workspace, and owner identity links. | **Partial.** SaaS and Stripe/provisioning records exist; live paid billing remains separately gated and not yet tied to an immutable Velvet root. |
+| Discovery | External Velvet lead ID, business identity, source URL or source evidence, discovery time, research snapshot. | **Implemented evidence boundary.** The protected acquisition inbox creates an immutable tenant-scoped root plus append-only event evidence and an initial safety review. The accepted snapshot is intentionally narrower than Velvet's full research record. |
+| Decision | Contactability decision, selected channel, rules evaluated, reason, and decision version. | **Partial.** Intake records `hold` or `not_permitted` and appends a review; a reviewed transition into an eligible route is not implemented. |
+| Authorization | Actor/policy that approved the exact outreach payload, time, and expiry. | **Partial.** Exact approval records and tenant-safe acquisition link constraints exist, but an approval is not yet bound to every downstream touch. |
+| Execution | Unique touch ID, exact channel, time, workspace, call/task/handoff links, and outcome. | **Partial/live.** SMIRK persists operational records and can link calls, tasks, and handoffs to an acquisition root; the writers do not yet propagate that link universally. |
+| Conversion | Demo, activation, Stripe customer/subscription/payment, workspace, and owner identity links. | **Partial.** Tenant-safe link columns exist on provisioning, activation, and Stripe fulfillment records, but live paid billing and complete writer propagation remain separately gated. |
 | Retention | Renewal, churn, refund/failure, and revenue period evidence attached to the same chain. | **Target.** |
-| Feedback | Idempotent summary sent to Velvet with outcome, reason, timestamps, and linked records. | **Target.** The outcome callback credential boundary is defined, but source code does not currently implement durable automatic outbound outcome delivery. |
+| Feedback | Idempotent summary sent to Velvet with outcome, reason, timestamps, and linked records. | **Partial.** A separately keyed, idempotent callback runs after owner-critical post-call work for completed calls linked to legacy Velvet handoffs. It is configuration-gated and is not yet a durable acquisition feedback outbox. |
 
 ## What Is Live and Proven
 
@@ -60,7 +60,9 @@ The following capabilities are not roadmap claims; they are implemented integrat
 | Input validation and idempotency | The receiver validates a strict payload schema, requires a stable external ID, hashes the payload, rejects a reuse with different content, and returns the existing handoff/task on an exact replay. |
 | Durable SMIRK work records | A valid receiver call writes a contact, an `external_handoff` call record, a pending handoff, an open task, a receipt, and a call event. It does not start a telephone call merely because it received the handoff. |
 | Sender-side proof | The separate Velvet task recorded a protected synthetic proof with `201 RECEIVED` followed by `200 DUPLICATE`; no real lead, call, SMS, email, payment, or retry was used. |
-| Operator portal | SMIRK exposes an operator-only Velvet portal and the existing handoff queue. The portal explicitly reports `sourceAttributionAvailable: false` rather than fabricating source lineage. |
+| Acquisition evidence inbox | `POST /api/integrations/velvet/acquisitions` uses a dedicated bearer, exact workspace binding, strict real/synthetic classification, immutable identity, idempotent event receipts, and append-only reviews. It creates no contact, call, message, task, handoff, or outreach. |
+| Operator portal | SMIRK exposes operator-only acquisition list/detail lifecycle views alongside both acquisition-linked and legacy receipt-linked handoffs. It explicitly reports `sourceAttributionAvailable: false` until downstream propagation is complete. |
+| Scoped outcome callback | The last post-call stage can send one restricted outcome to the exact Velvet lead encoded in a legacy handoff, using a separate credential and stable call-bound idempotency key. Missing or mismatched configuration fails closed and cannot block the owner alert. |
 | Chat safety boundary | The repaired SMIRK chat returns safe provider failures, restricts tool-capable mode to verified owner identity, keeps shared operator-key chat read-only, and requires exact confirmation strings for writes and calls. |
 
 ## Non-Negotiable Safety Rules
@@ -81,7 +83,7 @@ Velvet produces the business identity, source evidence, research signals, qualif
 
 ### 2. The router decides whether an action is eligible
 
-Before any contact action, the system evaluates the permitted channel, available contact basis, DNC or suppression state, time/window rules, lead status, and required human approval. This is the **acquisition router**. It is the missing middle layer that prevents a discovery tool from becoming uncontrolled outreach.
+Before any contact action, the system must evaluate the permitted channel, available contact basis, DNC or suppression state, time/window rules, lead status, and required human approval. Intake currently stops at `hold` or `not_permitted`; the reviewed **acquisition router** remains the missing middle layer that must prevent evidence from becoming uncontrolled outreach.
 
 ### 3. Approved work enters SMIRK through an authenticated handoff
 
@@ -136,12 +138,11 @@ Until both answers come from records rather than operator memory, the work is st
 
 ## Build Order
 
-1. Implement `acquisition_record` as an immutable root with Velvet external lead ID and source evidence.
-2. Persist the route/contactability decision and approval artifact before any outbound touch.
-3. Bind every task, handoff, call, message, summary, and appointment to that root.
-4. Bind activation, workspace, Stripe customer/subscription/payment, and retention records to the same root.
-5. Add idempotent outcome feedback to Velvet and a reconciliation view for delivery failures.
-6. Run the one-real-lead acceptance test, then repeat at ten and fifty leads before expanding automation.
+1. Add a reviewed, append-only route/contactability transition and bind the exact approval artifact before any outbound touch.
+2. Propagate the existing acquisition identity through every task, handoff, call, message, summary, and appointment writer.
+3. Propagate the identity through activation, workspace, Stripe customer/subscription/payment, refund, and retention records.
+4. Promote the scoped legacy callback into a durable acquisition feedback outbox with retry/reconciliation evidence.
+5. Run the one-real-lead acceptance test, then repeat at ten and fifty leads before expanding automation.
 
 ## Relevant Source Files
 
@@ -149,7 +150,9 @@ Until both answers come from records rather than operator memory, the work is st
 | --- | --- |
 | `src/routes/velvet-handoff-routes.ts` | Inbound bearer validation, payload validation, receipt/idempotency, and durable handoff/task creation. |
 | `src/velvet-handoff.ts` | Shared handoff schema, configuration, constant-time bearer comparison, payload hashing, and deterministic handoff call identity. |
-| `src/routes/operations-routes.ts` | Handoff queue and operator Velvet portal; currently discloses missing source attribution instead of inferring it. |
+| `src/routes/velvet-acquisition-routes.ts`, `src/velvet-acquisition.ts` | Evidence-only acquisition intake, tenant binding, classification fences, deterministic identity, and idempotent append-only persistence. |
+| `src/acquisition-lifecycle.ts`, `src/routes/operations-routes.ts` | Operator acquisition lifecycle reads and Velvet portal; discloses missing end-to-end source attribution instead of inferring it. |
+| `src/velvet-outcome.ts`, `src/routes/twilio-status-routes.ts` | Separately keyed legacy-handoff outcome mapping and final-stage callback delivery. |
 | `src/compliance.ts` and `src/routes/compliance-routes.ts` | Existing DNC/compliance control surfaces. |
 | `src/intelligence.ts`, `src/function-calling.ts`, `src/tools.ts` | Call handling, post-call intelligence, summaries, and operational actions. |
 | `src/saas.ts` and buyer/provisioning routes | Workspace, plan, Stripe, activation, and lifecycle records. |
