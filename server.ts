@@ -30,6 +30,7 @@ import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITT
 import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
 import { dispatchTool, TOOL_DECLARATIONS } from "./src/function-calling.js";
 import { buildWorkspaceKnowledgeContext } from "./src/workspace-knowledge.js";
+import { resolveDeployIdentity } from "./src/deploy-identity.js";
 
 // ── Load env before importing modules that use it ─────────────────────────────
 // Load settings: /tmp/.env.local in production (Railway read-only fs), .env.local in dev
@@ -174,19 +175,9 @@ if (!envResult.success) {
 const env = envResult.data;
 const PORT = parseInt(env.PORT || "3000", 10);
 const IS_PROD = env.NODE_ENV === "production";
-const DEPLOY_VERSION =
-  process.env.SMIRK_DEPLOY_VERSION ||
-  process.env.RAILWAY_GIT_COMMIT_SHA ||
-  process.env.SOURCE_VERSION ||
-  process.env.VERCEL_GIT_COMMIT_SHA ||
-  process.env.npm_package_version ||
-  "dev";
-const DEPLOY_BRANCH =
-  process.env.SMIRK_DEPLOY_BRANCH ||
-  process.env.RAILWAY_GIT_BRANCH ||
-  process.env.VERCEL_GIT_COMMIT_REF ||
-  process.env.GITHUB_REF_NAME ||
-  "unknown";
+const deployIdentity = resolveDeployIdentity(process.env);
+const DEPLOY_VERSION = deployIdentity.version;
+const DEPLOY_BRANCH = deployIdentity.branch;
 
 // ── Simple API key auth for demo endpoints (landing page trigger) ─────────────
 const readBearerToken = (req: Request): string => {
