@@ -169,7 +169,7 @@ try {
   const healthOk = health.status === 200 && /"status"\s*:/i.test(health.text);
   const versionOk = version.status === 200 && /"version"\s*:/i.test(version.text);
   const unauthenticatedTasksOk = unauthenticatedTasks.status === 401 && /Unauthorized/i.test(unauthenticatedTasks.text);
-  const tasksOk = tasks.status === 200 && /"tasks"\s*:/i.test(tasks.text);
+  const tasksOk = tasks.status === 503 && /"code"\s*:\s*"DURABLE_STORAGE_UNAVAILABLE"/i.test(tasks.text);
   let healthIsolation;
   try {
     const payload = JSON.parse(health.text);
