@@ -63,12 +63,18 @@ expect("pre-migration handoff reads avoid the new column", operations.includes("
 expect("portal does not overstate lifecycle propagation", operations.includes("sourceAttributionAvailable: false") && operations.includes("acquisitionInboxAvailable"));
 expect("portal verifies the configured receiver workspace exists", operations.includes("workspace_exists") && operations.includes("receiverReady"));
 expect("operator can read tenant-scoped acquisition evidence", operations.includes('app.get("/api/acquisitions"') && operations.includes('app.get("/api/acquisitions/:id"'));
+expect("operator lifecycle reads use exact acquisition joins", operations.includes("buildAcquisitionLifecycle") && operations.includes("WHERE c.acquisition_id = ${acquisitionId}") && operations.includes("WHERE acquisition_id = ${acquisitionId} AND acquisition_workspace_id = ${wsId}"));
 expect("OpenAPI uses the dedicated Velvet bearer scheme", openapiGenerator.includes("VelvetAcquisitionBearerAuth") && openapiGenerator.includes("POST /api/integrations/velvet/acquisitions") && openapiGenerator.includes("POST /api/integrations/velvet/handoffs"));
 expect("Postgres fixture check creates and drops only a generated local database", postgresCheck.includes("SMIRK_ALLOW_TEMP_ACQUISITION_DB_CHECK") && postgresCheck.includes("CREATE DATABASE") && postgresCheck.includes("DROP DATABASE IF EXISTS") && postgresCheck.includes("smirk_acquisition_check_"));
 expect("historical receipt migration remains explicit", docs.includes("velvet_alchemy_handoff_receipts") && docs.includes("not infer"));
 expect(
   "package exposes the acquisition verification gate",
-  pkg.scripts?.["check:velvet-acquisition"] === "node scripts/check-velvet-acquisition-contract.mjs && node --import tsx --test tests/velvet_acquisition_route.test.ts tests/velvet_acquisition_store.test.ts tests/velvet_acquisition_read.test.ts",
+  pkg.scripts?.["check:velvet-acquisition"]?.includes("check-velvet-acquisition-contract.mjs")
+    && pkg.scripts?.["check:velvet-acquisition"]?.includes("check-velvet-operator-ui.mjs")
+    && pkg.scripts?.["check:velvet-acquisition"]?.includes("tests/acquisition_lifecycle.test.ts")
+    && pkg.scripts?.["check:velvet-acquisition"]?.includes("tests/velvet_acquisition_route.test.ts")
+    && pkg.scripts?.["check:velvet-acquisition"]?.includes("tests/velvet_acquisition_store.test.ts")
+    && pkg.scripts?.["check:velvet-acquisition"]?.includes("tests/velvet_acquisition_read.test.ts"),
 );
 
 if (failures.length) {

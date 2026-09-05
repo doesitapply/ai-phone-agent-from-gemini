@@ -38,7 +38,7 @@ paths:
       tags:
         - "acquisitions"
       summary: "GET /api/acquisitions"
-      x-source: "src/routes/operations-routes.ts:158"
+      x-source: "src/routes/operations-routes.ts:170"
       x-express-path: "/api/acquisitions"
       security:
         - ApiKeyAuth: []
@@ -57,7 +57,7 @@ paths:
       tags:
         - "acquisitions"
       summary: "GET /api/acquisitions/:id"
-      x-source: "src/routes/operations-routes.ts:188"
+      x-source: "src/routes/operations-routes.ts:214"
       x-express-path: "/api/acquisitions/:id"
       security:
         - ApiKeyAuth: []
@@ -1402,7 +1402,7 @@ paths:
       tags:
         - "handoffs"
       summary: "GET /api/handoffs"
-      x-source: "src/routes/operations-routes.ts:20"
+      x-source: "src/routes/operations-routes.ts:21"
       x-express-path: "/api/handoffs"
       security:
         - WorkspaceBearerAuth: []
@@ -1422,7 +1422,7 @@ paths:
       tags:
         - "handoffs"
       summary: "POST /api/handoffs/:id/acknowledge"
-      x-source: "src/routes/operations-routes.ts:230"
+      x-source: "src/routes/operations-routes.ts:328"
       x-express-path: "/api/handoffs/:id/acknowledge"
       security:
         - WorkspaceBearerAuth: []
@@ -1442,7 +1442,7 @@ paths:
       tags:
         - "handoffs"
       summary: "POST /api/handoffs/:id/action"
-      x-source: "src/routes/operations-routes.ts:248"
+      x-source: "src/routes/operations-routes.ts:346"
       x-express-path: "/api/handoffs/:id/action"
       security:
         - WorkspaceBearerAuth: []
@@ -3099,7 +3099,7 @@ paths:
       tags:
         - "summaries"
       summary: "GET /api/summaries"
-      x-source: "src/routes/operations-routes.ts:303"
+      x-source: "src/routes/operations-routes.ts:401"
       x-express-path: "/api/summaries"
       security:
         - ApiKeyAuth: []
@@ -3760,7 +3760,7 @@ paths:
       tags:
         - "velvet"
       summary: "GET /api/velvet/portal"
-      x-source: "src/routes/operations-routes.ts:54"
+      x-source: "src/routes/operations-routes.ts:55"
       x-express-path: "/api/velvet/portal"
       security:
         - ApiKeyAuth: []

@@ -1729,7 +1729,7 @@ function PublicCancelPage() {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "review" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "launch" | "voice" | "leads" | "system_health" | "velvet"
+type Tab = "dashboard" | "review" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "launch" | "voice" | "leads" | "system_health" | "revenue" | "velvet"
   // legacy aliases kept for deep-links
   | "identity";
 
@@ -2284,6 +2284,7 @@ const OPERATOR_ONLY_TABS = new Set<Tab>([
   "mission_control",
   "prospecting",
   "launch",
+  "revenue",
   "velvet",
 ]);
 
@@ -2313,8 +2314,10 @@ const DASHBOARD_TAB_ALIASES: Record<string, Tab> = {
   prospecting: "prospecting",
   launch: "launch",
   "launch-sprint": "launch",
-  velvet: "velvet",
-  "velvet-alchemy": "velvet",
+  revenue: "revenue",
+  "revenue-workspace": "revenue",
+  velvet: "revenue",
+  "velvet-alchemy": "revenue",
   agent: "agent",
   identity: "agent",
   "agent-identity": "agent",
@@ -2345,6 +2348,7 @@ const DASHBOARD_TAB_PATHS: Partial<Record<Tab, string>> = {
   mission_control: "/dashboard/mission-control",
   prospecting: "/dashboard/prospecting",
   launch: "/dashboard/launch",
+  revenue: "/dashboard/revenue",
   velvet: "/dashboard/velvet-alchemy",
   agent: "/dashboard/agent",
   voice: "/dashboard/voice-config",
@@ -2377,6 +2381,7 @@ function dashboardSlugToTab(slug: string | undefined): Tab | null {
 function normalizeDashboardTab(tab: Tab): Tab {
   if (tab === "identity") return "agent";
   if (tab === "live") return "dashboard";
+  if (tab === "velvet") return "revenue";
   return tab;
 }
 
@@ -5548,84 +5553,225 @@ type VelvetPortalData = {
   sourceAttributionAvailable: boolean;
   acquisitionInboxAvailable: boolean;
   acquisitionSchemaReady: boolean;
-  pendingCount: number;
   acquisitionCounts: { real: number; synthetic: number; quarantined: number };
-  recentAcquisitions: Array<{
-    acquisition_id: string;
-    source_record_id: string;
-    record_kind: "real" | "synthetic" | "quarantined";
-    contact_permission: string;
-    route_decision: string;
-    first_received_at: string;
-  }>;
-  recentHandoffs: Handoff[];
 };
 
-function VelvetAlchemyPage() {
+type AcquisitionRecord = {
+  acquisition_id: string;
+  source_system: string;
+  source_record_id: string;
+  first_payload_hash: string;
+  record_kind: "real" | "synthetic" | "quarantined";
+  contact_permission: string;
+  contact_basis: string;
+  route_decision: string;
+  source_observed_at: string | null;
+  first_received_at: string;
+  current_review_decision?: string | null;
+  current_review_contact_basis?: string | null;
+  current_review_candidate_channel?: string | null;
+  current_review_created_at?: string | null;
+};
+
+type AcquisitionLifecycleStage = {
+  state: string;
+  [key: string]: unknown;
+};
+
+type AcquisitionLifecycleDetail = {
+  acquisition: {
+    acquisitionId: string;
+    sourceSystem: string;
+    sourceRecordId: string;
+    recordKind: string;
+    payloadHash: string;
+    receivedAt: string;
+    sourceEvidence: {
+      companyName?: string | null;
+      reason?: string | null;
+      urgency?: string | null;
+      callerName?: string | null;
+      callerPhoneLast4?: string | null;
+    };
+  };
+  currentReview: {
+    decision: string;
+    contactBasis: string;
+    candidateChannel: string;
+    evidenceHash: string;
+    reviewedBy: string;
+    observedAt?: string | null;
+  } | null;
+  stages: Record<string, AcquisitionLifecycleStage>;
+  attribution: { complete: boolean; missingLinks: string[] };
+  capabilities: {
+    mode: "evidence_only";
+    canRecordReview: boolean;
+    canPrepareOutreach: false;
+    canPlaceCall: false;
+    canStartCheckout: false;
+    canWriteProvider: false;
+  };
+};
+
+type RevenueWorkspaceView = "inbox" | "linked" | "lifecycle" | "readiness";
+
+const acquisitionKindClass: Record<AcquisitionRecord["record_kind"], string> = {
+  real: "border-emerald-800 bg-emerald-950/40 text-emerald-300",
+  synthetic: "border-cyan-800 bg-cyan-950/40 text-cyan-300",
+  quarantined: "border-amber-800 bg-amber-950/40 text-amber-300",
+};
+
+const readableEvidenceState = (value: unknown) => String(value || "none_recorded").replace(/_/g, " ");
+
+function RevenueWorkspacePage() {
   const { dark } = useTheme();
-  const [data, setData] = useState<VelvetPortalData | null>(null);
+  const [portal, setPortal] = useState<VelvetPortalData | null>(null);
+  const [acquisitions, setAcquisitions] = useState<AcquisitionRecord[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<AcquisitionLifecycleDetail | null>(null);
+  const [view, setView] = useState<RevenueWorkspaceView>("inbox");
+  const [kind, setKind] = useState<"all" | AcquisitionRecord["record_kind"]>("all");
   const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
+  const [inboxError, setInboxError] = useState("");
+  const [detailError, setDetailError] = useState("");
+
   const load = useCallback(() => {
     setLoading(true);
     setError("");
-    api<VelvetPortalData>("/api/velvet/portal")
-      .then(setData)
-      .catch((err: any) => setError(err?.message || "Could not load the Velvet Alchemy portal."))
+    setInboxError("");
+    Promise.allSettled([
+      api<VelvetPortalData>("/api/velvet/portal"),
+      api<{ acquisitions: AcquisitionRecord[] }>("/api/acquisitions"),
+    ])
+      .then(([portalResult, acquisitionResult]) => {
+        if (portalResult.status === "rejected") throw portalResult.reason;
+        const rows = acquisitionResult.status === "fulfilled" ? acquisitionResult.value.acquisitions || [] : [];
+        setPortal(portalResult.value);
+        setAcquisitions(rows);
+        if (acquisitionResult.status === "rejected") {
+          setInboxError(acquisitionResult.reason?.message || "Acquisition evidence is not available yet.");
+        }
+        setSelectedId((current) => current && rows.some((row) => row.acquisition_id === current)
+          ? current
+          : rows[0]?.acquisition_id || null);
+      })
+      .catch((err: any) => setError(err?.message || "Could not load the revenue evidence workspace."))
       .finally(() => setLoading(false));
   }, []);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      setDetailError("");
+      return;
+    }
+    setDetailLoading(true);
+    setDetailError("");
+    api<AcquisitionLifecycleDetail>(`/api/acquisitions/${encodeURIComponent(selectedId)}`)
+      .then(setDetail)
+      .catch((err: any) => {
+        setDetail(null);
+        setDetailError(err?.message || "Could not load acquisition lifecycle evidence.");
+      })
+      .finally(() => setDetailLoading(false));
+  }, [selectedId]);
+
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+  const filtered = kind === "all" ? acquisitions : acquisitions.filter((record) => record.record_kind === kind);
+  const selected = acquisitions.find((record) => record.acquisition_id === selectedId) || null;
+  const linkedHandoffs = Array.isArray(detail?.stages?.handoff?.records) ? detail?.stages.handoff.records as any[] : [];
+  const linkedCalls = Array.isArray(detail?.stages?.touch?.calls) ? detail?.stages.touch.calls as any[] : [];
+  const linkedEvents = Array.isArray(detail?.stages?.touch?.events) ? detail?.stages.touch.events as any[] : [];
+  const stageOrder = ["source", "review", "handoff", "approval", "touch", "checkout", "provisioning", "activation", "feedback"];
 
   return (
     <div className="space-y-5 p-4 sm:space-y-6 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-[0.16em] text-fuchsia-400"><Sparkles size={13} /> Cross-system handoff bridge</div>
-          <h2 className="mt-1 text-xl font-black text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Velvet Alchemy Portal</h2>
-          <p className="mt-1 max-w-2xl text-sm text-gray-500">Bring qualified Velvet signals into SMIRK, review the human work they create, move approved leads into the outreach pipeline, and return real outcomes to Velvet.</p>
+          <div className="flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-fuchsia-400"><Sparkles size={13} /> Velvet + SMIRK evidence</div>
+          <h2 className="mt-1 text-xl font-black text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Revenue Workspace</h2>
+          <p className="mt-1 max-w-3xl text-sm text-gray-500">One operator view for source receipts, directly linked work, lifecycle evidence, and missing links. Intake remains evidence-only and cannot dial, send, charge, or provision.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={load} className="rounded-lg bg-gray-800 p-2 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white" title="Refresh Velvet status"><RefreshCw size={14} /></button>
-          {data?.portalUrl && <a href={data.portalUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg bg-fuchsia-600 px-3 py-2 text-xs font-bold text-white hover:bg-fuchsia-500">Open Velvet <ExternalLink size={13} /></a>}
+          <button onClick={load} className="rounded-lg bg-gray-800 p-2 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white" title="Refresh revenue evidence"><RefreshCw size={14} /></button>
+          {portal?.portalUrl && <a href={portal.portalUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg bg-fuchsia-600 px-3 py-2 text-xs font-bold text-white hover:bg-fuchsia-500">Open Velvet <ExternalLink size={13} /></a>}
         </div>
       </div>
+
+      <div className="flex gap-1 overflow-x-auto border-b border-gray-800 pb-px">
+        {([
+          ["inbox", "Inbox"],
+          ["linked", "Linked work"],
+          ["lifecycle", "Lifecycle evidence"],
+          ["readiness", "Readiness"],
+        ] as Array<[RevenueWorkspaceView, string]>).map(([id, label]) => (
+          <button key={id} onClick={() => setView(id)} className={`whitespace-nowrap border-b-2 px-3 py-2 text-xs font-bold transition-colors ${view === id ? "border-fuchsia-400 text-fuchsia-300" : "border-transparent text-gray-500 hover:text-gray-300"}`}>{label}</button>
+        ))}
+      </div>
+
       {loading ? <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div> : error ? (
         <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-4 text-sm text-red-300">{error}</div>
-      ) : data && <>
-        <div className="grid gap-3 md:grid-cols-4">
-          <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Inbound receiver</div><div className={`mt-2 text-sm font-bold ${data.receiverConfigured ? "text-emerald-400" : "text-amber-400"}`}>{data.receiverConfigured ? "Configured" : "Not configured"}</div></div>
-          <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Workspace</div><div className="mt-2 text-sm font-bold text-white">{data.workspaceId || "Not set"}</div></div>
-          <a href="/dashboard/handoffs?filter=pending" className={`rounded-xl border p-4 text-left transition-colors hover:border-red-700 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Human attention</div><div className="mt-2 text-2xl font-black text-red-400">{data.pendingCount}</div><div className="mt-1 text-xs text-gray-500">Open pending handoffs →</div></a>
-          <div className={`rounded-xl border p-4 ${card}`}><div className="text-[10px] font-mono uppercase tracking-[0.13em] text-gray-500">Evidence inbox</div><div className={`mt-2 text-sm font-bold ${data.acquisitionInboxAvailable ? "text-emerald-400" : "text-amber-400"}`}>{data.acquisitionInboxAvailable ? "Available" : !data.acquisitionSchemaReady ? "Schema initializing" : !data.receiverConfigured ? "Receiver not configured here" : "Workspace unavailable"}</div></div>
-        </div>
-        <div className={`rounded-xl border p-5 ${card}`}>
-          <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-white">Acquisition evidence</h3><p className="mt-1 text-xs text-gray-500">Read-only source receipts. These records do not create contacts, calls, tasks, or handoffs.</p></div><div className="flex gap-2 font-mono text-[10px]"><span className="border border-emerald-900/60 bg-emerald-950/30 px-2 py-1 text-emerald-300">REAL {data.acquisitionCounts.real}</span><span className="border border-cyan-900/60 bg-cyan-950/30 px-2 py-1 text-cyan-300">SYNTHETIC {data.acquisitionCounts.synthetic}</span><span className="border border-amber-900/60 bg-amber-950/30 px-2 py-1 text-amber-300">QUARANTINED {data.acquisitionCounts.quarantined}</span></div></div>
-          <div className="mt-4 space-y-2">
-            {data.recentAcquisitions.length === 0 ? <div className="py-6 text-center text-sm text-gray-500">No acquisition evidence has been received in this workspace.</div> : data.recentAcquisitions.map((record) => <div key={record.acquisition_id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-3"><div><div className="flex items-center gap-2"><span className="rounded border border-gray-700 bg-gray-900 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-gray-300">{record.record_kind}</span><span className="text-sm font-semibold text-white">{record.source_record_id}</span></div><div className="mt-1 text-xs text-gray-500">{record.contact_permission} · {record.route_decision}</div></div><div className="text-xs text-gray-600">{new Date(record.first_received_at).toLocaleString()}</div></div>)}
-          </div>
-        </div>
-        <div className={`rounded-xl border p-5 ${card}`}>
-          <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-white">Operational handoff queue</h3><p className="mt-1 text-xs text-gray-500">This is the SMIRK operator view of shared human-follow-up work. Velvet-specific filtering will activate only after source attribution is persisted with each handoff.</p></div><a href="/dashboard/handoffs" className="text-xs font-bold text-fuchsia-400 hover:text-fuchsia-300">Open Handoffs →</a></div>
-          <div className="mt-4 space-y-2">
-            {data.recentHandoffs.length === 0 ? <div className="py-8 text-center text-sm text-gray-500">No handoffs are currently available in this workspace.</div> : data.recentHandoffs.map((handoff) => <div key={handoff.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 bg-black/20 px-3 py-3"><div><div className="flex items-center gap-2"><span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${handoff.status === "pending" ? "border-red-900 bg-red-950 text-red-400" : "border-gray-700 bg-gray-800 text-gray-400"}`}>{handoff.status}</span><span className="text-sm font-semibold text-white">{handoff.reason || "Handoff"}</span></div><div className="mt-1 text-xs text-gray-500">{handoff.contact_name || handoff.phone_number || "Unknown contact"} · {handoff.urgency || "normal"} urgency</div></div><div className="text-xs text-gray-600">{new Date(handoff.created_at).toLocaleString()}</div></div>)}
-          </div>
-        </div>
-        <div className={`rounded-xl border p-5 ${card}`}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-bold text-white">Velvet → SMIRK outreach loop</h3>
-              <p className="mt-1 max-w-2xl text-xs leading-5 text-gray-500">Signals enter a reviewable revenue loop: validate the lead, apply consent and compliance checks, choose an approved next action, then return the result. SMIRK does not auto-dial a Velvet signal simply because it arrived.</p>
+      ) : portal && <>
+        {view === "inbox" && <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)]">
+          <div className={`rounded-xl border p-4 ${card}`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div><h3 className="text-sm font-bold text-white">Acquisition inbox</h3><p className="mt-1 text-xs text-gray-500">Immutable source receipts. Nothing here creates contact work.</p></div>
+              <div className="flex gap-1">
+                {(["all", "real", "synthetic", "quarantined"] as const).map((value) => <button key={value} onClick={() => setKind(value)} className={`border px-2 py-1 font-mono text-[9px] font-bold uppercase ${kind === value ? "border-fuchsia-500 bg-fuchsia-950/40 text-fuchsia-300" : "border-gray-800 text-gray-500"}`}>{value}</button>)}
+              </div>
             </div>
-            <span className="border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-amber-300">Human approval before outreach</span>
+            <div className="mt-4 space-y-2">
+              {inboxError && <div className="border border-amber-900/50 bg-amber-950/20 p-3 text-xs text-amber-200">{inboxError}</div>}
+              {filtered.length === 0 ? <div className="py-8 text-center text-sm text-gray-500">No matching evidence has been received.</div> : filtered.map((record) => (
+                <button key={record.acquisition_id} onClick={() => setSelectedId(record.acquisition_id)} className={`w-full border p-3 text-left transition-colors ${selectedId === record.acquisition_id ? "border-fuchsia-700 bg-fuchsia-950/20" : "border-gray-800 bg-black/20 hover:border-gray-700"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2"><span className={`border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase ${acquisitionKindClass[record.record_kind]}`}>{record.record_kind}</span><span className="text-[10px] text-gray-600">{new Date(record.first_received_at).toLocaleString()}</span></div>
+                  <div className="mt-2 break-all text-sm font-semibold text-white">{record.source_record_id}</div>
+                  <div className="mt-1 font-mono text-[10px] uppercase text-gray-500">{record.contact_permission} · {readableEvidenceState(record.current_review_decision || record.route_decision)}</div>
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-3">
-            <a href="/dashboard/handoffs?filter=pending" className="group border border-gray-800 bg-black/20 p-3 transition-colors hover:border-fuchsia-700"><div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500">01 · Review</div><div className="mt-1 text-sm font-semibold text-white group-hover:text-fuchsia-300">Open human attention queue →</div></a>
-            <a href="/dashboard/prospecting" className="group border border-gray-800 bg-black/20 p-3 transition-colors hover:border-fuchsia-700"><div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500">02 · Qualify</div><div className="mt-1 text-sm font-semibold text-white group-hover:text-fuchsia-300">Check lead & compliance →</div></a>
-            <a href="/dashboard/prospecting" className="group border border-gray-800 bg-black/20 p-3 transition-colors hover:border-fuchsia-700"><div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-gray-500">03 · Execute</div><div className="mt-1 text-sm font-semibold text-white group-hover:text-fuchsia-300">Use approved outreach sequence →</div></a>
+
+          <div className={`rounded-xl border p-5 ${card}`}>
+            {!selected ? <div className="py-12 text-center text-sm text-gray-500">Select a receipt to inspect its evidence.</div> : detailLoading ? <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-gray-600" /></div> : detailError ? <div className="text-sm text-red-300">{detailError}</div> : detail ? <div className="space-y-5">
+              <div><div className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-gray-500">Selected evidence</div><div className="mt-1 break-all text-lg font-black text-white">{detail.acquisition.sourceRecordId}</div><div className="mt-1 break-all font-mono text-[10px] text-gray-600">{detail.acquisition.acquisitionId}</div></div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="border border-gray-800 bg-black/20 p-3"><div className="text-[10px] uppercase text-gray-600">Company</div><div className="mt-1 text-sm font-semibold text-white">{detail.acquisition.sourceEvidence.companyName || "Not provided"}</div></div>
+                <div className="border border-gray-800 bg-black/20 p-3"><div className="text-[10px] uppercase text-gray-600">Urgency</div><div className="mt-1 text-sm font-semibold capitalize text-white">{detail.acquisition.sourceEvidence.urgency || "Not provided"}</div></div>
+              </div>
+              <div className="border border-gray-800 bg-black/20 p-3"><div className="text-[10px] uppercase text-gray-600">Reason</div><p className="mt-1 text-sm leading-6 text-gray-300">{detail.acquisition.sourceEvidence.reason || "No reason provided."}</p></div>
+              <div className="border border-gray-800 bg-black/20 p-3"><div className="text-[10px] uppercase text-gray-600">Current review</div><div className="mt-1 text-sm font-semibold text-white">{detail.currentReview ? readableEvidenceState(detail.currentReview.decision) : "No review recorded"}</div>{detail.currentReview && <div className="mt-1 text-xs text-gray-500">{readableEvidenceState(detail.currentReview.contactBasis)} · {readableEvidenceState(detail.currentReview.candidateChannel)}</div>}</div>
+              <button onClick={() => setView("lifecycle")} className="inline-flex items-center gap-2 text-xs font-bold text-fuchsia-300 hover:text-fuchsia-200">Inspect full lifecycle <ChevronRight size={13} /></button>
+            </div> : null}
           </div>
-          {!data.sourceAttributionAvailable && <p className="mt-3 text-[11px] leading-5 text-amber-200/80">Lifecycle attribution is not yet propagated onto SMIRK handoffs, approvals, provider touches, checkout, activation, or feedback. Historical Velvet receipts also require an explicit, reviewed migration; this portal does not infer links from names or phone numbers.</p>}
-        </div>
+        </div>}
+
+        {view === "linked" && <div className={`rounded-xl border p-5 ${card}`}>
+          <div><h3 className="text-sm font-bold text-white">Directly linked work</h3><p className="mt-1 max-w-3xl text-xs leading-5 text-gray-500">Only rows carrying this exact acquisition ID and source workspace appear here. SMIRK never infers linkage from a name, phone number, email, or company.</p></div>
+          {!selectedId ? <div className="py-10 text-center text-sm text-gray-500">Select evidence from the Inbox first.</div> : detailLoading ? <div className="flex justify-center py-10"><Loader2 size={24} className="animate-spin text-gray-600" /></div> : detailError ? <div className="mt-4 text-sm text-red-300">{detailError}</div> : detail && <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            <div className="border border-gray-800 bg-black/20 p-4"><div className="flex items-center justify-between"><h4 className="text-xs font-bold uppercase tracking-wider text-gray-400">Handoffs</h4><span className="font-mono text-xs text-white">{linkedHandoffs.length}</span></div><div className="mt-3 space-y-2">{linkedHandoffs.length === 0 ? <p className="text-xs text-gray-600">No linked handoff recorded.</p> : linkedHandoffs.map((row, index) => <div key={String(row.id || index)} className="border border-gray-800 p-3 text-xs text-gray-300">{row.reason || "Handoff"} · {readableEvidenceState(row.status)}</div>)}</div></div>
+            <div className="border border-gray-800 bg-black/20 p-4"><div className="flex items-center justify-between"><h4 className="text-xs font-bold uppercase tracking-wider text-gray-400">Provider touches</h4><span className="font-mono text-xs text-white">{linkedCalls.length + linkedEvents.length}</span></div><div className="mt-3 space-y-2">{linkedCalls.length + linkedEvents.length === 0 ? <p className="text-xs text-gray-600">No linked call or provider event recorded.</p> : <>{linkedCalls.map((row, index) => <div key={String(row.call_sid || index)} className="border border-gray-800 p-3 text-xs text-gray-300">Call {row.call_sid || "record"} · {readableEvidenceState(row.status)}</div>)}{linkedEvents.map((row, index) => <div key={String(row.receipt_id || index)} className="border border-gray-800 p-3 text-xs text-gray-300">{readableEvidenceState(row.event_type)} · {readableEvidenceState(row.status)}</div>)}</>}</div></div>
+          </div>}
+        </div>}
+
+        {view === "lifecycle" && <div className={`rounded-xl border p-5 ${card}`}>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-white">Lifecycle evidence</h3><p className="mt-1 max-w-3xl text-xs leading-5 text-gray-500">Each stage is derived independently from persisted evidence. A later row never implies that an earlier step happened.</p></div>{detail && <span className={`border px-2 py-1 font-mono text-[9px] font-bold uppercase ${detail.attribution.complete ? "border-emerald-700 text-emerald-300" : "border-amber-700 text-amber-300"}`}>{detail.attribution.complete ? "Attribution complete" : "Attribution incomplete"}</span>}</div>
+          {!selectedId ? <div className="py-10 text-center text-sm text-gray-500">Select evidence from the Inbox first.</div> : detailLoading ? <div className="flex justify-center py-10"><Loader2 size={24} className="animate-spin text-gray-600" /></div> : detailError ? <div className="mt-4 text-sm text-red-300">{detailError}</div> : detail && <><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{stageOrder.map((stageName) => { const stage = detail.stages[stageName]; return <div key={stageName} className="border border-gray-800 bg-black/20 p-4"><div className="font-mono text-[9px] font-bold uppercase tracking-wider text-gray-600">{stageName}</div><div className={`mt-2 text-sm font-bold ${stage?.state === "none_recorded" || stage?.state === "not_implemented" ? "text-gray-500" : "text-emerald-300"}`}>{readableEvidenceState(stage?.state)}</div></div>; })}</div>{detail.attribution.missingLinks.length > 0 && <div className="mt-4 border border-amber-900/50 bg-amber-950/20 p-4"><div className="text-xs font-bold text-amber-200">Missing direct links</div><div className="mt-2 flex flex-wrap gap-2">{detail.attribution.missingLinks.map((linkName) => <span key={linkName} className="border border-amber-900/60 px-2 py-1 font-mono text-[9px] uppercase text-amber-300">{linkName}</span>)}</div></div>}</>}
+        </div>}
+
+        {view === "readiness" && <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className={`rounded-xl border p-4 ${card}`}><div className="font-mono text-[10px] uppercase tracking-[0.13em] text-gray-500">Inbound receiver</div><div className={`mt-2 text-sm font-bold ${portal.receiverReady ? "text-emerald-400" : "text-amber-400"}`}>{portal.receiverReady ? "Ready" : portal.receiverConfigured ? "Workspace unavailable" : "Not configured"}</div></div>
+            <div className={`rounded-xl border p-4 ${card}`}><div className="font-mono text-[10px] uppercase tracking-[0.13em] text-gray-500">Workspace</div><div className="mt-2 text-sm font-bold text-white">{portal.workspaceId || "Not set"}</div></div>
+            <div className={`rounded-xl border p-4 ${card}`}><div className="font-mono text-[10px] uppercase tracking-[0.13em] text-gray-500">Evidence schema</div><div className={`mt-2 text-sm font-bold ${portal.acquisitionSchemaReady ? "text-emerald-400" : "text-amber-400"}`}>{portal.acquisitionSchemaReady ? "Ready" : "Initializing"}</div></div>
+            <div className={`rounded-xl border p-4 ${card}`}><div className="font-mono text-[10px] uppercase tracking-[0.13em] text-gray-500">Lifecycle attribution</div><div className={`mt-2 text-sm font-bold ${portal.sourceAttributionAvailable ? "text-emerald-400" : "text-amber-400"}`}>{portal.sourceAttributionAvailable ? "Verified" : "Incomplete"}</div></div>
+          </div>
+          <div className={`rounded-xl border p-5 ${card}`}><h3 className="text-sm font-bold text-white">Evidence-only capability</h3><p className="mt-2 max-w-3xl text-xs leading-5 text-gray-500">This workspace can receive and inspect acquisition evidence. It cannot prepare outreach, place calls, start checkout, write providers, or treat manual Launch labels as verified conversion. Historical receipts require an explicit reviewed migration.</p><div className="mt-4 flex flex-wrap gap-2 font-mono text-[9px] font-bold uppercase"><span className="border border-emerald-900 px-2 py-1 text-emerald-300">Real {portal.acquisitionCounts.real}</span><span className="border border-cyan-900 px-2 py-1 text-cyan-300">Synthetic {portal.acquisitionCounts.synthetic}</span><span className="border border-amber-900 px-2 py-1 text-amber-300">Quarantined {portal.acquisitionCounts.quarantined}</span></div></div>
+        </div>}
       </>}
     </div>
   );
@@ -13092,7 +13238,12 @@ export default function App() {
     ? ownerDeskTabs.filter((t) => customerVisibleTabs.has(t.id))
     : isDemoOperator
       ? primaryTabs.filter((t) => demoOperatorVisibleTabs.has(t.id))
-      : [...primaryTabs, { id: "workspaces" as Tab, label: "Admin", icon: <ShieldCheck size={15} /> }];
+      : [
+          primaryTabs[0],
+          { id: "revenue" as Tab, label: "Revenue", icon: <Sparkles size={15} /> },
+          ...primaryTabs.slice(1),
+          { id: "workspaces" as Tab, label: "Admin", icon: <ShieldCheck size={15} /> },
+        ];
 
   // Advanced screens still exist, but stay out of the callback-first MVP nav.
   const allOverflowTabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
@@ -13100,7 +13251,6 @@ export default function App() {
     { id: "mission_control", label: "Mission Control", icon: <BarChart3 size={14} /> },
     { id: "prospecting",    label: "Prospecting",    icon: <Target size={14} /> },
     { id: "launch",         label: "Launch",         icon: <Target size={14} /> },
-    { id: "velvet",         label: "Velvet Alchemy", icon: <Sparkles size={14} /> },
     { id: "agent",          label: "Agent",          icon: <Bot size={14} /> },
     { id: "voice",          label: "Voice Config",   icon: <SlidersHorizontal size={14} /> },
     { id: "leads",          label: "Lead Hunter",    icon: <Crosshair size={14} /> },
@@ -13116,12 +13266,12 @@ export default function App() {
     .filter((t) => !visiblePrimaryTabs.some((primary) => primary.id === t.id));
   const mobileCoreTabIds = isCustomerView
     ? new Set<Tab>(["calls", "tasks", "handoffs", "settings"])
-    : new Set<Tab>(["dashboard", "calls", "recovery", "prospecting", "velvet"]);
+    : new Set<Tab>(["dashboard", "revenue", "calls", "recovery"]);
   const mobileCoreTabs = [...visiblePrimaryTabs, ...overflowTabs]
     .filter((tabItem) => mobileCoreTabIds.has(tabItem.id))
     .map((tabItem) => ({
       ...tabItem,
-      label: tabItem.id === "dashboard" ? "Today" : tabItem.id === "prospecting" ? "Pipeline" : tabItem.label,
+      label: tabItem.id === "dashboard" ? "Today" : tabItem.label,
     }));
   const mobileAdvancedTabs = [...visiblePrimaryTabs, ...overflowTabs].filter((tabItem) => !mobileCoreTabIds.has(tabItem.id));
   const activeMobileAdvancedTab = mobileAdvancedTabs.find((tabItem) => tabItem.id === activeTab) || null;
@@ -13790,7 +13940,7 @@ export default function App() {
             {activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
             {activeTab === 'prospecting' && visibleForSession('prospecting') && <ProspectingPage />}
             {activeTab === 'launch' && visibleForSession('launch') && <LaunchSprintPage />}
-            {activeTab === 'velvet' && visibleForSession('velvet') && <VelvetAlchemyPage />}
+            {activeTab === 'revenue' && visibleForSession('revenue') && <RevenueWorkspacePage />}
             {activeTab === 'leads' && visibleForSession('leads') && <LeadHunterPage />}
             {activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}
             {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}

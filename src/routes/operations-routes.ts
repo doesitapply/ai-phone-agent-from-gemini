@@ -1,4 +1,5 @@
 import type { Express, Request, RequestHandler, Response } from "express";
+import { buildAcquisitionLifecycle } from "../acquisition-lifecycle.js";
 
 type OperationsRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -76,29 +77,40 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
     const acquisitionSchemaReady = velvet.isAcquisitionSchemaReady?.() ?? false;
     const handoffsPromise = acquisitionSchemaReady
       ? sql`
-          SELECT h.id, h.call_sid, h.acquisition_id, h.reason, h.urgency, h.status, h.notes, h.recommended_action,
+          SELECT DISTINCT h.id, h.call_sid, h.acquisition_id, h.reason, h.urgency, h.status, h.notes, h.recommended_action,
                  h.transcript_snippet, h.created_at, h.acknowledged_at, h.assigned_to_name,
                  h.assigned_to_phone, h.assigned_to_email, h.last_action, h.last_action_at,
                  h.resolution_notes, h.resolved_at, co.name AS contact_name, co.phone_number
           FROM handoffs h
+          LEFT JOIN acquisition_records acquisition
+            ON acquisition.acquisition_id = h.acquisition_id
+           AND acquisition.workspace_id = h.workspace_id
+          LEFT JOIN velvet_alchemy_handoff_receipts receipt
+            ON receipt.handoff_id = h.id
+           AND receipt.workspace_id = h.workspace_id
           LEFT JOIN contacts co ON h.contact_id = co.id
           WHERE h.workspace_id = ${wsId}
+            AND (acquisition.source_system = 'velvet_alchemy' OR receipt.id IS NOT NULL)
           ORDER BY h.created_at DESC
           LIMIT 20
         `
-      : sql`
-          SELECT h.id, h.call_sid, NULL::TEXT AS acquisition_id, h.reason, h.urgency, h.status, h.notes, h.recommended_action,
-                 h.transcript_snippet, h.created_at, h.acknowledged_at, h.assigned_to_name,
-                 h.assigned_to_phone, h.assigned_to_email, h.last_action, h.last_action_at,
-                 h.resolution_notes, h.resolved_at, co.name AS contact_name, co.phone_number
-          FROM handoffs h
-          LEFT JOIN contacts co ON h.contact_id = co.id
-          WHERE h.workspace_id = ${wsId}
-          ORDER BY h.created_at DESC
-          LIMIT 20
-        `;
+      : Promise.resolve([]);
     const [countRows, handoffs, acquisitionCountRows, acquisitions, receiverWorkspaceRows] = await Promise.all([
-      sql<{ count: string }[]>`SELECT COUNT(*)::TEXT AS count FROM handoffs WHERE workspace_id = ${wsId} AND status = 'pending'`,
+      acquisitionSchemaReady
+        ? sql<{ count: string }[]>`
+            SELECT COUNT(DISTINCT handoff.id)::TEXT AS count
+            FROM handoffs handoff
+            LEFT JOIN acquisition_records acquisition
+              ON acquisition.acquisition_id = handoff.acquisition_id
+             AND acquisition.workspace_id = handoff.workspace_id
+            LEFT JOIN velvet_alchemy_handoff_receipts receipt
+              ON receipt.handoff_id = handoff.id
+             AND receipt.workspace_id = handoff.workspace_id
+            WHERE handoff.workspace_id = ${wsId}
+              AND handoff.status = 'pending'
+              AND (acquisition.source_system = 'velvet_alchemy' OR receipt.id IS NOT NULL)
+          `
+        : Promise.resolve([{ count: "0" }]),
       handoffsPromise,
       acquisitionSchemaReady
         ? sql<{
@@ -173,19 +185,34 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
     }
     const recordKind = requestedKind || null;
     const acquisitions = await sql`
-      SELECT acquisition_id, source_system, source_record_id, first_payload_hash,
-             record_kind, contact_permission, contact_basis, route_decision,
-             source_observed_at, first_received_at
-      FROM acquisition_records
-      WHERE workspace_id = ${wsId}
-        AND (${recordKind}::TEXT IS NULL OR record_kind = ${recordKind})
-      ORDER BY first_received_at DESC
+      SELECT acquisition.acquisition_id, acquisition.source_system,
+             acquisition.source_record_id, acquisition.first_payload_hash,
+             acquisition.record_kind, acquisition.contact_permission,
+             acquisition.contact_basis, acquisition.route_decision,
+             acquisition.source_observed_at, acquisition.first_received_at,
+             current_review.decision AS current_review_decision,
+             current_review.contact_basis AS current_review_contact_basis,
+             current_review.candidate_channel AS current_review_candidate_channel,
+             current_review.created_at AS current_review_created_at
+      FROM acquisition_records acquisition
+      LEFT JOIN LATERAL (
+        SELECT review.decision, review.contact_basis, review.candidate_channel, review.created_at
+        FROM acquisition_reviews review
+        WHERE review.acquisition_id = acquisition.acquisition_id
+          AND review.workspace_id = acquisition.workspace_id
+        ORDER BY review.created_at DESC
+        LIMIT 1
+      ) current_review ON TRUE
+      WHERE acquisition.workspace_id = ${wsId}
+        AND (${recordKind}::TEXT IS NULL OR acquisition.record_kind = ${recordKind})
+      ORDER BY acquisition.first_received_at DESC
       LIMIT 100
     `;
     return res.json({ acquisitions });
   });
 
   app.get("/api/acquisitions/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
     if (!dbEnabled) {
       return res.status(503).json({ error: "Acquisition evidence requires durable storage.", code: "ACQUISITION_STORAGE_REQUIRED" });
     }
@@ -197,17 +224,25 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
       return res.status(400).json({ error: "Invalid acquisition ID.", code: "INVALID_ACQUISITION_ID" });
     }
     const wsId = getWorkspaceId(req);
-    const [recordRows, events, reviews] = await Promise.all([
+    const [recordRows, events, reviews, handoffs, approvals, calls, checkoutFulfillments, provisioningRequests, activationEvents] = await Promise.all([
       sql`
         SELECT acquisition_id, source_system, source_record_id, first_payload_hash,
                record_kind, contact_permission, contact_basis, route_decision,
-               source_observed_at, first_received_at
+               source_observed_at, first_received_at,
+               jsonb_build_object(
+                 'companyName', source_snapshot ->> 'companyName',
+                 'reason', source_snapshot ->> 'reason',
+                 'urgency', source_snapshot ->> 'urgency',
+                 'callerName', source_snapshot -> 'caller' ->> 'name',
+                 'callerPhoneLast4', RIGHT(COALESCE(source_snapshot -> 'caller' ->> 'phone', ''), 4)
+               ) AS source_snapshot
         FROM acquisition_records
         WHERE acquisition_id = ${acquisitionId} AND workspace_id = ${wsId}
         LIMIT 1
       `,
       sql`
-        SELECT receipt_id, source_system, source_event_id, event_type, payload_hash,
+        SELECT receipt_id, source_system, source_event_id, event_type, channel,
+               approval_id, call_sid, handoff_id, external_delivery_id, payload_hash,
                status, source_observed_at, received_at
         FROM acquisition_events
         WHERE acquisition_id = ${acquisitionId} AND workspace_id = ${wsId}
@@ -220,11 +255,74 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
         WHERE acquisition_id = ${acquisitionId} AND workspace_id = ${wsId}
         ORDER BY created_at ASC
       `,
+      sql`
+        SELECT id, call_sid, reason, urgency, status, recommended_action,
+               created_at, acknowledged_at
+        FROM handoffs
+        WHERE acquisition_id = ${acquisitionId} AND workspace_id = ${wsId}
+        ORDER BY created_at ASC
+      `,
+      sql`
+        SELECT approval_id, action_type, target_kind, target_ref, channel, status,
+               payload_hash, prepared_at, approved_at, sent_at, failed_at, updated_at
+        FROM launch_outreach_approvals
+        WHERE acquisition_id = ${acquisitionId} AND acquisition_workspace_id = ${wsId}
+        ORDER BY prepared_at ASC
+      `,
+      sql`
+        SELECT c.call_sid, c.direction, c.status, c.started_at, c.ended_at,
+               c.duration_seconds, cs.outcome, cs.sentiment, cs.resolution_score
+        FROM calls c
+        LEFT JOIN call_summaries cs
+          ON cs.call_sid = c.call_sid AND cs.workspace_id = c.workspace_id
+        WHERE c.acquisition_id = ${acquisitionId} AND c.workspace_id = ${wsId}
+        ORDER BY c.started_at ASC
+      `,
+      sql`
+        SELECT fulfillment.checkout_session_id, fulfillment.status, fulfillment.last_error,
+               fulfillment.created_at, fulfillment.updated_at,
+               EXISTS(
+                 SELECT 1
+                 FROM provisioning_requests request
+                 WHERE request.request_id = fulfillment.checkout_session_id
+                   AND request.source = 'stripe_checkout_completed'
+                   AND request.acquisition_id = ${acquisitionId}
+                   AND request.acquisition_workspace_id = ${wsId}
+               ) AS payment_verified
+        FROM stripe_checkout_fulfillments fulfillment
+        WHERE fulfillment.acquisition_id = ${acquisitionId}
+          AND fulfillment.acquisition_workspace_id = ${wsId}
+        ORDER BY fulfillment.created_at ASC
+      `,
+      sql`
+        SELECT id, request_id, workspace_id, requested_plan, requested_mode, status,
+               source, created_at, updated_at
+        FROM provisioning_requests
+        WHERE acquisition_id = ${acquisitionId} AND acquisition_workspace_id = ${wsId}
+        ORDER BY created_at ASC
+      `,
+      sql`
+        SELECT id, workspace_id, provisioning_request_id, event_type, status,
+               actor, detail, created_at
+        FROM activation_events
+        WHERE acquisition_id = ${acquisitionId} AND acquisition_workspace_id = ${wsId}
+        ORDER BY created_at ASC
+      `,
     ]);
     if (!recordRows[0]) {
       return res.status(404).json({ error: "Acquisition not found.", code: "ACQUISITION_NOT_FOUND" });
     }
-    return res.json({ acquisition: recordRows[0], events, reviews });
+    return res.json(buildAcquisitionLifecycle({
+      record: recordRows[0],
+      events,
+      reviews,
+      handoffs,
+      approvals,
+      calls,
+      checkoutFulfillments,
+      provisioningRequests,
+      activationEvents,
+    }));
   });
 
   app.post("/api/handoffs/:id/acknowledge", dashboardAuth, async (req: Request, res: Response) => {

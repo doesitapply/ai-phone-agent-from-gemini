@@ -16,9 +16,23 @@ const acquisition = {
   first_received_at: "2026-08-21T12:00:00.000Z",
 };
 
+const acquisitionDetail = {
+  ...acquisition,
+  source_snapshot: {
+    companyName: "Synthetic Fixture Plumbing",
+    reason: "Synthetic fixture for the evidence inbox",
+    urgency: "low",
+    callerName: "Synthetic Fixture Caller",
+    callerPhoneLast4: "0124",
+  },
+};
+
 function makeResponse() {
   const state: { statusCode: number; body: unknown } = { statusCode: 200, body: undefined };
   const response = {
+    setHeader() {
+      return response;
+    },
     status(code: number) {
       state.statusCode = code;
       return response;
@@ -45,6 +59,7 @@ function makeRegisteredRoutes(acquisitionSchemaReady = true, receiverWorkspaceEx
     const query = strings.join("?").replace(/\s+/g, " ").trim();
     if (query.includes("COUNT(*)::TEXT AS count FROM handoffs")) return [{ count: "0" }];
     if (query.includes("FROM handoffs h")) return [];
+    if (query.includes("FROM handoffs")) return [];
     if (query.includes("COUNT(*) FILTER (WHERE record_kind = 'real')")) {
       return [{ real_count: "0", synthetic_count: "1", quarantined_count: "0" }];
     }
@@ -53,10 +68,15 @@ function makeRegisteredRoutes(acquisitionSchemaReady = true, receiverWorkspaceEx
     }
     if (query.includes("FROM acquisition_records") && query.includes("LIMIT 20")) return [acquisition];
     if (query.includes("FROM acquisition_records") && query.includes("LIMIT 1")) {
-      return values[0] === acquisition.acquisition_id && values[1] === 42 ? [acquisition] : [];
+      return values[0] === acquisition.acquisition_id && values[1] === 42 ? [acquisitionDetail] : [];
     }
     if (query.includes("FROM acquisition_events")) return [];
     if (query.includes("FROM acquisition_reviews")) return [];
+    if (query.includes("FROM calls c")) return [];
+    if (query.includes("FROM launch_outreach_approvals")) return [];
+    if (query.includes("FROM stripe_checkout_fulfillments")) return [];
+    if (query.includes("FROM provisioning_requests")) return [];
+    if (query.includes("FROM activation_events")) return [];
     throw new Error(`Unhandled operations fixture query: ${query}`);
   };
   const middleware: RequestHandler = (_req, _res, next) => next();
@@ -114,6 +134,43 @@ test("acquisition detail reads fail closed across workspace boundaries", async (
 
   assert.equal(state.statusCode, 404);
   assert.deepEqual(state.body, { error: "Acquisition not found.", code: "ACQUISITION_NOT_FOUND" });
+});
+
+test("acquisition detail exposes one evidence lifecycle without inferring downstream work", async () => {
+  const routes = makeRegisteredRoutes();
+  const handler = routes.get("GET /api/acquisitions/:id")?.at(-1);
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler({
+    workspaceId: 42,
+    params: { id: acquisition.acquisition_id },
+  } as unknown as Request, response, () => undefined);
+
+  assert.equal(state.statusCode, 200);
+  const body = state.body as any;
+  assert.equal(body.acquisition.acquisitionId, acquisition.acquisition_id);
+  assert.equal(body.acquisition.sourceEvidence.companyName, "Synthetic Fixture Plumbing");
+  assert.equal(body.currentReview, null);
+  assert.equal(body.stages.source.state, "received");
+  assert.equal(body.stages.handoff.state, "none_recorded");
+  assert.equal(body.stages.approval.state, "none_recorded");
+  assert.equal(body.stages.touch.state, "none_recorded");
+  assert.equal(body.stages.checkout.state, "none_recorded");
+  assert.equal(body.stages.provisioning.state, "none_recorded");
+  assert.equal(body.stages.activation.state, "none_recorded");
+  assert.equal(body.stages.feedback.state, "not_implemented");
+  assert.deepEqual(body.capabilities, {
+    mode: "evidence_only",
+    canRecordReview: false,
+    canPrepareOutreach: false,
+    canPlaceCall: false,
+    canStartCheckout: false,
+    canWriteProvider: false,
+  });
+  assert.equal(body.attribution.complete, false);
+  assert.ok(body.attribution.missingLinks.includes("handoff"));
+  assert.ok(body.attribution.missingLinks.includes("feedback"));
 });
 
 test("invalid acquisition filters fail closed instead of widening the read", async () => {
