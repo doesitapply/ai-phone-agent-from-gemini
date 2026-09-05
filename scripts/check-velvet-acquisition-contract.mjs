@@ -21,7 +21,7 @@ const expect = (label, condition) => {
 expect("source record and source event identities are distinct", domain.includes("sourceRecordId") && domain.includes("sourceEventId"));
 expect("opaque acquisition and receipt IDs are deterministic", domain.includes("buildVelvetAcquisitionId") && domain.includes("buildVelvetAcquisitionReceiptId"));
 expect("payload evidence is SHA-256 hashed", domain.includes('createHash("sha256")') && domain.includes("buildVelvetAcquisitionPayloadHash"));
-expect("intake requires a dedicated strong token", domain.includes("apiKey.length < 32") && domain.includes("VELVET_ALCHEMY_ACQUISITION_API_KEY_SEPARATION") && domain.includes("SECRET_PLACEHOLDER"));
+expect("intake requires a dedicated strong token", domain.includes("apiKey.length < 32") && domain.includes("VELVET_ALCHEMY_ACQUISITION_API_KEY_SEPARATION") && domain.includes("SECRET_PLACEHOLDER") && !domain.includes("const legacyApiKey") && !domain.includes("VELVET_ALCHEMY_HANDOFF_MODE"));
 expect("intake requires an explicit evidence or synthetic-only mode", domain.includes("synthetic-fixture-only-v1") && domain.includes("evidence-inbox-v1"));
 expect("synthetic fixtures use reserved identity and phone values", domain.includes('"velvet-manus-fake-"') && domain.includes('"+12025550124"'));
 expect("route uses constant-time bearer authentication", route.includes("constantTimeSecretEquals(token, config.apiKey)"));

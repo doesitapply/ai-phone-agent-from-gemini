@@ -343,6 +343,38 @@ test("rejects published placeholders and reused provider secrets", () => {
   }
 });
 
+test("requires a dedicated acquisition credential instead of the legacy handoff key", () => {
+  const base = {
+    VELVET_ALCHEMY_ACQUISITION_MODE: "evidence-inbox-v1",
+    VELVET_ALCHEMY_WORKSPACE_ID: "42",
+  };
+  const handoffKey = "velvet-handoff-secret-with-enough-entropy-9081726354";
+  const acquisitionKey = "velvet-acquisition-secret-with-enough-entropy-9081726354";
+
+  const legacyOnly = readVelvetAcquisitionConfig({
+    ...base,
+    VELVET_ALCHEMY_HANDOFF_API_KEY: handoffKey,
+    VELVET_ALCHEMY_HANDOFF_MODE: "evidence-inbox-v1",
+  });
+  assert.equal(legacyOnly.configured, false);
+  assert.equal(legacyOnly.missing.includes("VELVET_ALCHEMY_ACQUISITION_API_KEY"), true);
+
+  const separated = readVelvetAcquisitionConfig({
+    ...base,
+    VELVET_ALCHEMY_ACQUISITION_API_KEY: acquisitionKey,
+    VELVET_ALCHEMY_HANDOFF_API_KEY: handoffKey,
+  });
+  assert.equal(separated.configured, true);
+
+  const reused = readVelvetAcquisitionConfig({
+    ...base,
+    VELVET_ALCHEMY_ACQUISITION_API_KEY: handoffKey,
+    VELVET_ALCHEMY_HANDOFF_API_KEY: handoffKey,
+  });
+  assert.equal(reused.configured, false);
+  assert.equal(reused.missing.includes("VELVET_ALCHEMY_ACQUISITION_API_KEY_SEPARATION"), true);
+});
+
 test("rejects obvious fixture evidence mislabelled as real", async () => {
   let storeCalls = 0;
   const handler = createVelvetAcquisitionHandler({

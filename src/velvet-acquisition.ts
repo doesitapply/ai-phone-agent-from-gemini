@@ -47,14 +47,8 @@ export type VelvetAcquisitionConfig = {
 export function readVelvetAcquisitionConfig(
   env: Record<string, string | undefined> = process.env,
 ): VelvetAcquisitionConfig {
-  const acquisitionApiKey = String(env.VELVET_ALCHEMY_ACQUISITION_API_KEY || "").trim();
-  const legacyApiKey = String(env.VELVET_ALCHEMY_HANDOFF_API_KEY || "").trim();
-  const apiKey = acquisitionApiKey || legacyApiKey;
-  const rawMode = String(
-    env.VELVET_ALCHEMY_ACQUISITION_MODE
-      || env.VELVET_ALCHEMY_HANDOFF_MODE
-      || "",
-  ).trim();
+  const apiKey = String(env.VELVET_ALCHEMY_ACQUISITION_API_KEY || "").trim();
+  const rawMode = String(env.VELVET_ALCHEMY_ACQUISITION_MODE || "").trim();
   const workspaceId = Number(String(env.VELVET_ALCHEMY_WORKSPACE_ID || "").trim());
   const validWorkspaceId = Number.isSafeInteger(workspaceId) && workspaceId > 0 ? workspaceId : null;
   const mode = rawMode === VELVET_SYNTHETIC_ACQUISITION_MODE
@@ -64,7 +58,6 @@ export function readVelvetAcquisitionConfig(
       : null;
   const reservedSecrets = Object.entries(env)
     .filter(([name]) => name !== "VELVET_ALCHEMY_ACQUISITION_API_KEY"
-      && name !== "VELVET_ALCHEMY_HANDOFF_API_KEY"
       && SECRET_NAME.test(name))
     .map(([, value]) => String(value || "").trim())
     .filter(Boolean);
@@ -72,9 +65,6 @@ export function readVelvetAcquisitionConfig(
   const distinctCharacters = new Set(apiKey).size;
   if (apiKey.length < 32 || distinctCharacters < 12 || SECRET_PLACEHOLDER.test(apiKey)) {
     missing.push("VELVET_ALCHEMY_ACQUISITION_API_KEY");
-  }
-  if (acquisitionApiKey && legacyApiKey && acquisitionApiKey !== legacyApiKey) {
-    missing.push("VELVET_ALCHEMY_ACQUISITION_API_KEY_CONFLICT");
   }
   if (apiKey && reservedSecrets.includes(apiKey)) {
     missing.push("VELVET_ALCHEMY_ACQUISITION_API_KEY_SEPARATION");
