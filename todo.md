@@ -63,6 +63,18 @@
 
 ## Trade-Floor Light Mode Mockups
 
-- [ ] Create companion light-mode concepts for the public Home, Today Intelligence Brief, and Business Knowledge Pack using a warm industrial field-operations treatment rather than a bright generic SaaS theme.
-- [ ] Preserve the same signal, context, evidence, uncertainty, and human-decision grammar used in dark mode, with no fabricated data or ornamental “live” activity.
-- [ ] Deliver the trade-floor light-mode visual assets with the dark-mode suite as a paired design direction.
+- [x] Create companion light-mode concepts for the public Home, Today Intelligence Brief, and Business Knowledge Pack using a warm industrial field-operations treatment rather than a bright generic SaaS theme.
+- [x] Preserve the same signal, context, evidence, uncertainty, and human-decision grammar used in dark mode, with no fabricated data or ornamental “live” activity.
+- [x] Deliver the trade-floor light-mode visual assets with the dark-mode suite as a paired design direction.
+
+## Trade-Floor Interface Implementation
+
+- [ ] Implement the trade-floor visual system in the live public and owner-facing UI while preserving existing verified product behavior.
+- [x] Restore a clear customer-owner Settings entry point and simplify the settings surface into plain-language sections without exposing internal-only administrative controls.
+- [ ] Validate priority controls, settings access, responsive behavior, and no-fabrication requirements before release.
+
+## Human-Centered Recovery Visuals
+
+- [x] Create human-at-work visual assets that show service professionals unavailable on a job while SMIRK captures an incoming business opportunity.
+- [x] Integrate the approved human-centered visual story into the public trade-floor interface without representing illustrative calls, customer details, revenue, or outcomes as real.
+- [x] Validate the human-centered desktop and mobile presentation for clarity, accessibility, and no-fabrication compliance.

@@ -17,6 +17,11 @@ test("Starter owner navigation remains limited to the missed-call recovery loop"
   assert.match(appSource, /function HandoffsPage\(\{ ownerView = false \}: \{ ownerView\?: boolean \}\)/);
   assert.match(appSource, /<HandoffsPage ownerView=\{isCustomerView\} \/>/);
   assert.match(appSource, /ownerView \? "Alerts that need a person" : "Handoffs & Team"/);
+  assert.match(appSource, /label: "Business setup"/);
+  assert.match(appSource, /label: "How SMIRK speaks"/);
+  assert.match(appSource, /label: "What SMIRK can say"/);
+  assert.match(appSource, /Business knowledge/);
+  assert.match(appSource, /Line &amp; setup/);
   assert.doesNotMatch(appSource, /SMIRK OS/);
 });
 

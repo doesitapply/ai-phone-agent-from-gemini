@@ -30,3 +30,13 @@ test("public recovery preview explains the workflow without fabricated customer 
   assert.doesNotMatch(app, /418 Maple St, Sparks/);
   assert.doesNotMatch(app, /elderly parent home/);
 });
+
+test("public human-at-work story explains recovery without manufacturing customer or revenue proof", () => {
+  assert.match(app, /const SMIRK_FIELD_WORK_VISUAL = "https:\/\/files\.manuscdn\.com\/user_upload_by_module\/session_file\/91847194\/fIPRxIdlFOkcVraW\.jpg"/);
+  assert.match(app, /Working the job/);
+  assert.match(app, /Signal captured/);
+  assert.match(app, /Context recorded/);
+  assert.match(app, /You decide next/);
+  assert.doesNotMatch(app, /recovered \$[0-9,]+/i);
+  assert.doesNotMatch(app, /money caught/i);
+});

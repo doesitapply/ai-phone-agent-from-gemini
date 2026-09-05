@@ -502,6 +502,29 @@ function PublicDashboardPreview() {
   );
 }
 
+const SMIRK_FIELD_WORK_VISUAL = "https://files.manuscdn.com/user_upload_by_module/session_file/91847194/fIPRxIdlFOkcVraW.jpg";
+
+function PublicHumanWorkVisual() {
+  return (
+    <figure className="smirk-human-work" aria-labelledby="human-work-caption">
+      <img
+        src={SMIRK_FIELD_WORK_VISUAL}
+        alt="An electrician working at an electrical panel while a phone remains available for business-call recovery"
+      />
+      <figcaption id="human-work-caption" className="smirk-human-work__caption">
+        <div className="smirk-human-work__signal">
+          <span aria-hidden="true" />
+          Working the job
+        </div>
+        <p>SMIRK is built for the moments when answering the phone would mean stopping the work in front of you.</p>
+        <div className="smirk-human-work__flow" aria-label="Missed-call recovery workflow">
+          <span>Signal captured</span><i aria-hidden="true" /><span>Context recorded</span><i aria-hidden="true" /><span>You decide next</span>
+        </div>
+      </figcaption>
+    </figure>
+  );
+}
+
 function PublicBookPage() {
   const [businessName, setBusinessName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
@@ -770,6 +793,9 @@ function PublicLandingPage() {
               See how it works
             </a>
           </div>
+          <div className="mt-7 lg:hidden">
+            <PublicHumanWorkVisual />
+          </div>
           <div className="mt-9 grid gap-3 sm:grid-cols-3">
             {[
               ['01', 'caller captured'],
@@ -794,12 +820,14 @@ function PublicLandingPage() {
           </div>
         </section>
 
-        <section id="request-activation" className="border border-[#2f4637] bg-[#101510]/95 p-5 shadow-2xl shadow-black/30">
-          <PublicDashboardPreview />
+        <section id="request-activation" className="smirk-activation-panel border border-[#2f4637] bg-[#101510]/95 p-5 shadow-2xl shadow-black/30">
+          <div className="hidden lg:block">
+            <PublicHumanWorkVisual />
+          </div>
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <div className="smirk-signal-label mt-5 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start recovery setup</div>
-              <div className="mt-1 text-sm text-gray-300">One Starter plan. Tell us which line needs protection and where the owner should receive setup and alert information.</div>
+              <div className="mt-1 text-sm text-gray-300">Tell us which business line needs protection and where you want the setup and alert information sent.</div>
             </div>
             {selected ? <div className="bg-[#00ff88] px-3 py-2 font-mono text-xs font-black text-black">${selected.price}/{selected.interval}</div> : null}
           </div>
@@ -8182,10 +8210,10 @@ function SettingsPage({
   );
 
   const tabs: { id: "core" | "voice" | "behavior" | "advanced"; label: string; icon: React.ReactNode }[] = [
-    { id: "core", label: "Connections", icon: <Key size={13} /> },
-    { id: "voice", label: "Voice", icon: <Headphones size={13} /> },
-    { id: "behavior", label: "Behavior", icon: <MessageSquare size={13} /> },
-    { id: "advanced", label: "Advanced", icon: <Sliders size={13} /> },
+    { id: "core", label: "Business setup", icon: <Key size={13} /> },
+    { id: "voice", label: "How SMIRK speaks", icon: <Headphones size={13} /> },
+    { id: "behavior", label: "What SMIRK can say", icon: <MessageSquare size={13} /> },
+    { id: "advanced", label: "System connections", icon: <Sliders size={13} /> },
   ];
   const readiness = wsProfile?.setup_readiness;
   const readinessItems = readiness?.items || [];
@@ -8198,7 +8226,7 @@ function SettingsPage({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-xl font-bold text-white">Settings</h2>
-            <p className="text-sm text-gray-500 mt-1">Connect your services, configure your agent's voice, and tune its behavior.</p>
+            <p className="text-sm text-gray-500 mt-1">Set up your business line, decide how SMIRK handles calls, and choose where important follow-up goes.</p>
           </div>
           {workspaceSession && (
             <button
@@ -8216,15 +8244,15 @@ function SettingsPage({
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-white">CRM / Business Data</h3>
-            <p className="text-xs text-gray-600 mt-0.5">Business profile, website facts, CRM imports, contacts, and agent grounding now live on the CRM page.</p>
+            <h3 className="text-sm font-semibold text-white">Business knowledge</h3>
+            <p className="text-xs text-gray-600 mt-0.5">Add your business profile, website facts, service information, and CRM exports so SMIRK knows what is safe to say.</p>
           </div>
           <button
             onClick={() => window.dispatchEvent(new CustomEvent("smirk:navigate", { detail: { tab: "crm" } }))}
             className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#00ff88]/50 bg-[#00ff88]/10 px-3 py-2 text-xs font-bold text-[#00ff88]"
           >
             <Database size={13} />
-            Open CRM
+            Manage business knowledge
           </button>
         </div>
       </div>
@@ -8232,8 +8260,8 @@ function SettingsPage({
       <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-gray-800 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-white">Setup Command Center</h3>
-            <p className="mt-0.5 text-xs text-gray-600">Launch facts, greetings, phone provisioning, and live checks for this workspace.</p>
+            <h3 className="text-sm font-semibold text-white">Line &amp; setup</h3>
+            <p className="mt-0.5 text-xs text-gray-600">Your business identity, call greeting, owner alerts, phone line, and the checks needed before going live.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {readiness && (
@@ -8251,7 +8279,7 @@ function SettingsPage({
               className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-300 hover:border-gray-600 hover:text-white"
             >
               <Sparkles size={13} />
-              Open setup wizard
+              Setup checklist
             </button>
           </div>
         </div>
@@ -8360,7 +8388,7 @@ function SettingsPage({
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[#00ff88] px-4 py-2.5 text-xs font-bold text-black disabled:opacity-40"
                   >
                     {wsProfileSaving ? <Loader2 size={13} className="animate-spin" /> : wsProfileSaved ? <CheckCircle2 size={13} /> : <Save size={13} />}
-                    {wsProfileSaving ? "Saving..." : wsProfileSaved ? "Saved" : "Save workspace setup"}
+                    {wsProfileSaving ? "Saving..." : wsProfileSaved ? "Saved" : "Save changes"}
                   </button>
                   <button
                     onClick={testNotificationEmail}
@@ -8375,7 +8403,7 @@ function SettingsPage({
                     className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 px-4 py-2.5 text-xs font-semibold text-gray-300 hover:border-gray-600 hover:text-white"
                   >
                     <Database size={13} />
-                    Open CRM
+                    Manage business knowledge
                   </button>
                   <button
                     onClick={markSetupComplete}
