@@ -175,12 +175,15 @@ test("public recovered-call demo uses a real audio asset and labels all syntheti
 
 test("selective public UI integration keeps checkout consent and owner desk routes intact", () => {
   const appSource = fs.readFileSync("src/App.tsx", "utf8");
+  const ownerDeskTabs = appSource.match(/const ownerDeskTabs:[\s\S]*?= \[([\s\S]*?)\];/)?.[1];
+  assert.ok(ownerDeskTabs, "Starter owner navigation must be declared");
 
   assert.match(appSource, /termsAccepted,/);
   assert.match(appSource, /terms_accepted: buyer\?\.termsAccepted/);
   assert.match(appSource, /const ownerDeskTabs: \{ id: Tab; label: string; icon: React\.ReactElement; badge\?: number \}\[\] = \[/);
-  assert.match(appSource, /\{ id: "calls", label: "Calls"/);
-  assert.match(appSource, /\{ id: "tasks", label: "Tasks"/);
-  assert.match(appSource, /\{ id: "handoffs", label: "Alerts"/);
-  assert.match(appSource, /\{ id: "settings", label: "Settings"/);
+  assert.match(ownerDeskTabs, /\{ id: "calls", label: "Calls"/);
+  assert.match(ownerDeskTabs, /\{ id: "tasks", label: "Tasks"/);
+  assert.match(ownerDeskTabs, /\{ id: "handoffs", label: "Alerts"/);
+  assert.match(ownerDeskTabs, /\{ id: "crm", label: "CRM"/);
+  assert.doesNotMatch(ownerDeskTabs, /id: "settings"/);
 });

@@ -17,7 +17,7 @@ The supplied SMIRK UI pack is a directional reference, not an implementation tem
 | Surface | Design language | Job |
 |---|---|---|
 | Public marketing and onboarding | Paper, ink, forest, editorial trade photography, clear one-action hierarchy | Explain the narrow offer and start a verified setup flow. |
-| Owner desk | Dark mineral surfaces, restrained lime only for live/urgent state, large decision targets | Return missed calls, complete callbacks, inspect alerts, and control line settings. |
+| Owner desk | Dark mineral surfaces, restrained lime only for live/urgent state, large decision targets | Return missed calls, complete callbacks, inspect alerts, and maintain tenant business context. |
 | Internal operator tooling | Quiet operational UI, visually subordinate to owner tasks | Support troubleshooting, configuration, audit, and internal launch work. |
 
 The public system will use an editorial serif display paired with a practical sans-serif UI face. The owner desk will use the same system with a dark operational palette. Bright lime is a status color—not the primary personality of every component. Gradients, hacker grids, generic dashboard KPI cards, visual noise, fake proof, and nonessential panel stacks are prohibited.
@@ -29,9 +29,9 @@ Starter owner navigation is constrained to four actions:
 1. **Calls** — call records, essential facts, transcript/recording when present, and immediate callback action.
 2. **Tasks** — callback queue with urgency, owner, next step, and handled outcome.
 3. **Alerts** — urgent notifications and unresolved handoffs that require attention.
-4. **Settings** — line, hours, alert destination, recording notice, business context, and Starter billing/usage.
+4. **CRM** — tenant-scoped business context and knowledge used by the recovery workflow.
 
-Advanced CRM, proof, compliance, prospecting, health, and campaign screens remain hidden behind operator access or a single advanced-tools route. This is navigation suppression, not feature deletion.
+Provider, agent, integration, system settings, proof, compliance, prospecting, health, and campaign screens remain hidden behind operator access or a single advanced-tools route. Owner line or account changes outside the CRM surface continue through the guided setup/support path. This is navigation suppression, not feature deletion.
 
 ## Public Page Hierarchy
 

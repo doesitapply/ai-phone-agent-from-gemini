@@ -12,7 +12,7 @@ function requireIncludes(source, needle, label) {
   if (!source.includes(needle)) failures.push(`${label}: missing ${needle}`);
 }
 
-requireIncludes(app, 'const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "handoffs", "tasks", "settings", "crm"]);', "starter customer nav");
+requireIncludes(app, 'const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "handoffs", "tasks", "crm"]);', "starter customer nav");
 requireIncludes(app, 'const OPERATOR_ONLY_TABS = new Set<Tab>([', "operator-only nav denylist");
 requireIncludes(app, "const workspacePlan = normalizeWorkspacePlan(currentWorkspace?.plan || workspaceSession?.plan);", "workspace plan source");
 requireIncludes(app, "const customerVisibleTabs = workspacePlanHasFullSuite(workspacePlan) ? PRO_WORKSPACE_TABS : BASIC_WORKSPACE_TABS;", "plan-based customer nav");
@@ -43,7 +43,7 @@ for (const tab of ["campaigns", "mission_control", "prospecting", "agent", "voic
 }
 
 const basicTabsBlock = app.match(/const BASIC_WORKSPACE_TABS = new Set<Tab>\(\[([\s\S]*?)\]\);/)?.[1] || "";
-for (const tab of ["calls", "handoffs", "tasks", "settings", "crm"]) {
+for (const tab of ["calls", "handoffs", "tasks", "crm"]) {
   if (!basicTabsBlock.includes(`"${tab}"`)) failures.push(`starter owner tabs: ${tab} is not available to the paid customer workspace`);
 }
 for (const tab of ["dashboard", "review", "calendar", "recovery", "analytics", "agent", "voice", "integrations", "logs", "system_health", "workspaces"]) {
@@ -61,6 +61,9 @@ for (const tab of ["settings", "agent", "voice", "integrations", "agents", "comp
 const operatorTabsBlock = app.match(/const OPERATOR_ONLY_TABS = new Set<Tab>\(\[([\s\S]*?)\]\);/)?.[1] || "";
 for (const tab of ["settings", "agent", "voice", "integrations", "agents", "compliance", "logs", "workspaces", "system_health", "mission_control", "prospecting", "leads"]) {
   if (!operatorTabsBlock.includes(`"${tab}"`)) failures.push(`operator-only tabs: ${tab} is not explicitly operator-only`);
+}
+for (const tab of basicTabsBlock.matchAll(/"([^"]+)"/g)) {
+  if (operatorTabsBlock.includes(`"${tab[1]}"`)) failures.push(`starter owner tabs: ${tab[1]} also appears in the operator-only denylist`);
 }
 
 const ownerVisibleRegion = app.slice(app.indexOf("function CallsPage"), app.indexOf("// ── Handoffs Page"));

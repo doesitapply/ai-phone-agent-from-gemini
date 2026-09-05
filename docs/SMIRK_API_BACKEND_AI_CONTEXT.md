@@ -143,7 +143,7 @@ Starter is the one sellable customer offer. `PLAN_LIMITS` and durable records st
 
 Rules:
 
-- Starter customers should see the focused owner desk: Calls, Tasks, Alerts, and Settings.
+- Starter customers should see the focused owner desk: Calls, Tasks, Alerts, and tenant-scoped CRM/business context. Provider, agent, integration, and system settings remain operator-only.
 - A billing-entitled workspace bearer may use customer workspace APIs only within its authenticated tenant. The server does not impose a second, hidden Pro gate on those APIs.
 - UI visibility is presentation, not authorization. Legacy/future Pro or Agency labels do not grant backend rights.
 - Operator/admin tools must stay behind `requireOperator` and should not mount for customer sessions.

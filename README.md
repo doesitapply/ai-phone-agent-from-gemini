@@ -107,7 +107,7 @@ SMIRK helps answer five questions:
 4. Who needs to call them back?
 5. Did we handle it?
 
-Starter is the one sellable customer offer. Its owner desk is intentionally focused: Calls, Tasks, Alerts, and Settings.
+Starter is the one sellable customer offer. Its owner desk is intentionally focused: Calls, Tasks, Alerts, and tenant-scoped CRM/business context. Provider, agent, integration, and system settings stay in the operator-only machine room.
 
 A billing-entitled workspace bearer can use the tenant-scoped customer APIs needed by the product. Customer API authorization does not depend on a hidden Pro tier. Legacy `pro` and `enterprise` values and future Pro/Agency presentation may remain for compatibility or planning, but they are not currently sellable backend entitlements and do not unlock operator APIs.
 
@@ -233,7 +233,7 @@ Starter is the one sellable customer offer. UI labels and stored plan values are
 
 | Identity / role | Intended experience and access |
 | --- | --- |
-| Billing-entitled Starter workspace | Focused owner desk: Calls, Tasks, Alerts, Settings, backed by customer APIs pinned to that workspace. |
+| Billing-entitled Starter workspace | Focused owner desk: Calls, Tasks, Alerts, and tenant-scoped CRM/business context, backed by customer APIs pinned to that workspace. |
 | Legacy/future `free`, `pro`, or `enterprise` presentation | Compatibility or future product metadata only. It is not a currently sellable offer and grants no hidden customer-API or operator entitlement. |
 | Operator/admin | Full SMIRK OS machine room behind `requireOperator`. |
 

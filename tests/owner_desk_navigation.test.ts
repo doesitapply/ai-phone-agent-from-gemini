@@ -4,16 +4,25 @@ import test from "node:test";
 
 test("Starter owner navigation remains limited to the missed-call recovery loop", () => {
   const appSource = fs.readFileSync("src/App.tsx", "utf8");
+  const starterTabsMatch = appSource.match(/const BASIC_WORKSPACE_TABS = new Set<Tab>\(\[([\s\S]*?)\]\);/);
+  const operatorTabsMatch = appSource.match(/const OPERATOR_ONLY_TABS = new Set<Tab>\(\[([\s\S]*?)\]\);/);
+  const ownerDeskTabsMatch = appSource.match(/const ownerDeskTabs:[\s\S]*?= \[([\s\S]*?)\];/);
+  assert.ok(starterTabsMatch, "Starter tab allowlist must be declared");
+  assert.ok(operatorTabsMatch, "operator-only tab denylist must be declared");
+  assert.ok(ownerDeskTabsMatch, "Starter owner navigation must be declared");
+  const starterTabs = [...starterTabsMatch[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const operatorTabs = new Set([...operatorTabsMatch[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]));
 
   assert.match(
     appSource,
-    /const BASIC_WORKSPACE_TABS = new Set<Tab>\(\["calls", "handoffs", "tasks", "settings", "crm"\]\)/,
+    /const BASIC_WORKSPACE_TABS = new Set<Tab>\(\["calls", "handoffs", "tasks", "crm"\]\)/,
   );
-  assert.match(
-    appSource,
-    /const ownerDeskTabs:[\s\S]*?\{ id: "calls", label: "Calls"[\s\S]*?\{ id: "tasks", label: "Tasks"[\s\S]*?\{ id: "handoffs", label: "Alerts"[\s\S]*?\{ id: "settings", label: "Settings"/,
-  );
+  assert.deepEqual(starterTabs.filter((tab) => operatorTabs.has(tab)), [], "Starter tabs must never overlap the operator-only denylist");
+  assert.ok(operatorTabs.has("settings"), "provider and system Settings must remain operator-only");
+  assert.match(ownerDeskTabsMatch[1], /\{ id: "calls", label: "Calls"[\s\S]*?\{ id: "tasks", label: "Tasks"[\s\S]*?\{ id: "handoffs", label: "Alerts"[\s\S]*?\{ id: "crm", label: "CRM"/);
+  assert.doesNotMatch(ownerDeskTabsMatch[1], /id: "settings"/, "Starter navigation must not advertise operator Settings");
   assert.match(appSource, /\? ownerDeskTabs\.filter\(\(t\) => customerVisibleTabs\.has\(t\.id\)\)/);
+  assert.match(appSource, /const activeTab = isCustomerView && !customerVisibleTabs\.has\(normalizedTab\)\s*\? "calls"/, "a disallowed Starter Settings deep-link must resolve to Calls");
   assert.match(appSource, /function HandoffsPage\(\{ ownerView = false \}: \{ ownerView\?: boolean \}\)/);
   assert.match(appSource, /<HandoffsPage ownerView=\{isCustomerView\} \/>/);
   assert.match(appSource, /ownerView \? "Alerts that need a person" : "Handoffs & Team"/);

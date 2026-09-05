@@ -2252,7 +2252,7 @@ const normalizeWorkspacePlan = (plan: unknown): WorkspacePlan => {
 
 const workspacePlanHasFullSuite = (plan: WorkspacePlan) => plan === "pro" || plan === "enterprise";
 
-const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "handoffs", "tasks", "settings", "crm"]);
+const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "handoffs", "tasks", "crm"]);
 const PRO_WORKSPACE_TABS = new Set<Tab>([
   "dashboard",
   "review",
@@ -13242,7 +13242,7 @@ export default function App() {
     { id: "calls", label: "Calls", icon: <Phone size={15} /> },
     { id: "tasks", label: "Tasks", icon: <ListTodo size={15} />, badge: taskCount },
     { id: "handoffs", label: "Alerts", icon: <BellRing size={15} /> },
-    { id: "settings", label: "Settings", icon: <Settings size={15} /> },
+    { id: "crm", label: "CRM", icon: <Database size={15} /> },
   ];
   const visiblePrimaryTabs = isCustomerView
     ? ownerDeskTabs.filter((t) => customerVisibleTabs.has(t.id))
@@ -13275,7 +13275,7 @@ export default function App() {
     .filter((t) => visibleForSession(t.id))
     .filter((t) => !visiblePrimaryTabs.some((primary) => primary.id === t.id));
   const mobileCoreTabIds = isCustomerView
-    ? new Set<Tab>(["calls", "tasks", "handoffs", "settings"])
+    ? new Set<Tab>(["calls", "tasks", "handoffs", "crm"])
     : new Set<Tab>(["dashboard", "revenue", "calls", "recovery"]);
   const mobileCoreTabs = [...visiblePrimaryTabs, ...overflowTabs]
     .filter((tabItem) => mobileCoreTabIds.has(tabItem.id))

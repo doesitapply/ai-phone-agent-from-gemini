@@ -60,7 +60,7 @@ Goal: make SMIRK understandable to a contractor in 30 seconds.
 
 | Workstream | Required outcome |
 | --- | --- |
-| Starter owner desk | Keep the one sellable offer focused on Calls, Tasks, Alerts, and Settings. |
+| Starter owner desk | Keep the one sellable offer focused on Calls, Tasks, Alerts, and tenant-scoped CRM/business context; keep provider and system settings operator-only. |
 | Workspace APIs | Require billing entitlement for normal product access and pin every customer read/write to the authenticated tenant; do not add a hidden Pro server gate. |
 | Legacy/future presentation | Treat `pro`, `enterprise`, and Pro/Agency UI concepts as compatibility or future planning only, not sellable backend entitlements. |
 | Operator cockpit | Keep workspaces, logs, compliance, settings, voice config, health, provisioning, and deploy/proof tools behind `requireOperator`. |
