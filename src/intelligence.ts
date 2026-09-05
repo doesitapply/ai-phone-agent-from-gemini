@@ -10,7 +10,8 @@
  */
 import { sql } from "./db.js";
 import { createHash } from "node:crypto";
-import { updateContactSummary } from "./contacts.js";
+import { promoteCallerMemory, updateContactSummary } from "./contacts.js";
+import { getSummaryMemoryPromotionReason, hasReusableCallerPhone } from "./caller-memory-policy.js";
 import { logEvent } from "./events.js";
 import { upsertLead, type FunnelStage } from "./leads-upsert.js";
 import { runMandatoryPostCallArtifactPipeline } from "./post-call-durability.js";
@@ -335,84 +336,39 @@ export const persistCallSummary = async (
         WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}
       `;
 
-      if (!contactId && durableSummary.extracted_entities) {
-        const entities = durableSummary.extracted_entities as any;
-        const autoName: string | null = entities.caller_name
-          || (entities.first_name
-            ? `${entities.first_name}${entities.last_name ? ` ${entities.last_name}` : ""}`.trim()
-            : null)
-          || null;
-        if (!autoName) {
-          logEvent(callSid, "CONTACT_AUTO_CREATE_SKIPPED", {
-            reason: "no_name_extracted",
-            note: "Caller did not provide a name — contact not created to avoid junk records.",
+      if (!contactId) {
+        const promotionReason = getSummaryMemoryPromotionReason(durableSummary);
+        const callRows = promotionReason
+          ? await sql<any[]>`
+              SELECT from_number, to_number, direction
+              FROM calls WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId} LIMIT 1
+            `
+          : [];
+        const callRecord = callRows[0];
+        const callerPhone = callRecord
+          ? (callRecord.direction === "inbound" ? callRecord.from_number : callRecord.to_number)
+          : null;
+
+        if (promotionReason && hasReusableCallerPhone(callerPhone)) {
+          const promoted = await promoteCallerMemory(callSid, callerPhone, workspaceId);
+          contactId = promoted.contact.id;
+          await sql`
+            UPDATE call_summaries SET contact_id = ${contactId}
+            WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}
+          `;
+          logEvent(callSid, "CALLER_MEMORY_PROMOTED_FROM_SUMMARY", {
+            contactId,
+            workspaceId,
+            reason: promotionReason,
+            created: promoted.isNew,
           });
         } else {
-          const boundCalls = await sql<any[]>`
-            SELECT workspace_id, from_number, to_number, direction
-            FROM calls WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId} LIMIT 1
-          `;
-          const callRecord = boundCalls[0];
-          if (callRecord) {
-            const extractedPhone = (entities.phone_number && String(entities.phone_number).trim()) || null;
-            const legPhone = callRecord.direction === "inbound" ? callRecord.from_number : callRecord.to_number;
-            const resolvedPhone = extractedPhone || legPhone || null;
-            let autoCreated = false;
-            if (resolvedPhone) {
-              const upserted = await sql<any[]>`
-                INSERT INTO contacts
-                  (workspace_id, phone_number, name, email, company_name, source, created_at, updated_at)
-                VALUES
-                  (${workspaceId}, ${resolvedPhone}, ${autoName},
-                   ${(entities.email && String(entities.email).trim()) || null},
-                   ${(entities.business_name && String(entities.business_name).trim()) || null},
-                   'inbound_call', NOW(), NOW())
-                ON CONFLICT (workspace_id, phone_number) WHERE phone_number IS NOT NULL
-                DO UPDATE SET
-                  name = CASE WHEN contacts.name IS NULL OR contacts.name = '' THEN EXCLUDED.name ELSE contacts.name END,
-                  email = CASE WHEN contacts.email IS NULL OR contacts.email = '' THEN EXCLUDED.email ELSE contacts.email END,
-                  company_name = CASE WHEN contacts.company_name IS NULL OR contacts.company_name = '' THEN EXCLUDED.company_name ELSE contacts.company_name END,
-                  updated_at = NOW()
-                RETURNING id, (xmax = 0) AS was_inserted
-              `;
-              contactId = upserted[0]?.id ?? null;
-              autoCreated = upserted[0]?.was_inserted === true;
-            } else {
-              const linked = await sql<any[]>`
-                SELECT c.id
-                FROM calls source_call
-                JOIN contacts c ON c.id = source_call.contact_id AND c.workspace_id = source_call.workspace_id
-                WHERE source_call.call_sid = ${callSid} AND source_call.workspace_id = ${workspaceId}
-                LIMIT 1
-              `;
-              if (linked[0]?.id) {
-                contactId = linked[0].id;
-              } else {
-                const inserted = await sql<any[]>`
-                  INSERT INTO contacts
-                    (workspace_id, name, email, company_name, source, created_at, updated_at)
-                  VALUES
-                    (${workspaceId}, ${autoName},
-                     ${(entities.email && String(entities.email).trim()) || null},
-                     ${(entities.business_name && String(entities.business_name).trim()) || null},
-                     'inbound_call', NOW(), NOW())
-                  RETURNING id
-                `;
-                contactId = inserted[0]?.id ?? null;
-                autoCreated = true;
-              }
-            }
-            if (contactId) {
-              await sql`UPDATE calls SET contact_id = ${contactId} WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}`;
-              await sql`UPDATE call_summaries SET contact_id = ${contactId} WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}`;
-              logEvent(callSid, autoCreated ? "CONTACT_AUTO_CREATED_FROM_SUMMARY" : "CONTACT_RECOVERED_FROM_SUMMARY", {
-                contactId,
-                resolvedPhone,
-                autoName,
-                source: extractedPhone ? "extracted_phone" : "leg_phone",
-              });
-            }
-          }
+          logEvent(callSid, "CALLER_MEMORY_NOT_PROMOTED", {
+            workspaceId,
+            reason: promotionReason ? "caller_phone_unavailable" : "no_meaningful_business_obligation",
+            intent: durableSummary.intent,
+            outcome: durableSummary.outcome,
+          });
         }
       }
 

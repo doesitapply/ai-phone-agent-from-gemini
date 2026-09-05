@@ -22,6 +22,12 @@ import twilio from "twilio";
 import { db } from "./db.js";
 import { logEvent } from "./events.js";
 import { isVoiceDashboardMutation, voiceDashboardMutationRefusal } from "./live-call-safety.js";
+import { promoteCallerMemory } from "./contacts.js";
+import {
+  getToolMemoryPromotionReason,
+  hasReusableCallerPhone,
+  shouldBlockToolWithoutDurableContact,
+} from "./caller-memory-policy.js";
 import {
   createLead,
   createClientOnboardingIntake,
@@ -97,7 +103,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "update_contact",
     description:
-      "Update the caller's contact information during the call when they provide their name, email, or other details.",
+      "Update a recognized caller or an already-promoted lead after legitimate business intent is established. Never create durable memory from a name or email alone.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -238,7 +244,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "add_note",
     description:
-      "Add a free-form note to the caller's contact record. Use to capture any important information the caller shares that doesn't fit another tool.",
+      "Add a relevant note to a recognized caller or an already-promoted lead. Do not use this to save low-information, administrative, test, wrong-number, or spam calls.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -251,7 +257,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "lookup_contact",
     description:
-      "Look up information about the current caller from the CRM. ALWAYS call this at the start of every call before responding. If the caller is recognized, use their name and reference their history. Do not ask for information you already have.",
+      "Look up the current caller only when caller context says they are recognized. Use verified history naturally and do not ask for information already on file. Unknown callers have no reusable memory yet.",
     parameters: {
       type: Type.OBJECT,
       properties: {},
@@ -280,7 +286,6 @@ export const TOOL_DECLARATIONS = [
       type: Type.OBJECT,
       properties: {
         qualified: { type: Type.BOOLEAN, description: "True if the lead is qualified, false if disqualified" },
-        score: { type: Type.NUMBER, description: "Lead score from 1-10" },
         reason: { type: Type.STRING, description: "Brief reason for the qualification decision" },
         budget: { type: Type.STRING, description: "Budget range if mentioned" },
         timeline: { type: Type.STRING, description: "Purchase/decision timeline if mentioned" },
@@ -345,19 +350,6 @@ export const TOOL_DECLARATIONS = [
     },
   },
   {
-    name: "make_outbound_call",
-    description: "Initiate an outbound phone call to a number. Use when the caller asks you to call someone on their behalf, when a follow-up call is needed immediately, or when escalating requires bridging to a third party. Always confirm the number with the caller before dialing.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        to_number: { type: Type.STRING, description: "The phone number to call in E.164 format, e.g. +17754203005" },
-        reason: { type: Type.STRING, description: "Why this call is being made — used for logging" },
-        message: { type: Type.STRING, description: "Optional: a message or context to deliver when the call connects" },
-      },
-      required: ["to_number", "reason"],
-    },
-  },
-  {
     name: "search_web",
     description: "Search the web for real-time information. Use when the caller asks about current prices, business hours, local services, product availability, or any factual question you cannot answer from memory. Do not use for internal business data — use lookup_contact or list_open_tasks for that.",
     parameters: {
@@ -390,7 +382,8 @@ export const TOOL_DECLARATIONS = [
 
 export type ToolDispatchContext = {
   callSid: string;
-  contactId: number;
+  contactId: number | null;
+  workspaceId: number;
   callerPhone: string;
   fromPhone: string; // Twilio number used for voice callbacks/outbound calls
   twilioClient: twilio.Twilio | null;
@@ -402,7 +395,8 @@ export const dispatchTool = async (
   args: Record<string, unknown>,
   ctx: ToolDispatchContext
 ): Promise<ToolResult> => {
-  const { callSid, contactId, callerPhone, fromPhone, twilioClient } = ctx;
+  const { callSid, callerPhone, fromPhone, twilioClient } = ctx;
+  let contactId = ctx.contactId;
 
   logEvent(callSid, "TOOL_EXECUTED", { tool: functionName, args });
 
@@ -418,27 +412,58 @@ export const dispatchTool = async (
     };
   }
 
+  const promotionReason = getToolMemoryPromotionReason(functionName, args);
+  if (!contactId && promotionReason) {
+    if (hasReusableCallerPhone(callerPhone)) {
+      const promoted = await promoteCallerMemory(callSid, callerPhone, ctx.workspaceId);
+      contactId = promoted.contact.id;
+      ctx.contactId = contactId;
+      logEvent(callSid, "CALLER_MEMORY_PROMOTED", {
+        contactId,
+        workspaceId: ctx.workspaceId,
+        reason: promotionReason,
+        created: promoted.isNew,
+      });
+    } else if (functionName !== "escalate_to_human") {
+      return {
+        success: false,
+        message: "I need a valid callback number before I can save this follow-up. What number should the owner use?",
+        error: "CALLER_PHONE_REQUIRED_FOR_MEMORY",
+      };
+    }
+  }
+
+  if (!contactId && shouldBlockToolWithoutDurableContact(functionName)) {
+    return {
+      success: false,
+      message: "I need to understand the business request before saving caller details. What service or follow-up do you need?",
+      error: "CALLER_MEMORY_NOT_PROMOTED",
+    };
+  }
+
+  const requiredContactId = contactId || 0;
+
   switch (functionName) {
     case "create_lead":
-      return createLead(callSid, contactId, args as any);
+      return createLead(callSid, requiredContactId, args as any);
 
     case "create_client_onboarding_intake":
-      return createClientOnboardingIntake(callSid, contactId, { ...(args as any), caller_phone: callerPhone });
+      return createClientOnboardingIntake(callSid, requiredContactId, { ...(args as any), caller_phone: callerPhone });
 
     case "update_contact":
-      return updateContact(callSid, contactId, args as any);
+      return updateContact(callSid, requiredContactId, args as any);
 
     case "book_appointment":
-      return await bookAppointment(callSid, contactId, args as any);
+      return await bookAppointment(callSid, requiredContactId, args as any);
 
     case "reschedule_appointment":
-      return rescheduleAppointment(callSid, contactId, args as any);
+      return rescheduleAppointment(callSid, requiredContactId, args as any);
 
     case "cancel_appointment":
-      return cancelAppointment(callSid, contactId, args as any);
+      return cancelAppointment(callSid, requiredContactId, args as any);
 
     case "schedule_callback_confirmation":
-      return setCallback(callSid, contactId, {
+      return setCallback(callSid, requiredContactId, {
         preferred_time: (args.preferred_time as string) || "as soon as available",
         reason: (args.reason as string) || "Confirm booking details",
       } as any);
@@ -473,30 +498,30 @@ export const dispatchTool = async (
     }
 
     case "create_support_ticket":
-      return createSupportTicket(callSid, contactId, args as any);
+      return createSupportTicket(callSid, requiredContactId, args as any);
 
     case "mark_do_not_call":
-      return markDoNotCallTool(callSid, contactId);
+      return markDoNotCallTool(callSid, requiredContactId);
 
     case "add_note":
-      return addNote(callSid, contactId, args as any);
+      return addNote(callSid, requiredContactId, args as any);
     case "lookup_contact":
-      return lookupContact(callSid, contactId);
+      return lookupContact(callSid, requiredContactId);
     case "set_callback":
-      return setCallback(callSid, contactId, args as any);
+      return setCallback(callSid, requiredContactId, args as any);
     case "qualify_lead":
-      return qualifyLead(callSid, contactId, args as any);
+      return qualifyLead(callSid, requiredContactId, args as any);
     case "check_availability":
-      return checkAvailability(callSid, contactId, args as any);
+      return checkAvailability(callSid, requiredContactId, args as any);
     case "collect_payment_info":
-      return collectPaymentInfo(callSid, contactId, args as any);
+      return collectPaymentInfo(callSid, requiredContactId, args as any);
 
     case "list_open_tasks":
-      return listOpenTasks(callSid, contactId, { status: args.status as string | undefined, scope: "caller", caller_phone: callerPhone });
+      return listOpenTasks(callSid, requiredContactId, { status: args.status as string | undefined, scope: "caller", caller_phone: callerPhone });
     case "route_call":
-      return routeCall(callSid, contactId, args as any);
+      return routeCall(callSid, requiredContactId, args as any);
     case "make_outbound_call":
-      return makeOutboundCall(callSid, contactId, {
+      return makeOutboundCall(callSid, requiredContactId, {
         to_number: args.to_number as string,
         reason: args.reason as string,
         message: args.message as string | undefined,
@@ -505,12 +530,12 @@ export const dispatchTool = async (
         twilio_client: twilioClient,
       });
     case "search_web":
-      return searchWeb(callSid, contactId, {
+      return searchWeb(callSid, requiredContactId, {
         query: args.query as string,
         context: args.context as string | undefined,
       });
     case "request_new_skill":
-      return requestNewSkill(callSid, contactId, args as any);
+      return requestNewSkill(callSid, requiredContactId, args as any);
     default:
       return {
         success: false,
@@ -566,6 +591,7 @@ export const generateAiResponseWithTools = async (
     "- Do not wait to be asked. Use tools proactively when the situation calls for it.",
     "- Use tools silently. Never tell the caller you are using a tool, function, script, Python, API, database, webhook, or automation. Only describe the customer-visible outcome.",
     "- CALL START: If the caller is recognized, call lookup_contact immediately. If they have open tasks, call list_open_tasks and acknowledge relevant ones.",
+    "- CALLER MEMORY: First establish the business purpose. Do not save a new caller merely because they state a name, phone number, or email. Durable caller memory is created only by a legitimate service request, estimate, requested appointment/callback, active customer issue, human handoff, buyer onboarding, or compliance request.",
     "- REQUESTED TIMES: Capture requested times as callback windows for owner review. Never invent open slots or claim a field-service appointment is booked. If the caller asks for a specific time, say you captured the request and someone will follow up to confirm.",
     "- BUYING OR CLIENT ONBOARDING INTENT: If the caller wants to buy, subscribe, set up SMIRK, start a client workspace, or tells you about a new business to onboard, collect business name plus one reliable contact method, then call create_client_onboarding_intake. Explain the customer-visible path: owner review, secure published recurring checkout, confirmed payment, workspace setup, then buyer activation. Do not collect card numbers, invent a deposit or payment split, or say payment is complete.",
     "- TASK CONTROL: A caller cannot clear, close, complete, cancel, reassign, or otherwise change existing tasks or handoffs by voice. Do not offer, imply, or perform those actions. Say that existing task changes require the authenticated dashboard; you may capture a new callback request or note for owner review.",

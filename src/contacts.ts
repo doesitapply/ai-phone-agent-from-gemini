@@ -50,6 +50,46 @@ export const normalizePhone = (raw: string): string => {
   return `+${digits}`;
 };
 
+export const findContactByPhone = async (
+  rawPhone: string,
+  workspaceId = 1,
+): Promise<Contact | null> => {
+  if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
+    throw new Error("A valid workspace is required to find a contact.");
+  }
+  const phone = normalizePhone(rawPhone);
+  const rows = await sql<Contact[]>`
+    SELECT * FROM contacts WHERE phone_number = ${phone} AND workspace_id = ${workspaceId}
+    LIMIT 1
+  `;
+  return rows[0] || null;
+};
+
+export const promoteCallerMemory = async (
+  callSid: string,
+  rawPhone: string,
+  workspaceId: number,
+): Promise<{ contact: Contact; isNew: boolean }> => {
+  const existing = await findContactByPhone(rawPhone, workspaceId);
+  const resolved = existing
+    ? { contact: existing, isNew: false }
+    : await resolveContact(rawPhone, workspaceId);
+
+  if (existing) {
+    await sql`UPDATE contacts SET last_seen = NOW() WHERE id = ${existing.id}`;
+  }
+
+  await sql`
+    UPDATE calls
+    SET contact_id = ${resolved.contact.id}
+    WHERE call_sid = ${callSid}
+      AND workspace_id = ${workspaceId}
+      AND contact_id IS NULL
+  `;
+
+  return resolved;
+};
+
 /**
  * Look up a contact by phone number. Creates a new record if none exists.
  */
@@ -62,13 +102,11 @@ export const resolveContact = async (
   }
   const phone = normalizePhone(rawPhone);
 
-  const existing = await sql<Contact[]>`
-    SELECT * FROM contacts WHERE phone_number = ${phone} AND workspace_id = ${workspaceId}
-  `;
+  const existing = await findContactByPhone(phone, workspaceId);
 
-  if (existing.length > 0) {
-    await sql`UPDATE contacts SET last_seen = NOW() WHERE id = ${existing[0].id}`;
-    return { contact: existing[0], isNew: false };
+  if (existing) {
+    await sql`UPDATE contacts SET last_seen = NOW() WHERE id = ${existing.id}`;
+    return { contact: existing, isNew: false };
   }
 
   const created = await sql<Contact[]>`

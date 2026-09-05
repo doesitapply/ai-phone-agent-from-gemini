@@ -458,7 +458,7 @@ export const bookAppointment = async (
 
     const result: ToolResult = {
       success: true,
-      message: `I've booked your ${input.service_type} appointment for ${input.scheduled_at}. It's on the calendar now.`,
+      message: `I've captured your requested ${input.service_type} time for ${input.scheduled_at} and placed it on the calendar for owner confirmation.`,
       data: { appointmentId: apptId, scheduled_at: input.scheduled_at, calendarEventId, calendarEventUrl },
     };
     await logToolExecution(callSid, contactId, "book_appointment", input, result, Date.now() - start);

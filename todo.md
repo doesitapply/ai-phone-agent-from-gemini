@@ -87,3 +87,13 @@
 - [ ] Reconcile authorization-contract checks with the hardened no-fixture architecture, explicitly classify approved workspace-safe Knowledge Pack actions, and preserve deny-by-default operator boundaries.
 - [ ] Push only the verified release set to the configured `main` deployment path and monitor Railway until it reports a healthy active deployment.
 - [ ] Run the controlled production proof call and record the call, summary, alert, one callback/handoff outcome, and dashboard receipt before broad marketing or checkout exposure.
+
+## Selective Caller Memory and Qualification
+
+- [x] Audit every path that creates or enriches a durable contact, caller memory, task, handoff, or post-call intelligence record.
+- [x] Separate auditable call evidence from reusable caller memory so low-information, spam, wrong-number, hangup, administrative, and test calls do not pollute future conversations.
+- [x] Define deterministic caller-memory promotion reasons for qualified service intent, estimates, appointments, callback commitments, active customer issues, and explicit owner save actions.
+- [x] Implement universal qualification essentials plus workspace/trade-specific question modules without diagnosing work, promising availability, quoting unapproved prices, or making warranty commitments.
+- [ ] Add workspace controls and audit evidence for memory promotion, owner override, qualification completion, and escalation.
+- [x] Add regression coverage for meaningful-lead promotion, nonmeaningful-call suppression, repeated-caller context, qualification stop rules, and authorized commitment boundaries.
+- [x] Prevent inbound callers from using the live voice agent to place third-party outbound calls; retain owner-chat confirmation and screened human transfer as the only authorized dial paths.

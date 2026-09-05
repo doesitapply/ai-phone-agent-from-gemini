@@ -86,7 +86,7 @@ export function registerTwilioOpsRoutes(app: Express, deps: TwilioOpsRouteDeps):
 
       const systemPrompt = agentValue?.system_prompt || "You are a helpful AI assistant on a phone call.";
       const callerContext = buildCallerContext(contact, isNew);
-      const dispatchCtx = { callSid: testCallSid, contactId: contact.id, callerPhone: testFrom, fromPhone: testTo, twilioClient: null, appUrl: getAppUrl() };
+      const dispatchCtx = { callSid: testCallSid, contactId: contact.id, workspaceId: 1, callerPhone: testFrom, fromPhone: testTo, twilioClient: null, appUrl: getAppUrl() };
 
       const { text: aiText, latencyMs, source } = await generateAiResponse(
         testCallSid, fakeSpeech, "test", callerContext, systemPrompt,

@@ -4,12 +4,13 @@ export const VOICE_DASHBOARD_MUTATION_TOOLS = new Set([
   "update_task",
   "cancel_task",
   "acknowledge_handoff",
+  "make_outbound_call",
 ]);
 
 export const isVoiceDashboardMutation = (toolName: string): boolean => VOICE_DASHBOARD_MUTATION_TOOLS.has(toolName);
 
 export const voiceDashboardMutationRefusal = (): string =>
-  "For safety, task changes must be completed in the authenticated dashboard. I can capture a callback request or create a new follow-up task for the owner.";
+  "For safety, task changes and third-party outbound calls require the authenticated dashboard. I can capture a callback request, create a new follow-up task, or request a screened human transfer.";
 
 export const hasCallableVoiceNumber = (value: string | null | undefined): boolean => {
   const digits = String(value || "").replace(/\D/g, "");

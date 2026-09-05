@@ -236,7 +236,8 @@ const requireProofCallSchemaReady = (_req: Request, res: Response, next: NextFun
 
 // ── Import modules (after env is loaded) ─────────────────────────────────────
 import { sql, initSchema, DB_ENABLED } from "./src/db.js";
-import { resolveContact, buildCallerContext, buildOutboundContext } from "./src/contacts.js";
+import { resolveContact, findContactByPhone, buildCallerContext, buildOutboundContext } from "./src/contacts.js";
+import { buildQualificationInstruction } from "./src/caller-memory-policy.js";
 import { runPostCallIntelligence } from "./src/intelligence.js";
 import { logEvent } from "./src/events.js";
 import { generateAiResponseWithTools } from "./src/function-calling.js";
@@ -2234,16 +2235,17 @@ const reloadOpenClawConfig = async () => {
     gatewayBridge = new OpenClawGatewayBridge(bridgeConfig, {
       onCallStart: async (event: VoiceCallEvent) => {
         const agent = await getActiveAgent();
-        const { contact, isNew } = await resolveContact(event.from || "unknown");
-        logEvent(event.callId, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
-          contactId: contact.id, phone: event.from, source: "openclaw-bridge",
-        });
-        
         const bridgeWsId = await getWorkspaceIdByToNumber(event.to || "").catch(() => 1) || 1;
+        const contact = await findContactByPhone(event.from || "unknown", bridgeWsId);
+        const isNew = !contact;
+        logEvent(event.callId, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
+          contactId: contact?.id || null, phone: event.from, source: "openclaw-bridge",
+        });
+
         await sql`
           INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id, workspace_id)
-          VALUES (${event.callId}, 'inbound', ${event.to || ""}, ${event.from || ""}, 'in-progress', ${agent?.name || "Default Assistant"}, ${contact.id}, ${bridgeWsId})
-          ON CONFLICT (call_sid) DO UPDATE SET status = 'in-progress', contact_id = ${contact.id}, workspace_id = ${bridgeWsId}
+          VALUES (${event.callId}, 'inbound', ${event.to || ""}, ${event.from || ""}, 'in-progress', ${agent?.name || "Default Assistant"}, ${contact?.id || null}, ${bridgeWsId})
+          ON CONFLICT (call_sid) DO UPDATE SET status = 'in-progress', contact_id = ${contact?.id || null}, workspace_id = ${bridgeWsId}
         `;
         
         logEvent(event.callId, "CALL_STARTED", { source: "openclaw-voice-call-plugin", from: event.from });
@@ -2269,7 +2271,8 @@ const reloadOpenClawConfig = async () => {
         
         const dispatchCtx = {
           callSid: event.callId,
-          contactId: contactId || 0,
+          contactId,
+          workspaceId: (callRows[0] as any)?.workspace_id || 1,
           callerPhone: event.from || "",
           fromPhone: event.to || "",
           twilioClient: getTwilioClient(),
@@ -2861,8 +2864,13 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   const callerPhone = Direction === "outbound-api" ? To : From;
 
-  // Resolve caller identity
-  const { contact, isNew } = await resolveContact(callerPhone, routedWsId);
+  // Outbound calls target an owner-approved contact. Unknown inbound calls remain
+  // auditable call records but do not become reusable caller memory at pickup.
+  const outboundContact = Direction === "outbound-api"
+    ? await resolveContact(callerPhone, routedWsId)
+    : null;
+  const contact = outboundContact?.contact || await findContactByPhone(callerPhone, routedWsId);
+  const isNew = !contact;
   const inboundDemoInvite = Direction === "outbound-api"
     ? null
     : await inboundDemoStore.findActiveForCaller(routedWsId, String(callerPhone || "")).catch(() => null);
@@ -2874,13 +2882,13 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     });
   }
   logEvent(CallSid, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
-    contactId: contact.id,
+    contactId: contact?.id || null,
     phone: callerPhone,
     hasHistory: !isNew,
   });
 
   // Check do-not-call
-  if (contact.do_not_call) {
+  if (contact?.do_not_call) {
     log("info", "Do-not-call number blocked", { callSid: CallSid, phone: callerPhone });
     const twiml = new twilio.twiml.VoiceResponse();
     twiml.say("We're sorry, this number is on our do-not-call list. Goodbye.");
@@ -2891,11 +2899,11 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   await sql`
     INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id, workspace_id)
-    VALUES (${CallSid}, ${Direction === "outbound-api" ? "outbound" : "inbound"}, ${To}, ${From}, 'in-progress', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id}, ${routedWsId})
+    VALUES (${CallSid}, ${Direction === "outbound-api" ? "outbound" : "inbound"}, ${To}, ${From}, 'in-progress', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact?.id || null}, ${routedWsId})
     ON CONFLICT (call_sid) DO NOTHING
   `;
 
-  await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id}, openclaw_agent_id = ${openclawAgentIdForCall} WHERE call_sid = ${CallSid}`;
+  await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact?.id || null}, openclaw_agent_id = ${openclawAgentIdForCall} WHERE call_sid = ${CallSid}`;
 
   // ── Call Classification: determine personal vs professional vs spam ─────────
   classifyCallAtStart(CallSid, callerPhone, contact as any, isNew, routedWsId)
@@ -2926,9 +2934,9 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     const storedCtx = ctxRows[0]?.text || "";
     const reasonMatch = storedCtx.match(/\[CALL REASON\]\s*(.+)/)?.[1]?.trim();
     const notesMatch = storedCtx.match(/\[OPERATOR NOTES\]\s*(.+)/)?.[1]?.trim();
-    callerContext = await buildOutboundContext(contact, CallSid, reasonMatch, notesMatch);
+    callerContext = await buildOutboundContext(contact!, CallSid, reasonMatch, notesMatch);
   } else {
-    callerContext = buildCallerContext(contact, isNew);
+    callerContext = contact ? buildCallerContext(contact, false) : "";
   }
   if (inboundDemoInvite) {
     callerContext = `${callerContext}\n\n${buildInboundDemoSystemContext(inboundDemoInvite)}`;
@@ -2968,7 +2976,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   }, CALL_TIMEOUT_MS);
   activeCallTimers.set(CallSid, killTimer);
   const agentName = process.env.AGENT_NAME || agent?.name || "SMIRK";
-  log("info", "Call connected", { callSid: CallSid, direction: Direction, contactId: contact.id, isNew, agentName });
+  log("info", "Call connected", { callSid: CallSid, direction: Direction, contactId: contact?.id || null, isNew, agentName });
 
   const twiml = new twilio.twiml.VoiceResponse();
   const appUrl = getAppUrl();
@@ -3106,7 +3114,8 @@ async function generateAndStoreTwiml(
     const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
     const fromPhone = env.TWILIO_PHONE_NUMBER || "";
     const twilioClient = (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN) ? getTwilioClient() : null;
-    const dispatchCtx = { callSid, contactId: contactId || 0, callerPhone: callerPhoneNumber, fromPhone, twilioClient, appUrl: getAppUrl() };
+    const callWorkspaceId = (callerPhone?.workspace_id as number) || 1;
+    const dispatchCtx = { callSid, contactId, workspaceId: callWorkspaceId, callerPhone: callerPhoneNumber, fromPhone, twilioClient, appUrl: getAppUrl() };
 
     const nowStr = new Date().toLocaleString("en-US", {
       timeZone: env.BUSINESS_TIMEZONE || "America/Los_Angeles",
@@ -3118,7 +3127,6 @@ async function generateAndStoreTwiml(
     // If the call's workspace has its own active agent with a system_prompt set,
     // use that instead of the global AGENT_PERSONA env var (SOUL.md).
     // This allows per-workspace personas without changing Railway env vars.
-    const callWorkspaceId = (callerPhone?.workspace_id as number) || 1;
     let wsProfile: Workspace | null = null;
     try { wsProfile = await getCachedWorkspaceById(callWorkspaceId); } catch { /* non-fatal */ }
     let workspaceAgentPrompt: string | null = null;
@@ -3171,7 +3179,8 @@ async function generateAndStoreTwiml(
       ? `=== WHO YOU ARE & WHO YOU WORK FOR ===\n${identityLines.join("\n")}\n\n`
       : "";
     const workspaceKnowledgeBlock = await buildWorkspaceKnowledgeContext(callWorkspaceId).catch(() => "");
-    const promptWithIdentity = `${identityBlock}${workspaceKnowledgeBlock ? `${workspaceKnowledgeBlock}\n\n` : ""}${basePrompt}`;
+    const qualificationBlock = buildQualificationInstruction(`${wsProfile?.name || ""} ${bizName} ${bizTagline} ${workspacePersona}`);
+    const promptWithIdentity = `${identityBlock}${workspaceKnowledgeBlock ? `${workspaceKnowledgeBlock}\n\n` : ""}${qualificationBlock}\n\n${basePrompt}`;
 
     // ── Boss Mode: use context SNAPSHOT frozen at call start (prevents mid-call instability) ──
     // The snapshot was captured when the call was answered and won't change during the call.
