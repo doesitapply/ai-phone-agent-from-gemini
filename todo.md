@@ -1,12 +1,12 @@
 # SMIRK Missed-Call Recovery — Active Delivery TODO
 
-- [ ] Repair the GitHub Actions monthly-reset secret/check failure that causes Railway source deployments to skip. The fix is committed locally, but GitHub rejected the push because the active integration lacks `workflows` permission.
-- [ ] Merge and deploy the pending actionable Handoffs, Velvet portal, and verified owner-operator access improvements.
-- [ ] Design a verified-owner-only chat tool policy with deny-by-default permissions and confirmation requirements.
-- [ ] Implement approved SMIRK chat actions, confirmation workflow, and immutable audit logging.
-- [ ] Validate owner-only access and action approval boundaries before production release.
+- [ ] Configure the GitHub Actions monthly-reset credential and prove an HTTP 200 reset. The September 1 scheduled run concluded green only after skipping the reset for a missing credential; this operational job does not block Railway source deployments. The issue-reporting path is fixed in `f794765f`, while credential and HTTP proof remain open.
+- [x] Merge and deploy the actionable Handoffs, Velvet portal, and verified owner-operator access improvements in `96b6a9a6`.
+- [x] Design a verified-owner-only chat tool policy with deny-by-default permissions and confirmation requirements.
+- [ ] Make approved SMIRK chat actions and confirmations fail closed on durable audit persistence before describing action logs as immutable.
+- [x] Validate owner-only access and action approval boundaries for the deployed release with focused authorization regressions.
 - [x] Diagnose why the verified workspace owner is denied operator access in chat, then restore owner call authority without granting phone-call power to ordinary members or inbound callers.
-- [x] Require a clear owner confirmation and immutable audit receipt before any chat-initiated outbound call is placed.
+- [x] Require a clear owner confirmation before any chat-initiated outbound call is placed and attempt a redacted post-action audit record; durable audit persistence remains open above.
 
 ## Mobile Revenue Operator Refocus
 
@@ -30,7 +30,7 @@
 - [x] Inventory every public, onboarding, and signed-in SMIRK surface and identify prototype-like visual debt, redundant navigation, and nonessential controls.
 - [x] Establish a unified visual system that separates credible public marketing from the operational owner desk while retaining the verified Starter product scope.
 - [x] Rebuild public landing, pricing, comparison, industry, policy, and setup surfaces around clear missed-call-recovery value and only verified claims; approved policy bodies remain byte-stable by design.
-- [x] Rebuild the signed-in owner desk into a mobile-first Calls, Tasks, Alerts, and Settings operating model without breaking existing call, handoff, and proof functionality.
+- [x] Rebuild the signed-in owner desk into a mobile-first Calls, Tasks, Alerts, and tenant-scoped CRM operating model without breaking existing call, handoff, and proof functionality.
 - [x] Validate desktop and mobile visual hierarchy, keyboard/accessibility basics, API behavior, and no-regression launch readiness before any production release.
 
 ## Commercial Packaging and Launch Integrity Audit
@@ -69,9 +69,9 @@
 
 ## Trade-Floor Interface Implementation
 
-- [ ] Implement the trade-floor visual system in the live public and owner-facing UI while preserving existing verified product behavior.
-- [x] Restore a clear customer-owner Settings entry point and simplify the settings surface into plain-language sections without exposing internal-only administrative controls.
-- [ ] Validate priority controls, settings access, responsive behavior, and no-fabrication requirements before release.
+- [x] Implement the trade-floor visual system in the live public and owner-facing UI while preserving existing verified product behavior.
+- [x] Remove the blank Starter Settings destination, expose tenant-scoped CRM and business context in the owner desk, and keep provider, agent, integration, and system settings operator-only.
+- [x] Validate priority controls, tenant CRM access, operator Settings isolation, responsive behavior, and no-fabrication requirements for the deployed `96b6a9a6` interface; the closeout hotfixes do not change runtime UI code.
 
 ## Human-Centered Recovery Visuals
 
@@ -81,11 +81,11 @@
 
 ## Unified Contractor Workfloor Release
 
-- [ ] Consolidate the contractor-at-work public story and trade-floor owner interface into one clear visual system across the usable customer journey.
-- [ ] Resurface valuable existing customer capabilities behind plain-language owner controls, preserving restricted administrator features and consent-sensitive outreach functions behind appropriate access boundaries.
+- [x] Consolidate the contractor-at-work public story and trade-floor owner interface into one clear visual system across the usable customer journey.
+- [x] Resurface valuable existing customer capabilities behind plain-language owner controls, preserving restricted administrator features and consent-sensitive outreach functions behind appropriate access boundaries.
 - [ ] Run release-readiness verification for builds, authorized API behavior, checkout readiness, owner chat authority, dashboard live-data state, and proof-call prerequisites.
-- [ ] Reconcile authorization-contract checks with the hardened no-fixture architecture, explicitly classify approved workspace-safe Knowledge Pack actions, and preserve deny-by-default operator boundaries.
-- [ ] Push only the verified release set to the configured `main` deployment path and monitor Railway until it reports a healthy active deployment.
+- [x] Reconcile authorization-contract checks with the hardened no-fixture architecture, explicitly classify approved workspace-safe Knowledge Pack actions, and preserve deny-by-default operator boundaries.
+- [x] Push the verified unified release through the reviewed `main` path and monitor Railway to the exact healthy `96b6a9a6` fingerprint; later closeout patches must repeat the same parity gate.
 - [ ] Run the controlled production proof call and record the call, summary, alert, one callback/handoff outcome, and dashboard receipt before broad marketing or checkout exposure.
 
 ## Selective Caller Memory and Qualification
