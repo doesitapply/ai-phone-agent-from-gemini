@@ -4,6 +4,7 @@ import fs from 'node:fs';
 const route = fs.readFileSync('src/routes/twilio-status-routes.ts', 'utf8');
 const saas = fs.readFileSync('src/saas.ts', 'utf8');
 const db = fs.readFileSync('src/db.ts', 'utf8');
+const server = fs.readFileSync('server.ts', 'utf8');
 const failures = [];
 const expect = (label, condition) => { if (!condition) failures.push(label); };
 
@@ -23,6 +24,31 @@ expect('duplicate callbacks become no-ops', saas.includes('if (result?.already_r
 expect('missing call or tenant stays retryable', saas.includes('if (!result?.call_found || !result.usage_claimed) throw new Error'));
 expect('partial counter outcomes abort the SQL statement', saas.includes('1 / CASE') && saas.includes('NOT EXISTS(SELECT 1 FROM usage_upsert)') && saas.includes('NOT EXISTS(SELECT 1 FROM workspace_update)'));
 expect('legacy two-statement increment is gone', !saas.includes('export async function incrementWorkspaceUsage'));
+
+const callbackJob = server.slice(
+  server.indexOf('const executeScheduledCallbacks'),
+  server.indexOf('// ── Appointment Confirmation Job'),
+);
+const appointmentJob = server.slice(
+  server.indexOf('const executeAppointmentConfirmations'),
+  server.indexOf('// ── Sequence Engine'),
+);
+const sequenceJob = server.slice(
+  server.indexOf('// ── Sequence Engine'),
+  server.indexOf('registerTwimlRoutes(app'),
+);
+expect('provider-backed background jobs fail closed before constructing an unconfigured Twilio client',
+  server.includes('const hasParentTwilioConfiguration = () => Boolean(')
+  && callbackJob.indexOf('if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;') > -1
+  && callbackJob.indexOf('if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;') < callbackJob.indexOf('getTwilioClient()')
+  && appointmentJob.indexOf('if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;') > -1
+  && appointmentJob.indexOf('if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;') < appointmentJob.indexOf('getTwilioClient()')
+  && sequenceJob.indexOf('if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;') > -1
+  && sequenceJob.indexOf('if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;') < sequenceJob.indexOf('getTwilioClient()'));
+expect('configured background provider failures remain observable',
+  callbackJob.includes('Callback executor interval error')
+  && appointmentJob.includes('Appointment confirmation interval error')
+  && sequenceJob.includes('Sequence engine interval error'));
 
 if (failures.length) {
   console.error('FAIL completed-call usage accounting contract:');

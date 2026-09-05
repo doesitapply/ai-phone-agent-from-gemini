@@ -1023,6 +1023,12 @@ const getAi = () => {
   return new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
 };
 
+const hasParentTwilioConfiguration = () => Boolean(
+  env.TWILIO_ACCOUNT_SID
+  && env.TWILIO_AUTH_TOKEN
+  && env.TWILIO_PHONE_NUMBER,
+);
+
 const getTwilioClient = () => {
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) throw new Error("Twilio credentials not configured.");
   return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
@@ -1930,9 +1936,8 @@ setInterval(() => {
 // Runs every 60s. Finds open callback tasks whose due_at has passed and fires
 // an outbound Twilio call. Marks the task as in_progress to prevent double-fire.
 const executeScheduledCallbacks = async (): Promise<void> => {
-  if (!DB_ENABLED) return;
+  if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;
   const twilioClient = getTwilioClient();
-  if (!twilioClient || !env.TWILIO_PHONE_NUMBER) return;
   try {
     const dueTasks = await sql<{
       id: number;
@@ -2014,8 +2019,9 @@ setInterval(() => {
 // that haven't been confirmation-called yet. Places an outbound call using
 // the ECHO agent to confirm the appointment.
 const executeAppointmentConfirmations = async () => {
-  if (!DB_ENABLED || !getTwilioClient() || !env.TWILIO_PHONE_NUMBER) return;
+  if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;
   try {
+    const twilioClient = getTwilioClient();
     const now = new Date();
     const windowStart = new Date(now.getTime() + 20 * 60 * 60 * 1000); // 20h from now
     const windowEnd   = new Date(now.getTime() + 26 * 60 * 60 * 1000); // 26h from now
@@ -2045,7 +2051,7 @@ const executeAppointmentConfirmations = async () => {
           hour: "numeric", minute: "2-digit", timeZoneName: "short"
         });
         const twimlUrl = `${getAppUrl()}/api/twiml/appointment-confirm?apptId=${appt.id}&service=${encodeURIComponent(appt.service_type)}&time=${encodeURIComponent(apptTime)}`;
-        const call = await getTwilioClient()!.calls.create({
+        const call = await twilioClient.calls.create({
           to: phone,
           from: env.TWILIO_PHONE_NUMBER!,
           url: twimlUrl,
@@ -2073,13 +2079,14 @@ setInterval(() => {
 
 // ── Sequence Engine: execute due follow-up steps every 60 seconds ─────────────
 setInterval(() => {
-  if (!DB_ENABLED) return;
-  const twilioClient = getTwilioClient();
+  if (!DB_ENABLED || !hasParentTwilioConfiguration()) return;
   const fromNumber = env.TWILIO_PHONE_NUMBER;
-  if (!twilioClient || !fromNumber) return;
-  executeDueSequenceSteps(twilioClient, fromNumber, getAppUrl()).catch((err: any) => {
-    log("warn", "Sequence engine interval error", { error: err.message });
-  });
+  if (!fromNumber) return;
+  Promise.resolve()
+    .then(() => executeDueSequenceSteps(getTwilioClient(), fromNumber, getAppUrl()))
+    .catch((err: any) => {
+      log("warn", "Sequence engine interval error", { error: err.message });
+    });
 }, 60_000); // every 60 seconds
 
 
