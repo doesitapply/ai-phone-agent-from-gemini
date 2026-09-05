@@ -15,7 +15,7 @@ Velvet discovers and researches a business
   -> reliable outcomes return to Velvet to improve future selection
 ```
 
-This is the intended **Karpathy loop**: evidence -> policy -> guarded action -> recorded outcome -> reviewed label -> improved policy. It is not an autonomous “score then spam” system, and automatic outcome feedback or full source-to-revenue attribution is not yet implemented.
+This is the intended **Karpathy loop**: evidence -> policy -> guarded action -> recorded outcome -> reviewed label -> improved policy. It is not an autonomous “score then spam” system. The tenant-safe acquisition evidence root and a scoped legacy-handoff outcome callback are implemented and contract-tested locally; live receiver configuration, acquisition-linked feedback, and full source-to-revenue proof remain separate gates.
 
 The narrow product is simple:
 
@@ -32,8 +32,9 @@ Source of truth is always the commands in this section. The snapshot below recor
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Velvet inbound handoff | Proven separately | The protected Velvet sender-side test passed `201 RECEIVED` followed by `200 DUPLICATE`; no real prospect was touched. SMIRK’s receiver validates its dedicated inbound bearer and is idempotent. |
-| Velvet source-to-revenue attribution | Not yet implemented | The operator portal explicitly reports `sourceAttributionAvailable: false`; current inbound receipts retain an external ID/payload hash, not a complete immutable acquisition root. |
-| Velvet outcome feedback | Planned | The credential boundary is defined, but the AI Phone Agent source does not yet implement automatic, durable outcome posting back to Velvet. |
+| Velvet acquisition evidence | Implemented locally; live parity must be checked | The protected evidence inbox creates an immutable tenant-scoped acquisition root, append-only receipts/reviews, and read-only lifecycle views without creating contact work. |
+| Velvet source-to-revenue attribution | Incomplete by design | Downstream tables can carry tenant-matched acquisition links, but their writers do not yet propagate the ID through every touch, checkout, activation, payment, and retention record. The portal therefore still reports `sourceAttributionAvailable: false`. |
+| Velvet outcome feedback | Implemented for linked legacy handoffs; live delivery unproven | The post-call pipeline has an idempotent, separately keyed callback with a restricted outcome vocabulary. It remains disabled without exact runtime configuration and is not yet durable acquisition feedback. |
 | Live deploy | Must be checked | `npm run -s check:live-is-current` proves whether production is running the current commit. |
 | Final-mile audit | Must be checked | `npm run -s check:smirk-1000-final-mile` separates local `1000/1000` evidence from production readiness. |
 | First-customer gate | Must be checked | `npm run -s check:first-customer-10of10` is the launch-readiness bundle. It requires a clean worktree and live parity. |
@@ -107,7 +108,7 @@ SMIRK helps answer five questions:
 4. Who needs to call them back?
 5. Did we handle it?
 
-Starter/Basic users should see the basic dashboard: Calls, Contacts, and Tasks.
+Starter/Basic users should see the focused owner desk: Calls, Tasks, Alerts, and Settings.
 
 Pro/Agency users get the broader suite: dashboard, review, calls, contacts, CRM, appointments, handoffs, recovery, tasks, analytics, and other customer tools.
 
@@ -224,7 +225,7 @@ Bottom line: the core routes and data model do not need a rewrite to sell the mi
 - Not an SMS product.
 - Not a local-only Ollama app.
 - Not a finished autonomous outbound lead-audit machine.
-- Not yet a fully attributed, self-improving Velvet-to-revenue engine; the immutable acquisition root, durable approval chain, payment/retention linkage, and automatic outcome callback still need implementation.
+- Not yet a fully attributed, self-improving Velvet-to-revenue engine; the acquisition root exists, but reviewed routing transitions, universal downstream propagation, payment/retention linkage, and durable acquisition feedback still need implementation and real-loop proof.
 - Not legal advice or a substitute for compliance counsel.
 
 ## Plan And Dashboard Boundaries
@@ -233,7 +234,7 @@ The plan split is part of the product strategy.
 
 | Plan / role | Intended experience |
 | --- | --- |
-| Starter / Basic workspace | Simple dashboard: Calls, Contacts, Tasks. |
+| Starter / Basic workspace | Focused owner desk: Calls, Tasks, Alerts, Settings. |
 | Pro / Agency workspace | Full customer suite. |
 | Operator/admin | Full SMIRK OS machine room. |
 
