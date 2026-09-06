@@ -19,6 +19,7 @@ export type VelvetOutcomeConfig = {
 
 export type DeliverVelvetOutcomeInput = {
   externalId: string;
+  leadId?: number | null;
   callId: string;
   outcome: VelvetOutcome;
   summary: string;
@@ -53,9 +54,7 @@ export function mapSmirkOutcomeToVelvet(smirkOutcome: string | null | undefined)
 }
 
 export function parseVelvetLeadId(externalId: string): number | null {
-  const match = /^velvet-(\d+)-[A-Za-z0-9:_-]+$/.exec(String(externalId || ""));
-  const leadId = Number(match?.[1]);
-  return Number.isSafeInteger(leadId) && leadId > 0 ? leadId : null;
+  return resolveVelvetLeadId({ externalId });
 }
 
 export function readVelvetOutcomeConfig(
@@ -113,7 +112,7 @@ export async function deliverVelvetOutcome(
     return { delivered: false, reason: `Velvet outcome callback not configured: ${config.missing.join(", ")}` };
   }
 
-  const leadId = parseVelvetLeadId(input.externalId);
+  const leadId = resolveVelvetLeadId(input);
   if (!leadId) return { delivered: false, reason: "Handoff externalId does not contain a valid Velvet lead ID" };
   const callId = String(input.callId || "").trim();
   if (!/^[A-Za-z0-9:_-]{8,160}$/.test(callId)) {
@@ -144,3 +143,4 @@ export async function deliverVelvetOutcome(
 
   return { delivered: true };
 }
+import { resolveVelvetLeadId } from "./velvet-handoff.js";

@@ -156,12 +156,12 @@
 
 ## Newly Surfaced P1 Release Blockers
 
-- [ ] Reconcile the current local frontend, owner-session, auth, and readiness changes onto GitHub `main`, which is 33 commits ahead of local `5680193`, without discarding newer acquisition, release-gate, mobile, callback, or public-route fixes.
-- [ ] Re-run the current-main build and release-contract suite after reconciliation before treating any local pass as release evidence.
-- [ ] Reproduce the checkout-readiness gap from merged PR #13 and prove whether Starter checkout can remain enabled when managed Twilio provisioning credentials or the workspace encryption key are absent.
-- [ ] Make managed-Twilio provisioning credentials and the workspace encryption key checkout-blocking prerequisites for the dedicated recovery-number offer; keep optional premium TTS diagnostics non-blocking only if that matches the actual fulfillment boundary.
-- [ ] Add deterministic readiness and checkout tests proving a buyer cannot be charged when the system cannot provision the advertised dedicated recovery number.
-- [ ] Reproduce the Velvet outcome-callback identifier gap from merged PR #12 for accepted external IDs including `velvet-lead-00000001`.
-- [ ] Replace identifier archaeology with an explicit persisted Velvet lead identifier where possible, or fail intake closed when the required identifier cannot be resolved; do not silently skip the promised outcome callback.
-- [ ] Add deterministic intake-to-outcome callback tests covering both the legacy numeric format and the repository's accepted `velvet-lead-*` example.
+- [x] Reconcile the current local frontend, owner-session, auth, and readiness changes onto GitHub `main`, which was 33 commits ahead of local `5680193`, without discarding newer acquisition, release-gate, mobile, callback, or public-route fixes.
+- [x] Re-run the current-main build and focused release-contract suite after reconciliation before treating any local pass as release evidence.
+- [x] Reproduce the checkout-readiness gap from merged PR #13 and prove whether Starter checkout can remain enabled when managed Twilio provisioning credentials or the workspace encryption key are absent.
+- [x] Make managed-Twilio provisioning credentials and the workspace encryption key checkout-blocking prerequisites for the dedicated recovery-number offer; keep optional premium TTS diagnostics non-blocking only if that matches the actual fulfillment boundary.
+- [x] Add deterministic readiness and checkout tests proving a buyer cannot be charged when the system cannot provision the advertised dedicated recovery number.
+- [x] Reproduce the Velvet outcome-callback identifier gap from merged PR #12 for accepted external IDs including `velvet-lead-00000001`.
+- [x] Replace identifier archaeology with an explicit persisted Velvet lead identifier where possible, or fail intake closed when the required identifier cannot be resolved; do not silently skip the promised outcome callback.
+- [x] Add deterministic intake-to-outcome callback tests covering both the legacy numeric format and the repository's accepted `velvet-lead-*` example.
 - [ ] Prepare a replacement delivery for `gawfer@icloud.com` using a hosted share link or compressed bundle rather than the rejected six-image attachment set, and request confirmation immediately before sending.

@@ -470,7 +470,7 @@ paths:
       tags:
         - "auth"
       summary: "GET /api/auth/google/config"
-      x-source: "src/routes/auth-routes.ts:42"
+      x-source: "src/routes/auth-routes.ts:84"
       x-express-path: "/api/auth/google/config"
       security: []
       responses:
@@ -488,9 +488,47 @@ paths:
       tags:
         - "auth"
       summary: "POST /api/auth/google/exchange"
-      x-source: "src/routes/auth-routes.ts:56"
+      x-source: "src/routes/auth-routes.ts:98"
       x-express-path: "/api/auth/google/exchange"
       security: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/auth/logout":
+    post:
+      operationId: "POST_api_auth_logout"
+      tags:
+        - "auth"
+      summary: "POST /api/auth/logout"
+      x-source: "src/routes/auth-routes.ts:79"
+      x-express-path: "/api/auth/logout"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/auth/session":
+    get:
+      operationId: "GET_api_auth_session"
+      tags:
+        - "auth"
+      summary: "GET /api/auth/session"
+      x-source: "src/routes/auth-routes.ts:58"
+      x-express-path: "/api/auth/session"
+      security:
+        - ApiKeyAuth: []
       responses:
         "200":
           description: Success response. Body shape is implemented in the route handler.
@@ -506,7 +544,7 @@ paths:
       tags:
         - "billing"
       summary: "POST /api/billing/portal"
-      x-source: "src/routes/buyer-routes.ts:977"
+      x-source: "src/routes/buyer-routes.ts:1011"
       x-express-path: "/api/billing/portal"
       security: []
       responses:
@@ -928,7 +966,7 @@ paths:
       tags:
         - "checkout"
       summary: "POST /api/checkout/create"
-      x-source: "src/routes/buyer-routes.ts:793"
+      x-source: "src/routes/buyer-routes.ts:827"
       x-express-path: "/api/checkout/create"
       security: []
       responses:
@@ -1384,7 +1422,7 @@ paths:
       tags:
         - "first-dollar-readiness"
       summary: "GET /api/first-dollar-readiness"
-      x-source: "src/routes/buyer-routes.ts:711"
+      x-source: "src/routes/buyer-routes.ts:745"
       x-express-path: "/api/first-dollar-readiness"
       security: []
       responses:
@@ -1462,7 +1500,7 @@ paths:
       tags:
         - "health"
       summary: "GET /api/health"
-      x-source: "src/routes/buyer-routes.ts:707"
+      x-source: "src/routes/buyer-routes.ts:741"
       x-express-path: "/api/health"
       security:
         - ApiKeyAuth: []
@@ -1538,7 +1576,7 @@ paths:
       tags:
         - "integrations"
       summary: "POST /api/integrations/velvet/handoffs"
-      x-source: "src/routes/velvet-handoff-routes.ts:296"
+      x-source: "src/routes/velvet-handoff-routes.ts:303"
       x-express-path: "/api/integrations/velvet/handoffs"
       security:
         - VelvetHandoffBearerAuth: []
@@ -1614,7 +1652,7 @@ paths:
       tags:
         - "invite"
       summary: "GET /api/invite/:token"
-      x-source: "src/routes/buyer-routes.ts:1122"
+      x-source: "src/routes/buyer-routes.ts:1156"
       x-express-path: "/api/invite/:token"
       security: []
       responses:
@@ -1632,7 +1670,7 @@ paths:
       tags:
         - "invite"
       summary: "POST /api/invite/:token/accept"
-      x-source: "src/routes/buyer-routes.ts:1150"
+      x-source: "src/routes/buyer-routes.ts:1184"
       x-express-path: "/api/invite/:token/accept"
       security: []
       responses:
@@ -2324,7 +2362,7 @@ paths:
       tags:
         - "pricing"
       summary: "GET /api/pricing"
-      x-source: "src/routes/buyer-routes.ts:764"
+      x-source: "src/routes/buyer-routes.ts:798"
       x-express-path: "/api/pricing"
       security: []
       responses:
@@ -3081,7 +3119,7 @@ paths:
       tags:
         - "stripe"
       summary: "POST /api/stripe/webhook"
-      x-source: "src/routes/buyer-routes.ts:1033"
+      x-source: "src/routes/buyer-routes.ts:1067"
       x-express-path: "/api/stripe/webhook"
       security: []
       responses:
@@ -3518,7 +3556,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2788"
+      x-source: "server.ts:2830"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3536,7 +3574,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3515"
+      x-source: "server.ts:3557"
       x-express-path: "/api/twilio/process"
       security: []
       responses:
@@ -3572,7 +3610,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/status"
-      x-source: "src/routes/twilio-status-routes.ts:818"
+      x-source: "src/routes/twilio-status-routes.ts:821"
       x-express-path: "/api/twilio/status"
       security: []
       responses:
@@ -3779,7 +3817,7 @@ paths:
       tags:
         - "version"
       summary: "GET /api/version"
-      x-source: "src/routes/buyer-routes.ts:695"
+      x-source: "src/routes/buyer-routes.ts:729"
       x-express-path: "/api/version"
       security: []
       responses:

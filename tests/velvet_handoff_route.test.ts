@@ -94,6 +94,20 @@ test("rejects malformed callback payloads before touching storage", async () => 
   assert.equal(result.storeCalls, 0);
 });
 
+test("rejects an otherwise safe external ID when no durable Velvet lead identity can be resolved", async () => {
+  const result = await invoke({ body: { ...validPayload, externalId: "velvet-manus-fake-check" } });
+  assert.equal(result.statusCode, 400);
+  assert.equal((result.body as any).code, "VELVET_ALCHEMY_HANDOFF_INVALID_PAYLOAD");
+  assert.equal(result.storeCalls, 0);
+});
+
+test("accepts a dedicated leadId when the external receipt ID does not encode one", async () => {
+  const result = await invoke({ body: { ...validPayload, externalId: "velvet-manus-real-event", leadId: 73 } });
+  assert.equal(result.statusCode, 201);
+  assert.deepEqual((result.body as any).feedbackIdentity, { externalId: "velvet-manus-real-event", leadId: 73 });
+  assert.equal(result.storeCalls, 1);
+});
+
 test("rejects a valid token attempting to select another workspace", async () => {
   const result = await invoke({ body: { ...validPayload, workspaceId: 43 } });
   assert.equal(result.statusCode, 403);
@@ -107,7 +121,7 @@ test("rejects a valid token attempting to select another workspace", async () =>
 test("reports a newly persisted handoff only after the store returns its record", async () => {
   const result = await invoke({});
   assert.equal(result.statusCode, 201);
-  assert.deepEqual(result.body, { ok: true, state: "RECEIVED", handoffId: 71, taskId: 91 });
+  assert.deepEqual(result.body, { ok: true, state: "RECEIVED", handoffId: 71, taskId: 91, feedbackIdentity: { externalId: "velvet-lead-00000001", leadId: 1 } });
   assert.equal(result.storeCalls, 1);
 });
 
@@ -120,7 +134,7 @@ test("reports a replay as a single idempotent duplicate", async () => {
     },
   });
   assert.equal(result.statusCode, 200);
-  assert.deepEqual(result.body, { ok: true, state: "DUPLICATE", handoffId: 71, taskId: 91 });
+  assert.deepEqual(result.body, { ok: true, state: "DUPLICATE", handoffId: 71, taskId: 91, feedbackIdentity: { externalId: "velvet-lead-00000001", leadId: 1 } });
 });
 
 test("does not claim success when durable storage rejects a handoff", async () => {

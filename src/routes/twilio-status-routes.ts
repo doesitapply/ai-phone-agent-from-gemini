@@ -420,8 +420,9 @@ export function registerTwilioStatusRoutes(app: Express, deps: TwilioStatusRoute
       }
 
       const [handoffRows, summaryRows, callRows] = await Promise.all([
-        sql<{ external_id: string | null }[]>`
-          SELECT h.extracted_fields ->> 'external_id' AS external_id
+        sql<{ external_id: string | null; velvet_lead_id: string | number | null }[]>`
+          SELECT h.extracted_fields ->> 'external_id' AS external_id,
+                 h.extracted_fields ->> 'velvet_lead_id' AS velvet_lead_id
           FROM tasks t
           JOIN handoffs h ON h.call_sid = t.call_sid AND h.workspace_id = t.workspace_id
           WHERE t.callback_call_sid = ${job.call_sid}
@@ -441,6 +442,7 @@ export function registerTwilioStatusRoutes(app: Express, deps: TwilioStatusRoute
       ]);
       const externalId = handoffRows[0]?.external_id;
       if (!externalId) return "skipped";
+      const velvetLeadId = Number(handoffRows[0]?.velvet_lead_id || 0) || null;
       const velvetOutcome = mapSmirkOutcomeToVelvet(summaryRows[0]?.outcome);
       if (!velvetOutcome) {
         log("warn", "Velvet outcome callback skipped for an unmapped SMIRK outcome", {
@@ -451,6 +453,7 @@ export function registerTwilioStatusRoutes(app: Express, deps: TwilioStatusRoute
       }
       const delivery = await deliverVelvetOutcome({
         externalId,
+        leadId: velvetLeadId,
         callId: job.call_sid,
         outcome: velvetOutcome,
         summary: summaryRows[0]?.summary || "SMIRK completed a call without a generated summary.",

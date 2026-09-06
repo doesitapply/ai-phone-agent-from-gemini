@@ -6,9 +6,20 @@ export const VELVET_HANDOFF_SOURCE = "velvet_alchemy";
 const E164_PHONE = /^\+[1-9]\d{7,14}$/;
 const EXTERNAL_ID = /^[A-Za-z0-9:_-]+$/;
 
+export function resolveVelvetLeadId(input: { externalId?: unknown; leadId?: unknown }): number | null {
+  const explicitLeadId = Number(input.leadId);
+  if (Number.isSafeInteger(explicitLeadId) && explicitLeadId > 0) return explicitLeadId;
+  const externalId = String(input.externalId || "").trim();
+  const match = /^velvet-(\d+)-[A-Za-z0-9:_-]+$/.exec(externalId)
+    || /^velvet-lead-(\d+)(?:-[A-Za-z0-9:_-]+)?$/.exec(externalId);
+  const parsedLeadId = Number(match?.[1]);
+  return Number.isSafeInteger(parsedLeadId) && parsedLeadId > 0 ? parsedLeadId : null;
+}
+
 export const velvetHandoffPayloadSchema = z.object({
   workspaceId: z.coerce.number().int().positive(),
   externalId: z.string().trim().min(12).max(160).regex(EXTERNAL_ID),
+  leadId: z.coerce.number().int().positive().optional(),
   caller: z.object({
     phone: z.string().trim().regex(E164_PHONE, "caller.phone must be an E.164 phone number."),
     name: z.string().trim().min(1).max(120).optional(),
@@ -20,7 +31,15 @@ export const velvetHandoffPayloadSchema = z.object({
   transcriptSnippet: z.string().trim().min(1).max(4_000).optional(),
   recommendedAction: z.string().trim().min(1).max(1_000).optional(),
   notes: z.string().trim().min(1).max(2_000).optional(),
-}).strict();
+}).strict().superRefine((payload, context) => {
+  if (!resolveVelvetLeadId(payload)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["leadId"],
+      message: "leadId is required when externalId does not encode a supported Velvet lead ID.",
+    });
+  }
+});
 
 export type VelvetHandoffPayload = z.infer<typeof velvetHandoffPayloadSchema>;
 

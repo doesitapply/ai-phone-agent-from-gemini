@@ -22,6 +22,7 @@ import {
   verifyCheckoutPaymentLinkBeforeFulfillment,
 } from "../src/routes/buyer-routes.js";
 import { evaluateCompletedPaymentLinkSession } from "../src/stripe-payment-link-readiness.js";
+import { evaluateFirstDollarVoiceReadiness } from "../src/first-dollar-voice-readiness.js";
 
 const saasSource = fs.readFileSync("src/saas.ts", "utf8");
 const buyerRoutesSource = fs.readFileSync("src/routes/buyer-routes.ts", "utf8");
@@ -52,6 +53,33 @@ assert.equal(
   evaluateCheckoutActivationPrerequisites({ ...completeActivationPrerequisites, twilioProvisioningReady: false }),
   false,
   "Starter checkout must remain blocked when managed Twilio credentials or workspace secret encryption cannot provision the advertised recovery number",
+);
+const managedNumberEnv = {
+  TWILIO_ACCOUNT_SID: `AC${"a".repeat(32)}`,
+  TWILIO_AUTH_TOKEN: "twilio-parent-token-7Jq9Vx2Lm4Np6Rs8",
+  WORKSPACE_SECRET_ENCRYPTION_KEY: "workspace-encryption-7Jq9Vx2Lm4Np6Rs8Tu3Wy5Za",
+};
+assert.equal(
+  evaluateFirstDollarVoiceReadiness(managedNumberEnv).twilioProvisioningReady,
+  true,
+  "a valid parent Twilio identity plus a dedicated workspace encryption key earns managed-number provisioning readiness",
+);
+assert.equal(
+  evaluateFirstDollarVoiceReadiness({ ...managedNumberEnv, TWILIO_ACCOUNT_SID: "" }).twilioProvisioningReady,
+  false,
+  "managed-number provisioning must fail closed when the parent Twilio account SID is absent",
+);
+assert.equal(
+  evaluateFirstDollarVoiceReadiness({ ...managedNumberEnv, TWILIO_AUTH_TOKEN: "" }).twilioProvisioningReady,
+  false,
+  "managed-number provisioning must fail closed when the parent Twilio auth token is absent",
+);
+const missingWorkspaceEncryption = evaluateFirstDollarVoiceReadiness({ ...managedNumberEnv, WORKSPACE_SECRET_ENCRYPTION_KEY: "" });
+assert.equal(missingWorkspaceEncryption.twilioProvisioningReady, false);
+assert.equal(
+  missingWorkspaceEncryption.provisioningBlockers.includes("WORKSPACE_SECRET_ENCRYPTION_KEY must be a dedicated secret of at least 32 characters"),
+  true,
+  "the readiness response must identify the missing workspace encryption key that prevents safe customer credential storage",
 );
 const checkoutHandlerStart = saasSource.indexOf("async function handleCheckoutCompleted");
 const buyerIdentityStart = saasSource.indexOf("const ownerEmail = String(", checkoutHandlerStart);

@@ -35,6 +35,7 @@ test("maps only explicit SMIRK outcomes into Velvet's restricted outcome vocabul
   assert.equal(mapSmirkOutcomeToVelvet("do_not_call"), "not_interested");
   assert.equal(mapSmirkOutcomeToVelvet("unknown"), null);
   assert.equal(parseVelvetLeadId("velvet-42-1700000000000"), 42);
+  assert.equal(parseVelvetLeadId("velvet-lead-00000001"), 1);
   assert.equal(parseVelvetLeadId("velvet-manus-fake-check"), null);
 });
 
@@ -69,4 +70,25 @@ test("posts an outcome only to the lead encoded in a real Velvet handoff externa
     callDuration: 86,
     calledAt: "2026-08-16T12:00:00.000Z",
   });
+});
+
+test("uses an explicitly persisted Velvet lead ID without reparsing the external receipt ID", async () => {
+  let requestedUrl = "";
+  const result = await deliverVelvetOutcome({
+    externalId: "source-event-without-numeric-identity",
+    leadId: 73,
+    callId: "CAexplicit1234567890",
+    outcome: "callback",
+    summary: "Owner callback requested.",
+    callDuration: 21,
+    calledAt: "2026-08-16T12:00:00.000Z",
+  }, {
+    env,
+    fetchImpl: (async (url: string | URL | Request) => {
+      requestedUrl = String(url);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch,
+  });
+  assert.deepEqual(result, { delivered: true });
+  assert.equal(requestedUrl, "https://velvetalchemy.manus.space/api/v1/leads/73/outcome");
 });

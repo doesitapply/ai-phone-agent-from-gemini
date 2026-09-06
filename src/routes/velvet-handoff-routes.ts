@@ -8,6 +8,7 @@ import {
   constantTimeSecretEquals,
   readBearerToken,
   readVelvetHandoffConfig,
+  resolveVelvetLeadId,
   velvetHandoffPayloadSchema,
   type VelvetHandoffPayload,
 } from "../velvet-handoff.js";
@@ -153,6 +154,7 @@ export function createPostgresVelvetHandoffStore(sql: SqlClient): VelvetHandoffS
             ${tx.json({
               source: VELVET_HANDOFF_SOURCE,
               external_id: input.externalId,
+              velvet_lead_id: resolveVelvetLeadId(input),
               payload_hash: input.payloadHash,
             })},
             ${input.recommendedAction || null}, ${input.notes || null}, 'pending', ${input.workspaceId}
@@ -256,6 +258,7 @@ export function createVelvetHandoffHandler(deps: VelvetHandoffRouteDeps): Reques
     const payloadHash = buildVelvetHandoffPayloadHash(parsed.data);
     try {
       const result = await deps.store.receive({ ...parsed.data, payloadHash });
+      const leadId = resolveVelvetLeadId(parsed.data);
       deps.log("info", "Velvet Alchemy handoff persisted", {
         requestId: (req as any).requestId,
         workspaceId: parsed.data.workspaceId,
@@ -268,6 +271,10 @@ export function createVelvetHandoffHandler(deps: VelvetHandoffRouteDeps): Reques
         state: result.outcome === "created" ? "RECEIVED" : "DUPLICATE",
         handoffId: result.handoffId,
         taskId: result.taskId,
+        feedbackIdentity: {
+          externalId: parsed.data.externalId,
+          leadId,
+        },
       });
     } catch (error) {
       if (error instanceof VelvetHandoffStoreError) {
