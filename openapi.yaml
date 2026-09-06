@@ -470,7 +470,7 @@ paths:
       tags:
         - "auth"
       summary: "GET /api/auth/google/config"
-      x-source: "src/routes/auth-routes.ts:84"
+      x-source: "src/routes/auth-routes.ts:108"
       x-express-path: "/api/auth/google/config"
       security: []
       responses:
@@ -488,8 +488,26 @@ paths:
       tags:
         - "auth"
       summary: "POST /api/auth/google/exchange"
-      x-source: "src/routes/auth-routes.ts:98"
+      x-source: "src/routes/auth-routes.ts:145"
       x-express-path: "/api/auth/google/exchange"
+      security: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/auth/google/redirect":
+    post:
+      operationId: "POST_api_auth_google_redirect"
+      tags:
+        - "auth"
+      summary: "POST /api/auth/google/redirect"
+      x-source: "src/routes/auth-routes.ts:122"
+      x-express-path: "/api/auth/google/redirect"
       security: []
       responses:
         "200":
@@ -506,7 +524,7 @@ paths:
       tags:
         - "auth"
       summary: "POST /api/auth/logout"
-      x-source: "src/routes/auth-routes.ts:79"
+      x-source: "src/routes/auth-routes.ts:103"
       x-express-path: "/api/auth/logout"
       security:
         - ApiKeyAuth: []
@@ -525,7 +543,7 @@ paths:
       tags:
         - "auth"
       summary: "GET /api/auth/session"
-      x-source: "src/routes/auth-routes.ts:58"
+      x-source: "src/routes/auth-routes.ts:82"
       x-express-path: "/api/auth/session"
       security:
         - ApiKeyAuth: []

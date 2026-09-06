@@ -59,6 +59,46 @@ test("Google operator exchange mints only an approved server session and logout 
     assert.match(cookie, /smirk_owner_session=valid/);
     assert.match(cookie, /HttpOnly/i);
 
+    const csrfDenied = await fetch(`${baseUrl}/api/auth/google/redirect`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: "g_csrf_token=cookie-token",
+      },
+      body: new URLSearchParams({ credential: "approved", g_csrf_token: "different-token" }),
+      redirect: "manual",
+    });
+    assert.equal(csrfDenied.status, 303);
+    assert.equal(csrfDenied.headers.get("location"), "/dashboard?admin=1&auth_error=csrf");
+    assert.equal(csrfDenied.headers.get("set-cookie"), null);
+
+    const redirectDenied = await fetch(`${baseUrl}/api/auth/google/redirect`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: "g_csrf_token=matching-token",
+      },
+      body: new URLSearchParams({ credential: "ordinary", g_csrf_token: "matching-token" }),
+      redirect: "manual",
+    });
+    assert.equal(redirectDenied.status, 303);
+    assert.equal(redirectDenied.headers.get("location"), "/dashboard?admin=1&auth_error=not_allowed");
+    assert.equal(redirectDenied.headers.get("set-cookie"), null);
+
+    const redirectAllowed = await fetch(`${baseUrl}/api/auth/google/redirect`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: "g_csrf_token=matching-token",
+      },
+      body: new URLSearchParams({ credential: "approved", g_csrf_token: "matching-token" }),
+      redirect: "manual",
+    });
+    assert.equal(redirectAllowed.status, 303);
+    assert.equal(redirectAllowed.headers.get("location"), "/dashboard");
+    assert.match(redirectAllowed.headers.get("set-cookie") || "", /smirk_owner_session=valid/);
+    assert.match(redirectAllowed.headers.get("set-cookie") || "", /HttpOnly/i);
+
     const missing = await fetch(`${baseUrl}/api/auth/session`);
     assert.equal(missing.status, 401);
 

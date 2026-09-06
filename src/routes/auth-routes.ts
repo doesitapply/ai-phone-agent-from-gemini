@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
+import { timingSafeEqual } from "node:crypto";
 
 type GoogleIdentity = {
   email?: string;
@@ -55,6 +56,29 @@ export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
     clearVerifiedOwnerSession,
   } = deps;
 
+  const redirectAuthError = (res: Response, code: string) =>
+    res.redirect(303, `/dashboard?admin=1&auth_error=${encodeURIComponent(code)}`);
+
+  const readCookie = (req: Request, name: string): string => {
+    const pair = String(req.headers.cookie || "")
+      .split(";")
+      .map((entry) => entry.trim())
+      .find((entry) => entry.startsWith(`${name}=`));
+    if (!pair) return "";
+    try {
+      return decodeURIComponent(pair.slice(name.length + 1));
+    } catch {
+      return "";
+    }
+  };
+
+  const csrfTokensMatch = (left: string, right: string): boolean => {
+    if (!left || !right) return false;
+    const leftBuffer = Buffer.from(left);
+    const rightBuffer = Buffer.from(right);
+    return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+  };
+
   app.get("/api/auth/session", (req: Request, res: Response) => {
     const session = readVerifiedOwnerSession(req);
     if (!session) return res.status(401).json({ ok: false, authenticated: false });
@@ -93,6 +117,29 @@ export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
       demoOperatorEnabled: !!env.DEMO_OPERATOR_API_KEY && demoOperatorEmails.length > 0,
       demoOperatorHint: demoOperatorEmails.length > 0 ? demoOperatorEmails.join(", ") : null,
     });
+  });
+
+  app.post("/api/auth/google/redirect", express.urlencoded({ extended: false, limit: "16kb" }), async (req: Request, res: Response) => {
+    if (googleClientIds().length === 0) return redirectAuthError(res, "not_configured");
+
+    const bodyCsrfToken = String(req.body?.g_csrf_token || "");
+    const cookieCsrfToken = readCookie(req, "g_csrf_token");
+    if (!csrfTokensMatch(bodyCsrfToken, cookieCsrfToken)) return redirectAuthError(res, "csrf");
+
+    try {
+      const identity = await verifyGoogleIdToken(String(req.body?.credential || ""));
+      if (!identity.email || !identity.email_verified) return redirectAuthError(res, "unverified_email");
+
+      const allowedAdminEmails = googleAdminEmails();
+      const fullAdminEnabled = !!env.DASHBOARD_API_KEY && allowedAdminEmails.length > 0;
+      if (!fullAdminEnabled) return redirectAuthError(res, "not_configured");
+      if (!allowedAdminEmails.includes(identity.email)) return redirectAuthError(res, "not_allowed");
+
+      createVerifiedOwnerSession(identity, res);
+      return res.redirect(303, "/dashboard");
+    } catch {
+      return redirectAuthError(res, "exchange_failed");
+    }
   });
 
   app.post("/api/auth/google/exchange", express.json(), async (req: Request, res: Response) => {

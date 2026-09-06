@@ -13,7 +13,15 @@ function Wordmark() { return <a href="/dashboard" className="v2-wordmark">SMIRK<
 function GoogleAdminLogin() {
   const buttonRef = useRef<HTMLDivElement>(null);
   const [config, setConfig] = useState<any>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() => {
+    const code = new URLSearchParams(window.location.search).get("auth_error");
+    if (!code) return "";
+    if (code === "csrf") return "Google sign-in could not verify the browser request. Please try again.";
+    if (code === "not_allowed") return "That Google account is not approved for SMIRK operator access.";
+    if (code === "not_configured") return "Google operator sign-in is not configured.";
+    if (code === "unverified_email") return "Google did not return a verified account email.";
+    return "Google admin sign-in failed. Please try again.";
+  });
 
   useEffect(() => {
     fetch("/api/auth/google/config", { cache: "no-store" }).then((res) => res.json()).then(setConfig).catch(() => setError("Google sign-in is unavailable."));
@@ -26,15 +34,9 @@ function GoogleAdminLogin() {
       if (cancelled || !window.google?.accounts?.id || !buttonRef.current) return;
       window.google.accounts.id.initialize({
         client_id: config.clientId,
-        callback: async (response: any) => {
-          setError("");
-          try {
-            const res = await fetch("/api/auth/google/exchange", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ credential: response?.credential, mode: "operator" }) });
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok || !body?.session?.serverSession) throw new Error(body.error || "Google admin sign-in failed.");
-            window.location.assign("/dashboard");
-          } catch (cause) { setError(cause instanceof Error ? cause.message : "Google admin sign-in failed."); }
-        },
+        ux_mode: "redirect",
+        login_uri: `${window.location.origin}/api/auth/google/redirect`,
+        login_hint: typeof config.adminHint === "string" && !config.adminHint.includes(",") ? config.adminHint : undefined,
       });
       buttonRef.current.innerHTML = "";
       window.google.accounts.id.renderButton(buttonRef.current, { theme: "outline", size: "large", text: "continue_with", shape: "rectangular", width: 320 });

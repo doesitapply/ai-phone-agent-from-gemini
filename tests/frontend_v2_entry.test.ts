@@ -10,6 +10,7 @@ const app = read("src/v2/AppV2.tsx");
 const owner = read("src/v2/OwnerApp.tsx");
 const publicApp = read("src/v2/PublicApp.tsx");
 const api = read("src/v2/api.ts");
+const authRoutes = read("src/routes/auth-routes.ts");
 
 test("production frontend entry is the V2 router, not the legacy monolith", () => {
   assert.match(main, /import AppV2 from ['"]\.\/v2\/AppV2['"]/);
@@ -28,9 +29,13 @@ test("V2 owner surface keeps the daily hierarchy narrow and Settings reachable",
 });
 
 test("V2 owner authentication relies on the HTTP-only server session", () => {
-  assert.match(owner, /\/api\/auth\/google\/exchange/);
-  assert.match(owner, /body\?\.session\?\.serverSession/);
+  assert.match(owner, /\/api\/auth\/google\/redirect/);
+  assert.match(owner, /ux_mode:\s*["']redirect["']/);
+  assert.match(authRoutes, /g_csrf_token/);
+  assert.match(authRoutes, /timingSafeEqual/);
   assert.match(api, /\/api\/auth\/session/);
+  assert.match(api, /body\?\.authenticated/);
+  assert.match(api, /body\?\.user\?\.email/);
   assert.match(api, /credentials: ["']same-origin["']/);
   assert.doesNotMatch(`${owner}\n${api}`, /googleIdToken|X-SMIRK-Google-ID-Token/);
   assert.doesNotMatch(`${owner}\n${api}`, /DASHBOARD_API_KEY/);

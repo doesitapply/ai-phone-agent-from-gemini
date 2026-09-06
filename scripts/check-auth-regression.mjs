@@ -211,6 +211,7 @@ const publicRouteAllowlist = [
   { method: "GET", pattern: /^\/api\/auth\/session$/ },
   { method: "POST", pattern: /^\/api\/auth\/logout$/ },
   { method: "GET", pattern: /^\/api\/auth\/google\/config$/ },
+  { method: "POST", pattern: /^\/api\/auth\/google\/redirect$/ },
   { method: "POST", pattern: /^\/api\/auth\/google\/exchange$/ },
   { method: "GET", pattern: /^\/api\/twiml\/appointment-confirm$/ },
   { method: "POST", pattern: /^\/api\/twiml\/appointment-confirm-response$/ },

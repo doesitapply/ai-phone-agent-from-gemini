@@ -153,6 +153,7 @@
 - [x] Preserve a genuine light trade-floor version and dark operator version of the same industrial system rather than two unrelated themes.
 - [ ] Capture and inspect full-page desktop and mobile screenshots for public home, Google login, Today, Calls, Tasks, Settings, and Admin before release; correct any screen that does not visibly belong to the supplied reference family.
 - [ ] Complete the replacement Google Web OAuth client only after the corrected interface passes visual and contract verification, then rotate production configuration and prove the approved admin can log in, retain operator authority, and log out.
+- [ ] Replace the popup-only Google owner button with a full-page redirect exchange that validates Google's double-submit CSRF token, issues the same HTTP-only owner session, and returns to `/dashboard`; retain the JSON exchange route for compatible clients.
 
 ## Newly Surfaced P1 Release Blockers
 
